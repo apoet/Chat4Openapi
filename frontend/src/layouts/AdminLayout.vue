@@ -29,8 +29,9 @@ async function logout(): Promise<void> {
         <RouterLink to="/admin" class="nav-link">⌂ <span>{{ t('nav.overview') }}</span></RouterLink>
         <span class="nav-section">{{ t('nav.build') }}</span>
         <a class="nav-link disabled">◈ <span>{{ t('overview.providers') }}</span></a>
-        <a class="nav-link disabled">⇄ <span>{{ t('overview.sources') }}</span></a>
-        <a class="nav-link disabled">⌁ <span>{{ t('overview.tools') }}</span></a>
+        <RouterLink to="/admin/sources" class="nav-link">⇄ <span>{{ t('overview.sources') }}</span></RouterLink>
+        <RouterLink to="/admin/tools" class="nav-link">⌁ <span>{{ t('overview.tools') }}</span></RouterLink>
+        <RouterLink to="/admin/tool-auth" class="nav-link">⎋ <span>{{ t('toolAuth.nav') }}</span></RouterLink>
         <a class="nav-link disabled">✦ <span>{{ t('overview.skills') }}</span></a>
       </nav>
       <div class="sidebar-footer">

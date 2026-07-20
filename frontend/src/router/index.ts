@@ -15,6 +15,9 @@ export function createAppRouter(): Router {
         meta: { requiresAdmin: true },
         children: [
           { path: '', name: 'overview', component: () => import('../views/OverviewView.vue') },
+          { path: 'sources', name: 'sources', component: () => import('../views/ApiSourcesView.vue') },
+          { path: 'tools', name: 'tools', component: () => import('../views/ToolsView.vue') },
+          { path: 'tool-auth', name: 'tool-auth', component: () => import('../views/ToolAuthView.vue') },
         ],
       },
     ],
