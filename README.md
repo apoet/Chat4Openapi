@@ -2,10 +2,11 @@
 
 Chat with your APIs through managed MCP Tools and Skills.
 
-The current implementation contains the platform foundation: SQLite migrations, first-run
-single-administrator setup, secure administrator sessions, English/Chinese localization, and a
-Vue administration shell. OpenAPI Tool import, global business-user Tool Sessions, Skills, chat,
-and compatible APIs are implemented in the following phases described under `docs/superpowers`.
+The current implementation contains the platform foundation and Tool Runtime: SQLite migrations,
+first-run single-administrator setup, secure administrator sessions, English/Chinese localization,
+Swagger 2.0 and OpenAPI 3.x import, managed Tool lifecycle, encrypted original-API Tool Sessions,
+safe request-scoped execution, a dynamic FastMCP endpoint, and the Vue Tool administration UI.
+Skills, model providers, chat, and compatible LLM APIs are the next implementation phase.
 
 ## Requirements
 
@@ -63,6 +64,17 @@ npm run build
 After `npm run build`, FastAPI serves `frontend/dist` and provides SPA fallback for browser routes.
 Unknown `/api/*`, `/v1/*`, and `/anthropic/*` paths always remain JSON 404 responses.
 
+## Tool Runtime
+
+1. Import a Swagger/OpenAPI JSON or YAML document under **API sources**.
+2. Review imported operations under **Tools**; every new Tool is disabled by default.
+3. Enable trusted Tools.
+4. Optionally bind one enabled login Tool under **Tool authentication**. This login belongs to the
+   original API, never to the backend administrator.
+5. External MCP clients connect to `http://127.0.0.1:8000/mcp/`. When Tool authentication is
+   enabled, first create a Tool Session through `POST /v1/tool-sessions`, then pass the returned
+   `tool_session_id` to MCP Tool calls.
+
 ## First run
 
 1. Open `http://127.0.0.1:8000` after building the frontend, or use the Vite development URL.
@@ -70,5 +82,6 @@ Unknown `/api/*`, `/v1/*`, and `/anthropic/*` paths always remain JSON 404 respo
 3. Create the sole backend administrator with a password of at least 12 characters.
 4. Sign in to reach the administration overview.
 
-The backend administrator is never used as the identity for imported API Tools. Tool users will
-authenticate through the globally configured original-API login Tool in the Tool Runtime phase.
+The backend administrator is never used as the identity for imported API Tools. Each Tool user
+authenticates once per Tool Session through the globally configured original-API login Tool; all
+Tools in that session share the same encrypted, expiring original-API credentials.
