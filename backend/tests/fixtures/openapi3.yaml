@@ -1,0 +1,45 @@
+openapi: 3.0.3
+info:
+  title: Pet API
+  version: "1.0"
+servers:
+  - url: https://api.example.test/v1
+paths:
+  /pets:
+    post:
+      operationId: createPet
+      summary: Create a pet
+      parameters:
+        - name: trace
+          in: query
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PetInput"
+      responses:
+        "200":
+          description: Created pet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pet"
+components:
+  schemas:
+    PetInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+    Pet:
+      allOf:
+        - $ref: "#/components/schemas/PetInput"
+        - type: object
+          properties:
+            id:
+              type: integer
