@@ -9,6 +9,7 @@ description = "Chat with your APIs through MCP tools and skills"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "alembic>=1.16,<2",
+  "cryptography>=45,<50",
   "fastapi>=0.116,<1",
   "fastmcp==3.4.4",
   "httpx>=0.28,<1",

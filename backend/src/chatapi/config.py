@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     admin_session_idle_minutes: int = Field(default=30, ge=1)
     admin_session_absolute_hours: int = Field(default=8, ge=1)
     secure_cookies: bool = False
+    encryption_key: str | None = None
+    encryption_key_file: Path = Path("data/.chatapi.key")
 
 
 @lru_cache
