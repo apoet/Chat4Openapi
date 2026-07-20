@@ -4,6 +4,7 @@ from pathlib import Path
 import httpx
 import pytest
 import pytest_asyncio
+from fastapi import FastAPI
 from sqlalchemy.orm import Session, sessionmaker
 
 from chatapi.db.base import Base
@@ -23,8 +24,9 @@ def db_session_factory(tmp_path: Path) -> Iterator[sessionmaker[Session]]:
 
 
 @pytest_asyncio.fixture
-async def client(db_session_factory: sessionmaker[Session]) -> AsyncIterator[httpx.AsyncClient]:
-    app = create_app()
+async def client(
+    app: FastAPI, db_session_factory: sessionmaker[Session]
+) -> AsyncIterator[httpx.AsyncClient]:
 
     def override_session() -> Iterator[Session]:
         session = db_session_factory()
@@ -37,3 +39,8 @@ async def client(db_session_factory: sessionmaker[Session]) -> AsyncIterator[htt
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as test_client:
         yield test_client
+
+
+@pytest.fixture
+def app() -> FastAPI:
+    return create_app()

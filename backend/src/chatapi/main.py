@@ -5,9 +5,11 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from chatapi.api.admin_auth import router as admin_auth_router
+from chatapi.api.admin_tools import router as admin_tools_router
 from chatapi.api.errors import install_error_handlers
 from chatapi.api.health import router as health_router
 from chatapi.api.setup import router as setup_router
+from chatapi.api.tool_sessions import router as tool_sessions_router
 
 
 def create_app(frontend_dist: Path | None = None) -> FastAPI:
@@ -16,6 +18,8 @@ def create_app(frontend_dist: Path | None = None) -> FastAPI:
     app.include_router(health_router)
     app.include_router(setup_router)
     app.include_router(admin_auth_router)
+    app.include_router(admin_tools_router)
+    app.include_router(tool_sessions_router)
 
     dist = frontend_dist or Path(__file__).resolve().parents[3] / "frontend" / "dist"
     index_file = dist / "index.html"
