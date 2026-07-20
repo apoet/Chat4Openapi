@@ -1,1 +1,9 @@
 .superpowers/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+data/
+frontend/node_modules/
+frontend/dist/
