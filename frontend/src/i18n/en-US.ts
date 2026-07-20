@@ -10,6 +10,7 @@ export default {
     locale: 'Interface language',
     submit: 'Create administrator',
     mismatch: 'Passwords do not match.',
+    identityNote: 'One control plane. Your API users keep their own identity.',
   },
   login: {
     eyebrow: 'Administration',
@@ -18,8 +19,10 @@ export default {
     username: 'Username',
     password: 'Password',
     submit: 'Sign in',
+    quote: 'Turn interface definitions into useful, governed conversations.',
   },
   overview: {
+    eyebrow: 'ChatAPI control plane',
     title: 'Platform overview',
     subtitle: 'Configure each building block, then connect them in a Skill.',
     providers: 'Providers',
@@ -27,8 +30,18 @@ export default {
     tools: 'Tools',
     skills: 'Skills',
     empty: 'Not configured yet',
+    journey: {
+      eyebrow: 'Get started',
+      title: 'Build your first API Skill',
+      description: 'Connect a model provider, import an OpenAPI source, curate Tools, then compose a Skill.',
+      provider: 'Configure a provider',
+      source: 'Import an API source',
+      tool: 'Enable selected Tools',
+      skill: 'Compose a Skill',
+    },
   },
-  nav: { overview: 'Overview', logout: 'Sign out', language: 'Language' },
+  nav: { overview: 'Overview', build: 'Build', logout: 'Sign out', language: 'Language' },
+  status: { ready: 'System ready' },
   action: { continue: 'Continue' },
   error: {
     'setup.already_initialized': 'This ChatAPI instance is already initialized.',

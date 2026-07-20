@@ -27,7 +27,7 @@ async function logout(): Promise<void> {
       <div class="sidebar-brand"><span class="brand-mark small">CA</span><strong>ChatAPI</strong></div>
       <nav>
         <RouterLink to="/admin" class="nav-link">⌂ <span>{{ t('nav.overview') }}</span></RouterLink>
-        <span class="nav-section">BUILD</span>
+        <span class="nav-section">{{ t('nav.build') }}</span>
         <a class="nav-link disabled">◈ <span>{{ t('overview.providers') }}</span></a>
         <a class="nav-link disabled">⇄ <span>{{ t('overview.sources') }}</span></a>
         <a class="nav-link disabled">⌁ <span>{{ t('overview.tools') }}</span></a>
@@ -40,7 +40,7 @@ async function logout(): Promise<void> {
     </aside>
     <section class="admin-main">
       <header class="topbar">
-        <div><span class="status-dot"></span> System ready</div>
+        <div><span class="status-dot"></span> {{ t('status.ready') }}</div>
         <div class="admin-identity"><span>{{ auth.admin?.username }}</span><b>{{ initials }}</b></div>
       </header>
       <RouterView />

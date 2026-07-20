@@ -10,6 +10,7 @@ export default {
     locale: '界面语言',
     submit: '创建管理员',
     mismatch: '两次输入的密码不一致。',
+    identityNote: '统一管理平台，原 API 用户始终使用自己的业务身份。',
   },
   login: {
     eyebrow: '后台管理',
@@ -18,8 +19,10 @@ export default {
     username: '用户名',
     password: '密码',
     submit: '登录',
+    quote: '将接口定义转化为实用、可治理的智能对话。',
   },
   overview: {
+    eyebrow: 'ChatAPI 管理平台',
     title: '平台概览',
     subtitle: '依次配置各项能力，然后在 Skill 中进行编排。',
     providers: '大模型供应商',
@@ -27,8 +30,18 @@ export default {
     tools: '工具',
     skills: '技能',
     empty: '尚未配置',
+    journey: {
+      eyebrow: '开始使用',
+      title: '创建第一个 API Skill',
+      description: '连接模型供应商，导入 OpenAPI 来源，选择 Tools，然后编排 Skill。',
+      provider: '配置模型供应商',
+      source: '导入 API 来源',
+      tool: '启用所需 Tools',
+      skill: '编排 Skill',
+    },
   },
-  nav: { overview: '概览', logout: '退出登录', language: '语言' },
+  nav: { overview: '概览', build: '构建', logout: '退出登录', language: '语言' },
+  status: { ready: '系统运行正常' },
   action: { continue: '继续' },
   error: {
     'setup.already_initialized': '此 ChatAPI 实例已经完成初始化。',

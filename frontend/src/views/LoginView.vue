@@ -39,7 +39,7 @@ async function submit(): Promise<void> {
         <h1>{{ t('app.name') }}</h1>
         <p class="story-copy">{{ t('app.tagline') }}</p>
       </div>
-      <blockquote>Turn interface definitions into useful, governed conversations.</blockquote>
+      <blockquote>{{ t('login.quote') }}</blockquote>
     </section>
 
     <section class="auth-panel">

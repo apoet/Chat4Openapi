@@ -60,7 +60,7 @@ async function submit(): Promise<void> {
       <div class="story-grid" aria-hidden="true">
         <span>OpenAPI</span><i></i><span>MCP Tools</span><i></i><span>Skills</span><i></i><span>Chat</span>
       </div>
-      <p class="story-note">One control plane. Your API users keep their own identity.</p>
+      <p class="story-note">{{ t('setup.identityNote') }}</p>
     </section>
 
     <section class="auth-panel">

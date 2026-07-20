@@ -12,7 +12,7 @@ const cards = [
 
 <template>
   <main class="overview-page">
-    <p class="eyebrow">CHATAPI CONTROL PLANE</p>
+    <p class="eyebrow">{{ t('overview.eyebrow') }}</p>
     <h1>{{ t('overview.title') }}</h1>
     <p class="muted overview-subtitle">{{ t('overview.subtitle') }}</p>
     <section class="metric-grid">
@@ -27,15 +27,15 @@ const cards = [
     </section>
     <section class="journey-card">
       <div>
-        <p class="eyebrow">GET STARTED</p>
-        <h2>Build your first API Skill</h2>
-        <p>Connect a model provider, import an OpenAPI source, curate Tools, then compose a Skill.</p>
+        <p class="eyebrow">{{ t('overview.journey.eyebrow') }}</p>
+        <h2>{{ t('overview.journey.title') }}</h2>
+        <p>{{ t('overview.journey.description') }}</p>
       </div>
       <ol>
-        <li><span>1</span> Configure a provider</li>
-        <li><span>2</span> Import an API source</li>
-        <li><span>3</span> Enable selected Tools</li>
-        <li><span>4</span> Compose a Skill</li>
+        <li><span>1</span> {{ t('overview.journey.provider') }}</li>
+        <li><span>2</span> {{ t('overview.journey.source') }}</li>
+        <li><span>3</span> {{ t('overview.journey.tool') }}</li>
+        <li><span>4</span> {{ t('overview.journey.skill') }}</li>
       </ol>
     </section>
   </main>
