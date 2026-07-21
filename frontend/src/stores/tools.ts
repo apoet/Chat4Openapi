@@ -5,6 +5,7 @@ import { request } from '../api/client'
 import type {
   ApiSourceSummary,
   SourceImportResponse,
+  SourceRefreshResult,
   ToolAuthConfig,
   ToolSummary,
 } from '../api/contracts'
@@ -107,7 +108,12 @@ export const useToolsStore = defineStore('tools', () => {
 
   async function updateSource(
     source: ApiSourceSummary,
-    payload: { name: string; base_url: string; allow_private_networks: boolean },
+    payload: {
+      name: string
+      base_url: string
+      document_url?: string | null
+      allow_private_networks: boolean
+    },
   ): Promise<void> {
     const auth = useAuthStore()
     const updated = await perform(() =>
@@ -132,6 +138,33 @@ export const useToolsStore = defineStore('tools', () => {
     )
     const index = sources.value.findIndex((item) => item.id === updated.id)
     if (index >= 0) sources.value[index] = updated
+  }
+
+  async function refreshSource(source: ApiSourceSummary): Promise<SourceRefreshResult> {
+    const auth = useAuthStore()
+    return perform(() =>
+      request<SourceRefreshResult>(
+        `/api/admin/sources/${source.id}/refresh`,
+        { method: 'POST' },
+        auth.csrfToken,
+      ),
+    )
+  }
+
+  async function refreshSourceFile(
+    source: ApiSourceSummary,
+    file: File,
+  ): Promise<SourceRefreshResult> {
+    const form = new FormData()
+    form.set('document', file)
+    const auth = useAuthStore()
+    return perform(() =>
+      request<SourceRefreshResult>(
+        `/api/admin/sources/${source.id}/refresh-file`,
+        { method: 'POST', body: form },
+        auth.csrfToken,
+      ),
+    )
   }
 
   async function deleteSource(source: ApiSourceSummary): Promise<void> {
@@ -202,6 +235,8 @@ export const useToolsStore = defineStore('tools', () => {
     importFile,
     importUrl,
     updateSource,
+    refreshSource,
+    refreshSourceFile,
     setSourceEnabled,
     deleteSource,
     setEnabled,

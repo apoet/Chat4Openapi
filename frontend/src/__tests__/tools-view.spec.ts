@@ -278,6 +278,58 @@ describe('Tool administration views', () => {
     expect(await screen.findByText('Disabled')).toBeTruthy()
   })
 
+  it('refreshes a URL-based API source manually', async () => {
+    const source = {
+      id: 3,
+      name: 'Remote API',
+      source_type: 'openapi',
+      base_url: 'http://localhost:48080',
+      document_url: 'http://localhost:48080/v2/api-docs',
+      allow_private_networks: true,
+      enabled: true,
+      created_at: '2026-07-21T00:00:00',
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([source]))
+      .mockResolvedValueOnce(jsonResponse({ created: 1, updated: 2, unchanged: 5 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ApiSourcesView, { global: { plugins: [i18n] } })
+    await fireEvent.click(await screen.findByRole('button', { name: 'Update' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/sources/3/refresh')
+    expect(await screen.findByText('1 added, 2 updated, 5 unchanged')).toBeTruthy()
+  })
+
+  it('refreshes a file-based API source with a new document', async () => {
+    const source = {
+      id: 4,
+      name: 'Uploaded API',
+      source_type: 'openapi',
+      base_url: 'https://api.test',
+      document_url: null,
+      allow_private_networks: false,
+      enabled: true,
+      created_at: '2026-07-21T00:00:00',
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([source]))
+      .mockResolvedValueOnce(jsonResponse({ created: 0, updated: 1, unchanged: 2 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ApiSourcesView, { global: { plugins: [i18n] } })
+    const input = await screen.findByLabelText('Choose update file')
+    const file = new File(['openapi: 3.0.3'], 'openapi.yaml')
+    await fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/sources/4/refresh-file')
+    expect((fetchMock.mock.calls[1][1] as RequestInit).body).toBeInstanceOf(FormData)
+  })
+
   it('lists default-disabled Tools and enables one', async () => {
     const fetchMock = vi
       .fn()

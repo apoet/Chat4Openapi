@@ -25,6 +25,7 @@ class ApiSourceSummary(BaseModel):
     name: str
     source_type: str
     base_url: str
+    document_url: str | None
     allow_private_networks: bool
     enabled: bool
     created_at: datetime
@@ -33,11 +34,18 @@ class ApiSourceSummary(BaseModel):
 class ApiSourceUpdateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     base_url: str = Field(min_length=1, max_length=2048)
+    document_url: str | None = Field(default=None, max_length=2048)
     allow_private_networks: bool = False
 
 
 class ApiSourceEnabledRequest(BaseModel):
     enabled: bool
+
+
+class SourceRefreshResponse(BaseModel):
+    created: int
+    updated: int
+    unchanged: int
 
 
 class ToolSummary(BaseModel):

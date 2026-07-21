@@ -13,6 +13,7 @@ class ApiSource(Base):
     name: Mapped[str] = mapped_column(String(160))
     source_type: Mapped[str] = mapped_column(String(32), default="openapi")
     base_url: Mapped[str] = mapped_column(String(2048))
+    document_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     spec_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     spec_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     allow_private_networks: Mapped[bool] = mapped_column(Boolean, default=False)

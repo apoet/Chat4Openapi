@@ -45,6 +45,9 @@ def test_tool_runtime_migration_upgrade_downgrade_upgrade(tmp_path: Path) -> Non
         set(item["column_names"]) == {"api_source_id", "operation_key"}
         for item in unique_constraints
     )
+    assert "document_url" in {
+        column["name"] for column in inspect(engine).get_columns("api_sources")
+    }
 
     engine.dispose()
     command.downgrade(config, "0001_foundation")

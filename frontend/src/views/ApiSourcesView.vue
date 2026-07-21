@@ -19,7 +19,10 @@ const submitting = ref(false)
 const editingId = ref<number | null>(null)
 const editName = ref('')
 const editBaseUrl = ref('')
+const editDocumentUrl = ref('')
 const editAllowPrivateNetworks = ref(false)
+const refreshingId = ref<number | null>(null)
+const refreshNotice = ref<{ sourceId: number; message: string } | null>(null)
 
 onMounted(() => void store.loadSources())
 
@@ -62,6 +65,7 @@ function startEdit(source: ApiSourceSummary): void {
   editingId.value = source.id
   editName.value = source.name
   editBaseUrl.value = source.base_url
+  editDocumentUrl.value = source.document_url || ''
   editAllowPrivateNetworks.value = source.allow_private_networks
 }
 
@@ -73,9 +77,42 @@ async function saveEdit(source: ApiSourceSummary): Promise<void> {
   await store.updateSource(source, {
     name: editName.value,
     base_url: editBaseUrl.value,
+    document_url: editDocumentUrl.value || null,
     allow_private_networks: editAllowPrivateNetworks.value,
   })
   editingId.value = null
+}
+
+function showRefreshResult(
+  source: ApiSourceSummary,
+  result: { created: number; updated: number; unchanged: number },
+): void {
+  refreshNotice.value = {
+    sourceId: source.id,
+    message: t('sources.refreshResult', result),
+  }
+}
+
+async function refreshSource(source: ApiSourceSummary): Promise<void> {
+  refreshingId.value = source.id
+  try {
+    showRefreshResult(source, await store.refreshSource(source))
+  } finally {
+    refreshingId.value = null
+  }
+}
+
+async function refreshSourceFile(source: ApiSourceSummary, event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const selectedFile = input.files?.[0]
+  if (!selectedFile) return
+  refreshingId.value = source.id
+  try {
+    showRefreshResult(source, await store.refreshSourceFile(source, selectedFile))
+  } finally {
+    refreshingId.value = null
+    input.value = ''
+  }
 }
 
 function viewTools(source: ApiSourceSummary): void {
@@ -112,13 +149,14 @@ function viewTools(source: ApiSourceSummary): void {
         <div v-if="editingId === source.id" class="source-inline-editor">
           <label>{{ t('sources.editName') }}<input v-model="editName" /></label>
           <label>{{ t('sources.editBaseUrl') }}<input v-model="editBaseUrl" /></label>
+          <label>{{ t('sources.editDocumentUrl') }}<input v-model="editDocumentUrl" /></label>
           <label class="checkbox-label"><input v-model="editAllowPrivateNetworks" type="checkbox" />{{ t('sources.allowPrivate') }}</label>
           <div class="row-actions editor-actions"><button class="primary-action" :disabled="!editName || !editBaseUrl" @click="saveEdit(source)">{{ t('sources.save') }}</button><button class="secondary-action" @click="cancelEdit">{{ t('skills.cancel') }}</button></div>
         </div>
         <template v-else>
-          <div><strong>{{ source.name }}</strong><p>{{ source.base_url }}</p></div>
+          <div><strong>{{ source.name }}</strong><p>{{ source.base_url }}</p><p v-if="source.document_url">{{ source.document_url }}</p><p v-if="refreshNotice?.sourceId === source.id" class="refresh-notice">{{ refreshNotice.message }}</p></div>
           <span :class="['status-pill', source.enabled ? 'enabled' : 'disabled']">{{ source.enabled ? t('tools.enabled') : t('tools.disabled') }}</span>
-          <footer class="row-actions"><button class="secondary-action" @click="viewTools(source)">{{ t('sources.viewTools') }}</button><button class="secondary-action" @click="startEdit(source)">{{ t('skills.edit') }}</button><button class="secondary-action" @click="store.setSourceEnabled(source, !source.enabled)">{{ source.enabled ? t('tools.disable') : t('tools.enable') }}</button><button class="danger-action" @click="store.deleteSource(source)">{{ t('tools.delete') }}</button></footer>
+          <footer class="row-actions"><button class="secondary-action" @click="viewTools(source)">{{ t('sources.viewTools') }}</button><button v-if="source.document_url" class="secondary-action" :disabled="refreshingId === source.id" @click="refreshSource(source)">{{ refreshingId === source.id ? t('sources.updating') : t('sources.update') }}</button><label v-else class="secondary-action source-refresh-file"><span>{{ t('sources.chooseUpdateFile') }}</span><input type="file" accept=".json,.yaml,.yml,application/json,application/yaml" :aria-label="t('sources.chooseUpdateFile')" :disabled="refreshingId === source.id" @change="refreshSourceFile(source, $event)" /></label><button class="secondary-action" @click="startEdit(source)">{{ t('skills.edit') }}</button><button class="secondary-action" @click="store.setSourceEnabled(source, !source.enabled)">{{ source.enabled ? t('tools.disable') : t('tools.enable') }}</button><button class="danger-action" @click="store.deleteSource(source)">{{ t('tools.delete') }}</button></footer>
         </template>
       </article>
     </section>

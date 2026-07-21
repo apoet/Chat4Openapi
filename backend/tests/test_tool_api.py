@@ -268,6 +268,87 @@ async def test_api_source_can_be_edited_disabled_and_deleted(
 
 
 @pytest.mark.asyncio
+async def test_api_source_file_refresh_updates_only_changed_tools(
+    client: httpx.AsyncClient,
+) -> None:
+    csrf = await admin_login(client)
+    imported = await client.post(
+        "/api/admin/sources/import",
+        json=import_payload(),
+        headers={"X-CSRF-Token": csrf},
+    )
+    source_id = imported.json()["source"]["id"]
+    tool_id = imported.json()["tools"][0]["id"]
+    await client.patch(
+        f"/api/admin/tools/{tool_id}/enabled",
+        json={"enabled": True},
+        headers={"X-CSRF-Token": csrf},
+    )
+    document = json.loads(import_payload()["document"])
+    document["paths"]["/pets"]["post"]["parameters"].append(
+        {"name": "limit", "in": "query", "schema": {"type": "integer"}}
+    )
+    document["paths"]["/health"] = {
+        "get": {
+            "operationId": "healthCheck",
+            "responses": {"200": {"description": "Healthy"}},
+        }
+    }
+    raw = json.dumps(document).encode()
+
+    refreshed = await client.post(
+        f"/api/admin/sources/{source_id}/refresh-file",
+        files={"document": ("openapi.json", raw, "application/json")},
+        headers={"X-CSRF-Token": csrf},
+    )
+    repeated = await client.post(
+        f"/api/admin/sources/{source_id}/refresh-file",
+        files={"document": ("openapi.json", raw, "application/json")},
+        headers={"X-CSRF-Token": csrf},
+    )
+    tools = (await client.get("/api/admin/tools")).json()
+    updated_tool = next(tool for tool in tools if tool["name"] == "createPet")
+
+    assert refreshed.status_code == 200
+    assert refreshed.json() == {"created": 1, "updated": 1, "unchanged": 1}
+    assert repeated.json() == {"created": 0, "updated": 0, "unchanged": 3}
+    assert updated_tool["id"] == tool_id
+    assert updated_tool["enabled"] is True
+    assert "limit" in updated_tool["input_schema"]["properties"]
+
+
+@pytest.mark.asyncio
+async def test_url_source_remembers_document_url_and_refreshes(
+    client: httpx.AsyncClient, monkeypatch
+) -> None:
+    async def fetch_document(_url: str, _allow_private: bool) -> bytes:
+        return FIXTURE.read_bytes()
+
+    monkeypatch.setattr(admin_tools, "_fetch_openapi_document", fetch_document)
+    csrf = await admin_login(client)
+    imported = await client.post(
+        "/api/admin/sources/import-url",
+        json={
+            "name": "Remote API",
+            "url": "http://localhost:48080/v2/api-docs",
+            "base_url": "http://localhost:48080",
+            "allow_private_networks": True,
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    source = imported.json()["source"]
+
+    refreshed = await client.post(
+        f"/api/admin/sources/{source['id']}/refresh",
+        headers={"X-CSRF-Token": csrf},
+    )
+
+    assert source["document_url"] == "http://localhost:48080/v2/api-docs"
+    assert refreshed.status_code == 200
+    assert refreshed.json() == {"created": 0, "updated": 0, "unchanged": 1}
+
+
+@pytest.mark.asyncio
 async def test_browser_and_api_tool_sessions_use_original_api_credentials(
     client: httpx.AsyncClient, app: FastAPI
 ) -> None:

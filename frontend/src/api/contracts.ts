@@ -33,6 +33,7 @@ export interface ApiSourceSummary {
   name: string
   source_type: string
   base_url: string
+  document_url: string | null
   allow_private_networks: boolean
   enabled: boolean
   created_at: string
@@ -53,6 +54,12 @@ export interface ToolSummary {
 export interface SourceImportResponse {
   source: ApiSourceSummary
   tools: ToolSummary[]
+}
+
+export interface SourceRefreshResult {
+  created: number
+  updated: number
+  unchanged: number
 }
 
 export interface ToolAuthConfig {

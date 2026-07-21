@@ -16,6 +16,7 @@ from chatapi.schemas.tools import (
     ApiSourceUpdateRequest,
     SourceImportRequest,
     SourceImportResponse,
+    SourceRefreshResponse,
     SourceUrlImportRequest,
     ToolAuthConfigRequest,
     ToolAuthConfigResponse,
@@ -73,6 +74,7 @@ async def _persist_import(
         name=payload.name,
         source_type="openapi",
         base_url=base_url,
+        document_url=source_url,
         spec_snapshot=json.dumps(spec, ensure_ascii=False, separators=(",", ":")),
         spec_hash=hashlib.sha256(raw).hexdigest(),
         allow_private_networks=payload.allow_private_networks,
@@ -240,9 +242,101 @@ def update_source(
     source = _managed_source(context, source_id)
     source.name = payload.name
     source.base_url = payload.base_url
+    source.document_url = payload.document_url
     source.allow_private_networks = payload.allow_private_networks
     context.db.commit()
     return ApiSourceSummary.model_validate(source)
+
+
+async def _refresh_source_document(
+    source: ApiSource,
+    raw: bytes,
+    context: AdminContext,
+) -> SourceRefreshResponse:
+    try:
+        spec = load_openapi(raw)
+        normalized = normalize_openapi(spec, source_url=source.document_url)
+        candidates = await build_candidates(normalized, source.base_url)
+    except OpenAPIImportError as exc:
+        raise ApiError(422, "tools.openapi_invalid", reason=str(exc)) from exc
+    except (KeyError, ValueError) as exc:
+        raise ApiError(422, "tools.openapi_unsupported", reason=str(exc)) from exc
+
+    existing = {
+        tool.name: tool
+        for tool in context.db.scalars(
+            select(Tool).where(
+                Tool.api_source_id == source.id,
+                Tool.deleted_at.is_(None),
+            )
+        )
+    }
+    created = updated = unchanged = 0
+    for candidate in candidates:
+        tool = existing.get(candidate.name)
+        if tool is None:
+            context.db.add(
+                Tool(
+                    api_source_id=source.id,
+                    operation_key=candidate.operation_key,
+                    name=candidate.name,
+                    description=candidate.description,
+                    input_schema=candidate.input_schema,
+                    execution_schema=candidate.execution_schema,
+                    enabled=False,
+                )
+            )
+            created += 1
+            continue
+        parameters_changed = (
+            tool.input_schema != candidate.input_schema
+            or tool.execution_schema != candidate.execution_schema
+        )
+        if not parameters_changed:
+            unchanged += 1
+            continue
+        tool.operation_key = candidate.operation_key
+        tool.description = candidate.description
+        tool.input_schema = candidate.input_schema
+        tool.execution_schema = candidate.execution_schema
+        updated += 1
+
+    source.spec_snapshot = json.dumps(spec, ensure_ascii=False, separators=(",", ":"))
+    source.spec_hash = hashlib.sha256(raw).hexdigest()
+    try:
+        context.db.commit()
+    except IntegrityError as exc:
+        context.db.rollback()
+        raise ApiError(409, "tools.name_conflict") from exc
+    return SourceRefreshResponse(created=created, updated=updated, unchanged=unchanged)
+
+
+@router.post("/sources/{source_id}/refresh", response_model=SourceRefreshResponse)
+async def refresh_source(
+    source_id: int,
+    context: AdminContext = Depends(require_csrf),
+) -> SourceRefreshResponse:
+    source = _managed_source(context, source_id)
+    if not source.document_url:
+        raise ApiError(409, "tools.source_url_required")
+    try:
+        raw = await _fetch_openapi_document(
+            source.document_url, source.allow_private_networks
+        )
+    except httpx.RequestError as exc:
+        raise ApiError(422, "tools.source_url_failed") from exc
+    return await _refresh_source_document(source, raw, context)
+
+
+@router.post("/sources/{source_id}/refresh-file", response_model=SourceRefreshResponse)
+async def refresh_source_file(
+    source_id: int,
+    document: UploadFile = File(),
+    context: AdminContext = Depends(require_csrf),
+) -> SourceRefreshResponse:
+    source = _managed_source(context, source_id)
+    raw = await document.read(5 * 1024 * 1024 + 1)
+    return await _refresh_source_document(source, raw, context)
 
 
 @router.patch("/sources/{source_id}/enabled", response_model=ApiSourceSummary)
