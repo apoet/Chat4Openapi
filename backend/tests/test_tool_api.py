@@ -7,6 +7,7 @@ import yaml
 from cryptography.fernet import Fernet
 from fastapi import FastAPI
 
+from chatapi.api import admin_tools
 from chatapi.api.tool_sessions import get_tool_executor, get_tool_secret_cipher
 from chatapi.security.encryption import SecretCipher
 from chatapi.tools.executor import ToolExecutionResult
@@ -30,6 +31,35 @@ class ApiFakeExecutor:
                 "application/json",
             )
         raise AssertionError(tool.name)
+
+
+@pytest.mark.asyncio
+async def test_url_import_does_not_verify_https_certificates(monkeypatch) -> None:
+    captured: dict = {}
+    real_async_client = httpx.AsyncClient
+
+    def create_client(*args, **kwargs):
+        captured.update(kwargs)
+        return real_async_client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(200, content=FIXTURE.read_bytes())
+            ),
+            timeout=kwargs["timeout"],
+            verify=kwargs.get("verify", True),
+        )
+
+    async def allow_network(*_args, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(admin_tools.httpx, "AsyncClient", create_client)
+    monkeypatch.setattr(admin_tools, "validate_network_target", allow_network)
+
+    document = await admin_tools._fetch_openapi_document(
+        "https://self-signed.example.test/openapi.yaml", False
+    )
+
+    assert document == FIXTURE.read_bytes()
+    assert captured["verify"] is False
 
 
 async def admin_login(client: httpx.AsyncClient) -> str:

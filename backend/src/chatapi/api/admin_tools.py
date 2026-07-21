@@ -122,7 +122,9 @@ async def import_source_file(
 
 async def _fetch_openapi_document(url: str, allow_private_networks: bool) -> bytes:
     target = httpx.URL(url)
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(30, connect=10), verify=False
+    ) as client:
         for redirect_count in range(4):
             try:
                 await validate_network_target(target, allow_private_networks)
