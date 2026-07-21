@@ -18,6 +18,13 @@ class Conversation(Base):
         ForeignKey("skills.id", ondelete="SET NULL"), nullable=True, index=True
     )
     title: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    candidate_skill_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
+    loaded_skill_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
+    agent_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    agent_status: Mapped[str] = mapped_column(String(32), default="running")
+    pending_clarification: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

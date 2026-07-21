@@ -36,3 +36,30 @@ def test_initial_migration_creates_foundation_tables(tmp_path: Path) -> None:
     table_names = set(inspect(engine).get_table_names())
     engine.dispose()
     assert {"admin_users", "admin_sessions", "app_settings"} <= table_names
+
+
+def test_agent_runtime_migration_creates_persistence_schema(tmp_path: Path) -> None:
+    database_url = sqlite_url(tmp_path / "agent-runtime.db")
+    config = Config("backend/alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(config, "head")
+
+    engine = create_engine_for_url(database_url)
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    conversation_columns = {
+        column["name"] for column in inspector.get_columns("conversations")
+    }
+    skill_columns = {column["name"] for column in inspector.get_columns("skills")}
+    engine.dispose()
+
+    assert {"agent_config", "tool_parameter_overrides"} <= table_names
+    assert {
+        "candidate_skill_ids",
+        "loaded_skill_ids",
+        "agent_mode",
+        "agent_status",
+        "pending_clarification",
+    } <= conversation_columns
+    assert {"provider_id", "model"}.isdisjoint(skill_columns)
