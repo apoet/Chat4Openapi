@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -110,12 +110,27 @@ class ToolAuthConfigResponse(ToolAuthConfigRequest):
 class ToolSessionLoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=512)
     password: str = Field(min_length=1, max_length=2048)
+    agent_id: int | None = Field(default=None, gt=0)
+
+
+class ToolCredentialInjectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    api_source_id: int = Field(gt=0)
+    headers: dict[str, str] = Field(default_factory=dict)
+    cookies: dict[str, str] = Field(default_factory=dict)
+    expires_at: datetime | None = None
+    agent_id: int | None = Field(default=None, gt=0)
 
 
 class ToolSessionStatus(BaseModel):
     authenticated: bool = True
     idle_expires_at: datetime
     absolute_expires_at: datetime
+    status: Literal[
+        "authorization_required", "pending", "ready", "expired", "revoked", "failed"
+    ] = "ready"
+    api_source_ids: list[int] = Field(default_factory=list)
 
 
 class ToolSessionCreated(ToolSessionStatus):

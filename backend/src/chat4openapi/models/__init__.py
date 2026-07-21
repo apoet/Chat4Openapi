@@ -10,7 +10,7 @@ from chat4openapi.models.tool import Tool
 from chat4openapi.models.tool_auth import GlobalToolAuthConfig
 from chat4openapi.models.tool_invocation import ToolInvocation
 from chat4openapi.models.tool_parameter import ToolParameterOverride
-from chat4openapi.models.tool_session import ToolUserSession
+from chat4openapi.models.tool_session import ToolSessionCredential, ToolUserSession
 
 __all__ = [
     "AdminSession",
@@ -29,5 +29,6 @@ __all__ = [
     "Tool",
     "ToolInvocation",
     "ToolParameterOverride",
+    "ToolSessionCredential",
     "ToolUserSession",
 ]

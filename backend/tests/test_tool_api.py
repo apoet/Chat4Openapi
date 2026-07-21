@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from chat4openapi.api import admin_tools
 from chat4openapi.api.tool_sessions import get_tool_executor, get_tool_secret_cipher
-from chat4openapi.models import Tool, ToolParameterOverride
+from chat4openapi.models import Agent, Tool, ToolParameterOverride
 from chat4openapi.security.encryption import SecretCipher
 from chat4openapi.tools.executor import ToolExecutionResult
 
@@ -568,12 +568,24 @@ async def test_url_source_remembers_document_url_and_refreshes(
 
 @pytest.mark.asyncio
 async def test_browser_and_api_tool_sessions_use_original_api_credentials(
-    client: httpx.AsyncClient, app: FastAPI
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory
 ) -> None:
     app.dependency_overrides[get_tool_executor] = lambda: ApiFakeExecutor()
     test_cipher = SecretCipher(Fernet.generate_key())
     app.dependency_overrides[get_tool_secret_cipher] = lambda: test_cipher
     csrf = await admin_login(client)
+    with db_session_factory() as session:
+        session.add(
+            Agent(
+                name="Tool test Agent",
+                enabled=True,
+                is_default=True,
+                system_prompt="Tool test Agent",
+                mode="human_in_loop",
+                max_iterations=8,
+            )
+        )
+        session.commit()
     imported = await client.post(
         "/api/admin/sources/import",
         json=import_payload(),

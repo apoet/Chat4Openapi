@@ -6,7 +6,6 @@ from fastmcp.tools.base import ToolResult
 from sqlalchemy.orm import Session, sessionmaker
 
 from chat4openapi.models import ApiSource, GlobalToolAuthConfig, Tool
-from chat4openapi.tool_sessions.service import ToolSessionService
 from chat4openapi.tools.errors import ToolExecutionError
 from chat4openapi.tools.executor import RequestAuth, ToolExecutor
 
@@ -64,9 +63,11 @@ class ManagedMCPTool(FastMCPTool):
                     raise ToolExecutionError(
                         "tool_session_required", "Original API Tool Session is required"
                     )
-                result = await ToolSessionService(
-                    session, self._cipher_factory(), self._executor
-                ).execute(tool, call_arguments, session_id)
+                raise ToolExecutionError(
+                    "auth.agent_key_required",
+                    "Authenticated Tool Sessions require an authenticated Agent owner; "
+                    "use the compatible API with X-Chat4Openapi-Tool-Session",
+                )
             else:
                 call_arguments.pop("tool_session_id", None)
                 result = await self._executor.execute(

@@ -5,7 +5,16 @@ from cryptography.fernet import Fernet
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from chat4openapi.models import ApiSource, GlobalToolAuthConfig, Tool, ToolUserSession
+from chat4openapi.models import (
+    Agent,
+    AgentApiKey,
+    ApiSource,
+    GlobalToolAuthConfig,
+    Tool,
+    ToolSessionCredential,
+    ToolUserSession,
+)
+from chat4openapi.security.agent_keys import AgentKeyContext
 from chat4openapi.security.encryption import SecretCipher
 from chat4openapi.tool_sessions.auth_mapping import build_request_auth, extract_json_path
 from chat4openapi.tool_sessions.service import (
@@ -45,8 +54,27 @@ class FakeExecutor:
         return ToolExecutionResult(200, {"auth": auth.headers["Authorization"]}, "application/json")
 
 
-def configured_runtime(factory: sessionmaker[Session]) -> tuple[Session, Tool, Tool]:
+def configured_runtime(
+    factory: sessionmaker[Session],
+) -> tuple[Session, Tool, Tool, AgentKeyContext]:
     session = factory()
+    agent = Agent(
+        name="Agent",
+        enabled=True,
+        is_default=True,
+        system_prompt="Agent",
+        mode="react",
+        max_iterations=8,
+    )
+    session.add(agent)
+    session.flush()
+    key = AgentApiKey(
+        agent_id=agent.id,
+        label="test",
+        key_prefix="c4o_test_key",
+        key_hash="a" * 64,
+    )
+    session.add(key)
     source = ApiSource(name="API", source_type="openapi", base_url="https://api.test")
     session.add(source)
     session.flush()
@@ -85,7 +113,7 @@ def configured_runtime(factory: sessionmaker[Session]) -> tuple[Session, Tool, T
         )
     )
     session.commit()
-    return session, login, protected
+    return session, login, protected, AgentKeyContext(agent=agent, api_key=key, db=session)
 
 
 def cipher() -> SecretCipher:
@@ -107,12 +135,12 @@ def test_json_path_and_request_auth_mappings() -> None:
 
 @pytest.mark.asyncio
 async def test_sessions_are_encrypted_and_identity_isolated(db_session_factory) -> None:
-    session, _, _ = configured_runtime(db_session_factory)
+    session, _, protected, context = configured_runtime(db_session_factory)
     executor = FakeExecutor()
     service = ToolSessionService(session, cipher(), executor)
 
-    alice = await service.create("alice", "alice-password")
-    bob = await service.create("bob", "bob-password")
+    alice = await service.create("alice", "alice-password", context=context)
+    bob = await service.create("bob", "bob-password", context=context)
 
     rows = session.scalars(select(ToolUserSession).order_by(ToolUserSession.id)).all()
     stored = b" ".join(
@@ -122,10 +150,18 @@ async def test_sessions_are_encrypted_and_identity_isolated(db_session_factory) 
     assert b"alice-password" not in stored
     assert rows[0].token_hash != alice.token
     assert rows[1].token_hash != bob.token
-    assert (await service.resolve(alice.token)).auth.headers == {
+    assert (
+        await service.resolve(
+            alice.token, context.agent.id, context.api_key.id, protected.api_source_id
+        )
+    ).auth.headers == {
         "Authorization": "Bearer alice-token-1"
     }
-    assert (await service.resolve(bob.token)).auth.headers == {
+    assert (
+        await service.resolve(
+            bob.token, context.agent.id, context.api_key.id, protected.api_source_id
+        )
+    ).auth.headers == {
         "Authorization": "Bearer bob-token-2"
     }
     assert executor.login_calls == ["alice", "bob"]
@@ -134,43 +170,70 @@ async def test_sessions_are_encrypted_and_identity_isolated(db_session_factory) 
 
 @pytest.mark.asyncio
 async def test_idle_absolute_expiry_and_revoke_delete_secrets(db_session_factory) -> None:
-    session, _, _ = configured_runtime(db_session_factory)
-    service = ToolSessionService(session, cipher(), FakeExecutor())
-    expired = await service.create("expired", "password")
+    session, _, protected, context = configured_runtime(db_session_factory)
+    test_cipher = cipher()
+    service = ToolSessionService(session, test_cipher, FakeExecutor())
+    expired = await service.create("expired", "password", context=context)
     row = session.scalar(select(ToolUserSession).where(ToolUserSession.token_hash == expired.token_hash))
     assert row is not None
     row.idle_expires_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=1)
     session.commit()
 
     with pytest.raises(ToolSessionExpired):
-        await service.resolve(expired.token)
-    assert session.scalar(
+        await service.resolve(
+            expired.token, context.agent.id, context.api_key.id, protected.api_source_id
+        )
+    expired_row = session.scalar(
         select(ToolUserSession).where(ToolUserSession.token_hash == expired.token_hash)
-    ) is None
+    )
+    assert expired_row is not None
+    assert expired_row.status == "expired"
+    assert expired_row.encrypted_login_data is None
+    assert expired_row.encrypted_auth_data is None
+    expired_credential = session.scalar(
+        select(ToolSessionCredential).where(
+            ToolSessionCredential.tool_session_id == expired_row.id
+        )
+    )
+    assert expired_credential is not None
+    assert expired_credential.status == "expired"
+    assert test_cipher.decrypt_json(expired_credential.encrypted_credentials) == {}
 
-    active = await service.create("active", "password")
-    await service.revoke(active.token)
+    active = await service.create("active", "password", context=context)
+    await service.revoke(
+        active.token, context.agent.id, context.api_key.id
+    )
     with pytest.raises(ToolSessionNotFound):
-        await service.resolve(active.token)
+        await service.resolve(
+            active.token, context.agent.id, context.api_key.id, protected.api_source_id
+        )
     session.close()
 
 
 @pytest.mark.asyncio
 async def test_refreshes_expired_auth_and_retries_one_unauthorized_call(db_session_factory) -> None:
-    session, _, protected = configured_runtime(db_session_factory)
+    session, _, protected, context = configured_runtime(db_session_factory)
     executor = FakeExecutor()
     service = ToolSessionService(session, cipher(), executor)
-    created = await service.create("alice", "password")
+    created = await service.create("alice", "password", context=context)
     row = session.scalar(select(ToolUserSession).where(ToolUserSession.token_hash == created.token_hash))
     assert row is not None
     row.auth_expires_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=1)
     session.commit()
 
-    resolved = await service.resolve(created.token)
+    resolved = await service.resolve(
+        created.token, context.agent.id, context.api_key.id, protected.api_source_id
+    )
     assert resolved.auth.headers["Authorization"] == "Bearer alice-token-2"
 
     executor.fail_protected_once = True
-    result = await service.execute(protected, {}, created.token)
+    result = await service.execute(
+        protected,
+        {},
+        created.token,
+        agent_id=context.agent.id,
+        agent_key_id=context.api_key.id,
+    )
     assert result.data == {"auth": "Bearer alice-token-3"}
     assert executor.protected_calls == 2
     assert executor.login_calls == ["alice", "alice", "alice"]

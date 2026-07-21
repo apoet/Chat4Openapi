@@ -120,6 +120,8 @@ class AgentTurnRequest:
     interactive: bool
     conversation_id: str | None = None
     tool_session_id: str | None = None
+    agent_key_id: int | None = None
+    admin_session_id: int | None = None
     incoming_messages: list[CanonicalMessage] = dataclass_field(default_factory=list)
     candidate_scope_source: Literal["automatic", "explicit"] = "automatic"
 
@@ -355,7 +357,14 @@ class AgentRuntime:
                     observation = (
                         self._invalid_arguments(call.name, errors, control=False)
                         if errors
-                        else await self._execute_tool(tool, call.arguments, request.tool_session_id)
+                        else await self._execute_tool(
+                            tool,
+                            call.arguments,
+                            request.tool_session_id,
+                            agent_id=request.agent_id,
+                            agent_key_id=request.agent_key_id,
+                            admin_session_id=request.admin_session_id,
+                        )
                     )
             self._persist_message(
                 conversation.id,
@@ -559,16 +568,30 @@ class AgentRuntime:
         )
 
     async def _execute_tool(
-        self, tool: Tool, arguments: dict[str, Any], tool_session_id: str | None
+        self,
+        tool: Tool,
+        arguments: dict[str, Any],
+        tool_session_id: str | None,
+        *,
+        agent_id: int,
+        agent_key_id: int | None,
+        admin_session_id: int | None,
     ) -> Any:
         try:
             config = self._session.get(GlobalToolAuthConfig, 1)
-            if config is not None and config.enabled:
-                if not tool_session_id:
-                    return {"error": "tool_session_required", "tool": tool.name}
+            if tool_session_id:
                 result = await ToolSessionService(
                     self._session, self._cipher, self._tool_runner
-                ).execute(tool, arguments, tool_session_id)
+                ).execute(
+                    tool,
+                    arguments,
+                    tool_session_id,
+                    agent_id=agent_id,
+                    agent_key_id=agent_key_id,
+                    admin_session_id=admin_session_id,
+                )
+            elif config is not None and config.enabled:
+                return {"error": "tool_authorization_required", "tool": tool.name}
             else:
                 source = self._session.get(ApiSource, tool.api_source_id)
                 if source is None or source.deleted_at is not None or not source.enabled:

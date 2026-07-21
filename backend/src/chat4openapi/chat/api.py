@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from chat4openapi.api.errors import ApiError
 from chat4openapi.api.tool_sessions import (
     TOOL_SESSION_COOKIE,
+    get_optional_tool_session_owner,
     get_tool_executor,
     get_tool_secret_cipher,
 )
@@ -118,12 +119,10 @@ def _session_id(
     body: dict[str, Any],
     request: Request,
     chat4openapi_header: str | None,
-    legacy_header: str | None,
 ) -> str | None:
     return (
         body.get("tool_session_id")
         or chat4openapi_header
-        or legacy_header
         or request.cookies.get(TOOL_SESSION_COOKIE)
     )
 
@@ -269,7 +268,6 @@ async def _run(
     llm: LlmClient,
     executor: ToolExecutor,
     chat4openapi_tool_session_header: str | None,
-    legacy_tool_session_header: str | None,
     key_context: AgentKeyContext,
     *,
     anthropic: bool,
@@ -303,7 +301,6 @@ async def _run(
                 body,
                 request,
                 chat4openapi_tool_session_header,
-                legacy_tool_session_header,
             ),
             incoming_messages=_incoming_messages(body, anthropic=anthropic),
             candidate_scope_source=(
@@ -312,6 +309,7 @@ async def _run(
                 else "automatic"
             ),
             agent_id=key_context.agent.id,
+            agent_key_id=key_context.api_key.id,
         ),
         db,
         cipher,
@@ -333,11 +331,11 @@ async def browser_turn(
     chat4openapi_tool_session_header: str | None = Header(
         default=None, alias="X-Chat4Openapi-Tool-Session"
     ),
-    legacy_tool_session_header: str | None = Header(default=None, alias="X-Tool-Session-ID"),
     db: Session = Depends(get_db_session),
     cipher: SecretCipher = Depends(get_tool_secret_cipher),
     llm: LlmClient = Depends(get_llm_client),
     executor: ToolExecutor = Depends(get_tool_executor),
+    owner=Depends(get_optional_tool_session_owner),
 ) -> ChatTurnResponse:
     agent_id = _browser_agent_id(db, payload)
     result = await _run_agent(
@@ -349,10 +347,13 @@ async def browser_turn(
             conversation_id=payload.conversation_id,
             tool_session_id=(
                 chat4openapi_tool_session_header
-                or legacy_tool_session_header
                 or request.cookies.get(TOOL_SESSION_COOKIE)
             ),
             candidate_scope_source="automatic",
+            agent_key_id=(owner.api_key.id if isinstance(owner, AgentKeyContext) else None),
+            admin_session_id=(
+                owner.admin_session.id if owner is not None and hasattr(owner, "admin_session") else None
+            ),
         ),
         db,
         cipher,
@@ -419,7 +420,6 @@ async def openai_chat(
     chat4openapi_tool_session_header: str | None = Header(
         default=None, alias="X-Chat4Openapi-Tool-Session"
     ),
-    legacy_tool_session_header: str | None = Header(default=None, alias="X-Tool-Session-ID"),
     db: Session = Depends(get_db_session),
     cipher: SecretCipher = Depends(get_tool_secret_cipher),
     llm: LlmClient = Depends(get_llm_client),
@@ -433,7 +433,6 @@ async def openai_chat(
         llm,
         executor,
         chat4openapi_tool_session_header,
-        legacy_tool_session_header,
         key_context,
         anthropic=False,
     )
@@ -485,7 +484,6 @@ async def anthropic_messages(
     chat4openapi_tool_session_header: str | None = Header(
         default=None, alias="X-Chat4Openapi-Tool-Session"
     ),
-    legacy_tool_session_header: str | None = Header(default=None, alias="X-Tool-Session-ID"),
     db: Session = Depends(get_db_session),
     cipher: SecretCipher = Depends(get_tool_secret_cipher),
     llm: LlmClient = Depends(get_llm_client),
@@ -499,7 +497,6 @@ async def anthropic_messages(
         llm,
         executor,
         chat4openapi_tool_session_header,
-        legacy_tool_session_header,
         key_context,
         anthropic=True,
     )
