@@ -327,3 +327,38 @@ async def test_refreshes_expired_auth_and_retries_one_unauthorized_call(db_sessi
     assert executor.protected_calls == 2
     assert executor.login_calls == ["alice", "alice", "alice"]
     session.close()
+
+
+@pytest.mark.asyncio
+async def test_forbidden_tool_response_does_not_refresh_or_replay(db_session_factory) -> None:
+    session, _, protected, context = configured_runtime(db_session_factory)
+
+    class ForbiddenExecutor(FakeExecutor):
+        async def execute(self, tool, source, arguments, auth):
+            if tool.name == "login":
+                return await super().execute(tool, source, arguments, auth)
+            self.protected_calls += 1
+            raise ToolExecutionError(
+                "upstream_error",
+                "forbidden",
+                status_code=403,
+                details={"error": "forbidden"},
+            )
+
+    executor = ForbiddenExecutor()
+    service = ToolSessionService(session, cipher(), executor)
+    created = await service.create("alice", "password", context=context)
+
+    with pytest.raises(ToolExecutionError) as forbidden:
+        await service.execute(
+            protected,
+            {},
+            created.token,
+            agent_id=context.agent.id,
+            agent_key_id=context.api_key.id,
+        )
+
+    assert forbidden.value.status_code == 403
+    assert executor.protected_calls == 1
+    assert executor.login_calls == ["alice"]
+    session.close()

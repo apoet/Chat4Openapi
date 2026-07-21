@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import secrets
@@ -11,6 +12,7 @@ import httpx
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from chat4openapi.db.serialized_write import serialized_write
 from chat4openapi.models import (
     ApiSource,
     ApiSourceOAuthConfig,
@@ -64,10 +66,11 @@ class _UnusedExecutor:
         raise AssertionError("OAuth does not execute Tools")
 
 
-def _positive_seconds(value: Any, *, default: int, maximum: int) -> int:
+def _positive_seconds(value: Any, *, default: int, maximum: int | None) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         return default
-    return min(maximum, max(1, int(value)))
+    seconds = max(1, int(value))
+    return min(maximum, seconds) if maximum is not None else seconds
 
 
 def _safe_url(value: Any, *, required: bool = True) -> str | None:
@@ -236,7 +239,7 @@ class ToolOAuthService:
         if not all(isinstance(value, str) and value for value in (device_code, user_code, verification_uri)):
             raise OAuthFlowError("oauth.upstream_failed")
         expires_in = _positive_seconds(payload.get("expires_in"), default=600, maximum=3600)
-        interval = _positive_seconds(payload.get("interval"), default=5, maximum=60)
+        interval = _positive_seconds(payload.get("interval"), default=5, maximum=None)
         now = self._now()
         expires_at = now + timedelta(seconds=expires_in)
         token, row, _credential = self._pending_session(
@@ -290,9 +293,6 @@ class ToolOAuthService:
         if flow.expires_at <= now:
             self._terminal(row, flow, "expired")
             return OAuthStatus(token, "expired", flow.api_source_id, flow.expires_at, flow.interval_seconds)
-        if flow.next_poll_at is not None and flow.next_poll_at > now:
-            retry_after = max(1, int((flow.next_poll_at - now).total_seconds()))
-            raise OAuthPollingTooSoon(retry_after)
         source = self._source(flow.api_source_id)
         _, config = self._config(source.id)
         flow_data = self._cipher.decrypt_json(flow.encrypted_flow_data)
@@ -303,26 +303,140 @@ class ToolOAuthService:
                 "device_code": flow_data["device_code"],
             }
         )
-        response = await self._post(source, config["token_url"], fields)
-        payload = self._response_json(response)
-        if response.status_code < 400:
-            self._store_token(row, flow, payload)
-            return OAuthStatus(token, "ready", source.id, row.absolute_expires_at)
-        error = payload.get("error")
-        interval = flow.interval_seconds or 5
-        if error == "authorization_pending":
+        claimed = self._claim_device_poll(row.id, flow.id, now)
+        if isinstance(claimed, OAuthStatus):
+            return OAuthStatus(
+                token,
+                claimed.status,
+                claimed.api_source_id,
+                claimed.expires_at,
+                claimed.interval,
+            )
+        generation, interval = claimed
+        try:
+            response = await self._post(source, config["token_url"], fields)
+            payload = self._response_json(response)
+        except OAuthFlowError:
+            self._release_operation(flow.id, generation)
+            raise
+        return self._finish_device_poll(
+            token,
+            row.id,
+            flow.id,
+            generation,
+            interval,
+            response.status_code,
+            payload,
+        )
+
+    def _claim_device_poll(
+        self, row_id: int, flow_id: int, now: datetime
+    ) -> tuple[int, int] | OAuthStatus:
+        with serialized_write(self._session):
+            row = self._session.get(ToolUserSession, row_id)
+            flow = self._session.get(ToolOAuthAuthorization, flow_id)
+            if row is None or flow is None:
+                raise OAuthFlowError("oauth.session_not_found")
+            interval = flow.interval_seconds or 5
+            if flow.status != "pending":
+                return OAuthStatus("", flow.status, flow.api_source_id, flow.expires_at, interval)
+            if flow.expires_at <= now:
+                self._terminal(row, flow, "expired", commit=False)
+                return OAuthStatus("", "expired", flow.api_source_id, flow.expires_at, interval)
+            lease_expires_at = (
+                flow.operation_started_at + timedelta(seconds=60)
+                if flow.operation_started_at is not None
+                else None
+            )
+            operation_is_active = flow.operation_in_progress and (
+                lease_expires_at is not None and lease_expires_at > now
+            )
+            if operation_is_active or (
+                not flow.operation_in_progress
+                and flow.next_poll_at is not None
+                and flow.next_poll_at > now
+            ):
+                retry_at = max(
+                    candidate
+                    for candidate in (flow.next_poll_at, lease_expires_at, now)
+                    if candidate is not None
+                )
+                retry_after = max(
+                    1,
+                    int((retry_at - now).total_seconds()),
+                )
+                raise OAuthPollingTooSoon(retry_after)
+            flow.operation_generation += 1
+            flow.operation_in_progress = True
+            flow.operation_started_at = now
             flow.next_poll_at = now + timedelta(seconds=interval)
-            self._session.commit()
-            return OAuthStatus(token, "pending", source.id, flow.expires_at, interval)
-        if error == "slow_down":
-            interval = min(60, interval + 5)
-            flow.interval_seconds = interval
-            flow.next_poll_at = now + timedelta(seconds=interval)
-            self._session.commit()
-            return OAuthStatus(token, "pending", source.id, flow.expires_at, interval)
-        terminal = "expired" if error == "expired_token" else "failed"
-        self._terminal(row, flow, terminal)
-        return OAuthStatus(token, terminal, source.id, flow.expires_at, interval)
+            return flow.operation_generation, interval
+
+    def _release_operation(self, flow_id: int, generation: int) -> None:
+        with serialized_write(self._session):
+            flow = self._session.get(ToolOAuthAuthorization, flow_id)
+            if (
+                flow is not None
+                and flow.operation_generation == generation
+                and flow.operation_in_progress
+                and flow.status == "pending"
+            ):
+                flow.operation_in_progress = False
+                flow.operation_started_at = None
+
+    def _finish_device_poll(
+        self,
+        token: str,
+        row_id: int,
+        flow_id: int,
+        generation: int,
+        interval: int,
+        status_code: int,
+        payload: Mapping[str, Any],
+    ) -> OAuthStatus:
+        with serialized_write(self._session):
+            row = self._session.get(ToolUserSession, row_id)
+            flow = self._session.get(ToolOAuthAuthorization, flow_id)
+            if row is None or flow is None:
+                raise OAuthFlowError("oauth.session_not_found")
+            if (
+                flow.status != "pending"
+                or not flow.operation_in_progress
+                or flow.operation_generation != generation
+            ):
+                return OAuthStatus(
+                    token,
+                    flow.status,
+                    flow.api_source_id,
+                    flow.expires_at,
+                    flow.interval_seconds,
+                )
+            flow.operation_in_progress = False
+            flow.operation_started_at = None
+            if status_code < 400:
+                try:
+                    self._store_token(row, flow, payload, commit=False)
+                except OAuthFlowError:
+                    self._terminal(row, flow, "failed", commit=False)
+                    return OAuthStatus(
+                        token,
+                        "failed",
+                        flow.api_source_id,
+                        flow.expires_at,
+                        interval,
+                    )
+                return OAuthStatus(token, "ready", flow.api_source_id, row.absolute_expires_at)
+            error = payload.get("error")
+            if error == "authorization_pending":
+                return OAuthStatus(token, "pending", flow.api_source_id, flow.expires_at, interval)
+            if error == "slow_down":
+                interval += 5
+                flow.interval_seconds = interval
+                flow.next_poll_at = self._now() + timedelta(seconds=interval)
+                return OAuthStatus(token, "pending", flow.api_source_id, flow.expires_at, interval)
+            terminal = "expired" if error == "expired_token" else "failed"
+            self._terminal(row, flow, terminal, commit=False)
+            return OAuthStatus(token, terminal, flow.api_source_id, flow.expires_at, interval)
 
     async def start_pkce(
         self,
@@ -414,30 +528,56 @@ class ToolOAuthService:
             self._session.rollback()
             raise OAuthFlowError("oauth.state_invalid")
         self._session.commit()
-        self._session.refresh(flow)
-        source = self._source(flow.api_source_id)
-        _, config = self._config(source.id)
-        flow_data = self._cipher.decrypt_json(flow.encrypted_flow_data)
-        fields = self._client_fields(config)
-        fields.update(
-            {
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": config["redirect_uri"],
-                "code_verifier": flow_data["code_verifier"],
-            }
-        )
-        response = await self._post(source, config["token_url"], fields)
-        payload = self._response_json(response)
-        row = self._session.get(ToolUserSession, flow.tool_session_id)
-        if row is None or response.status_code >= 400:
+        flow_id = flow.id
+        row_id = flow.tool_session_id
+        try:
+            self._session.refresh(flow)
+            source = self._source(flow.api_source_id)
+            _, config = self._config(source.id)
+            flow_data = self._cipher.decrypt_json(flow.encrypted_flow_data)
+            fields = self._client_fields(config)
+            fields.update(
+                {
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": config["redirect_uri"],
+                    "code_verifier": flow_data["code_verifier"],
+                }
+            )
+            response = await self._post(source, config["token_url"], fields)
+            payload = self._response_json(response)
+            row = self._session.get(ToolUserSession, row_id)
+            if row is None or response.status_code >= 400:
+                raise OAuthFlowError("oauth.exchange_failed")
+            self._store_token(row, flow, payload)
+            return OAuthStatus(
+                flow_data["tool_session_token"],
+                "ready",
+                source.id,
+                row.absolute_expires_at,
+            )
+        except Exception:
+            self._fail_claimed_pkce(flow_id, row_id)
+            raise OAuthFlowError("oauth.exchange_failed") from None
+
+    def _fail_claimed_pkce(self, flow_id: int, row_id: int) -> None:
+        with serialized_write(self._session):
+            flow = self._session.get(ToolOAuthAuthorization, flow_id)
+            if (
+                flow is None
+                or flow.flow_type != "pkce"
+                or flow.status != "pending"
+                or flow.consumed_at is None
+            ):
+                return
+            row = self._session.get(ToolUserSession, row_id)
             if row is not None:
-                self._terminal(row, flow, "failed")
-            raise OAuthFlowError("oauth.exchange_failed")
-        self._store_token(row, flow, payload)
-        return OAuthStatus(
-            flow_data["tool_session_token"], "ready", source.id, row.absolute_expires_at
-        )
+                self._terminal(row, flow, "failed", commit=False)
+                return
+            flow.status = "failed"
+            flow.operation_in_progress = False
+            flow.operation_started_at = None
+            flow.encrypted_flow_data = self._cipher.encrypt_json({})
 
     @staticmethod
     def _response_json(response: httpx.Response) -> dict[str, Any]:
@@ -456,6 +596,7 @@ class ToolOAuthService:
         payload: Mapping[str, Any],
         *,
         prior_refresh_token: str | None = None,
+        commit: bool = True,
     ) -> None:
         access_token = payload.get("access_token")
         token_type = payload.get("token_type", "Bearer")
@@ -506,12 +647,24 @@ class ToolOAuthService:
         row.absolute_expires_at = absolute_expires_at
         row.idle_expires_at = min(now + timedelta(minutes=30), row.absolute_expires_at)
         flow.status = "ready"
+        flow.operation_in_progress = False
+        flow.operation_started_at = None
         flow.encrypted_flow_data = self._cipher.encrypt_json({})
-        self._session.commit()
+        if commit:
+            self._session.commit()
 
-    def _terminal(self, row: ToolUserSession, flow: ToolOAuthAuthorization, status: str) -> None:
+    def _terminal(
+        self,
+        row: ToolUserSession,
+        flow: ToolOAuthAuthorization,
+        status: str,
+        *,
+        commit: bool = True,
+    ) -> None:
         row.status = status
         flow.status = status
+        flow.operation_in_progress = False
+        flow.operation_started_at = None
         flow.encrypted_flow_data = self._cipher.encrypt_json({})
         credential = self._session.scalar(
             select(ToolSessionCredential).where(
@@ -522,7 +675,8 @@ class ToolOAuthService:
         if credential is not None:
             credential.status = status
             credential.encrypted_credentials = self._cipher.encrypt_json({})
-        self._session.commit()
+        if commit:
+            self._session.commit()
 
     async def refresh(self, token: str, context: Any, source_id: int) -> OAuthStatus:
         service = ToolSessionService(self._session, self._cipher, _UnusedExecutor(), now=self._now)
@@ -549,31 +703,200 @@ class ToolOAuthService:
     async def refresh_bound(
         self, row: ToolUserSession, credential: ToolSessionCredential
     ) -> None:
+        claim_kind, generation, refresh_token = self._claim_refresh(
+            row.id, credential.id
+        )
+        if claim_kind == "expired":
+            raise OAuthFlowError("oauth.session_expired")
+        if claim_kind == "wait":
+            await self._wait_for_refresh(
+                row.id, credential.id, generation
+            )
+            return
+        assert refresh_token is not None
         flow = self._session.scalar(
             select(ToolOAuthAuthorization).where(
                 ToolOAuthAuthorization.tool_session_id == row.id,
                 ToolOAuthAuthorization.api_source_id == credential.api_source_id,
-                ToolOAuthAuthorization.status == "ready",
             )
         )
         if flow is None:
             raise OAuthFlowError("oauth.refresh_unavailable")
-        stored = self._cipher.decrypt_json(credential.encrypted_credentials)
-        oauth = stored.get("oauth", {}) if isinstance(stored, dict) else {}
-        refresh_token = oauth.get("refresh_token") if isinstance(oauth, dict) else None
-        if not isinstance(refresh_token, str) or not refresh_token:
-            raise OAuthFlowError("oauth.refresh_unavailable")
-        source = self._source(credential.api_source_id)
-        _, config = self._config(source.id)
-        fields = self._client_fields(config)
-        fields.update({"grant_type": "refresh_token", "refresh_token": refresh_token})
-        response = await self._post(source, config["token_url"], fields)
-        if response.status_code >= 400:
-            self._terminal(row, flow, "failed")
+        try:
+            source = self._source(credential.api_source_id)
+            _, config = self._config(source.id)
+            fields = self._client_fields(config)
+            fields.update(
+                {"grant_type": "refresh_token", "refresh_token": refresh_token}
+            )
+            response = await self._post(source, config["token_url"], fields)
+            if response.status_code >= 400:
+                raise OAuthFlowError("oauth.refresh_failed")
+            payload = self._response_json(response)
+        except Exception:
+            self._finish_refresh_failure(flow.id, generation)
+            raise OAuthFlowError("oauth.refresh_failed") from None
+        if not self._finish_refresh_success(
+            row.id,
+            credential.id,
+            flow.id,
+            generation,
+            refresh_token,
+            payload,
+        ):
             raise OAuthFlowError("oauth.refresh_failed")
-        self._store_token(
-            row,
-            flow,
-            self._response_json(response),
-            prior_refresh_token=refresh_token,
-        )
+
+    def _claim_refresh(
+        self, row_id: int, credential_id: int
+    ) -> tuple[str, int, str | None]:
+        result: tuple[str, int, str | None]
+        with serialized_write(self._session):
+            now = self._now()
+            row = self._session.get(ToolUserSession, row_id)
+            credential = self._session.get(ToolSessionCredential, credential_id)
+            flow = self._session.scalar(
+                select(ToolOAuthAuthorization).where(
+                    ToolOAuthAuthorization.tool_session_id == row_id,
+                    ToolOAuthAuthorization.api_source_id
+                    == (credential.api_source_id if credential is not None else -1),
+                )
+            )
+            if row is None or credential is None or flow is None:
+                raise OAuthFlowError("oauth.refresh_unavailable")
+            if row.idle_expires_at <= now or row.absolute_expires_at <= now:
+                self._expire_oauth_session(row)
+                result = ("expired", flow.operation_generation, None)
+            elif (
+                row.status != "ready"
+                or credential.status != "ready"
+                or flow.status != "ready"
+            ):
+                raise OAuthFlowError("oauth.refresh_unavailable")
+            else:
+                lease_expires_at = (
+                    flow.operation_started_at + timedelta(seconds=60)
+                    if flow.operation_started_at is not None
+                    else None
+                )
+                if (
+                    flow.operation_in_progress
+                    and lease_expires_at is not None
+                    and lease_expires_at > now
+                ):
+                    result = ("wait", flow.operation_generation, None)
+                else:
+                    stored = self._cipher.decrypt_json(
+                        credential.encrypted_credentials
+                    )
+                    oauth = stored.get("oauth", {}) if isinstance(stored, dict) else {}
+                    refresh_token = (
+                        oauth.get("refresh_token") if isinstance(oauth, dict) else None
+                    )
+                    if not isinstance(refresh_token, str) or not refresh_token:
+                        raise OAuthFlowError("oauth.refresh_unavailable")
+                    flow.operation_generation += 1
+                    flow.operation_in_progress = True
+                    flow.operation_started_at = now
+                    result = ("claimed", flow.operation_generation, refresh_token)
+        return result
+
+    def _expire_oauth_session(self, row: ToolUserSession) -> None:
+        row.status = "expired"
+        row.encrypted_login_data = None
+        row.encrypted_auth_data = None
+        for credential in self._session.scalars(
+            select(ToolSessionCredential).where(
+                ToolSessionCredential.tool_session_id == row.id
+            )
+        ):
+            credential.status = "expired"
+            credential.encrypted_credentials = self._cipher.encrypt_json({})
+        for flow in self._session.scalars(
+            select(ToolOAuthAuthorization).where(
+                ToolOAuthAuthorization.tool_session_id == row.id
+            )
+        ):
+            flow.status = "expired"
+            flow.operation_in_progress = False
+            flow.operation_started_at = None
+            flow.encrypted_flow_data = self._cipher.encrypt_json({})
+
+    async def _wait_for_refresh(
+        self, row_id: int, credential_id: int, generation: int
+    ) -> None:
+        deadline = asyncio.get_running_loop().time() + 25
+        while asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.01)
+            self._session.rollback()
+            self._session.expire_all()
+            credential = self._session.get(ToolSessionCredential, credential_id)
+            flow = self._session.scalar(
+                select(ToolOAuthAuthorization).where(
+                    ToolOAuthAuthorization.tool_session_id == row_id,
+                    ToolOAuthAuthorization.api_source_id
+                    == (credential.api_source_id if credential is not None else -1),
+                )
+            )
+            if credential is None or flow is None:
+                raise OAuthFlowError("oauth.refresh_failed")
+            if flow.operation_in_progress and flow.operation_generation == generation:
+                continue
+            if (
+                flow.status == "ready"
+                and credential.status == "ready"
+                and flow.operation_generation >= generation
+                and not flow.operation_in_progress
+            ):
+                return
+            raise OAuthFlowError("oauth.refresh_failed")
+        raise OAuthFlowError("oauth.refresh_failed")
+
+    def _finish_refresh_failure(self, flow_id: int, generation: int) -> None:
+        with serialized_write(self._session):
+            flow = self._session.get(ToolOAuthAuthorization, flow_id)
+            if (
+                flow is None
+                or not flow.operation_in_progress
+                or flow.operation_generation != generation
+                or flow.status != "ready"
+            ):
+                return
+            row = self._session.get(ToolUserSession, flow.tool_session_id)
+            if row is not None:
+                self._terminal(row, flow, "failed", commit=False)
+
+    def _finish_refresh_success(
+        self,
+        row_id: int,
+        credential_id: int,
+        flow_id: int,
+        generation: int,
+        prior_refresh_token: str,
+        payload: Mapping[str, Any],
+    ) -> bool:
+        succeeded = False
+        with serialized_write(self._session):
+            row = self._session.get(ToolUserSession, row_id)
+            credential = self._session.get(ToolSessionCredential, credential_id)
+            flow = self._session.get(ToolOAuthAuthorization, flow_id)
+            if row is None or credential is None or flow is None:
+                return False
+            if (
+                not flow.operation_in_progress
+                or flow.operation_generation != generation
+                or flow.status != "ready"
+            ):
+                return False
+            try:
+                self._store_token(
+                    row,
+                    flow,
+                    payload,
+                    prior_refresh_token=prior_refresh_token,
+                    commit=False,
+                )
+            except OAuthFlowError:
+                self._terminal(row, flow, "failed", commit=False)
+            else:
+                succeeded = True
+        return succeeded

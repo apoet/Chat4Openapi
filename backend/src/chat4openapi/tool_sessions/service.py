@@ -556,7 +556,7 @@ class ToolSessionService:
         try:
             return await self._executor.execute(tool, source, arguments, resolved.auth)
         except ToolExecutionError as exc:
-            if exc.status_code not in {401, 403}:
+            if exc.status_code != 401:
                 raise
         refreshed = await self.resolve(
             token,
