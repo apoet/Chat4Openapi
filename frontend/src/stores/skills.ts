@@ -2,12 +2,18 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
 import { request } from '../api/client'
-import type { LlmProviderSummary, SkillSummary, ToolSummary } from '../api/contracts'
+import type {
+  ApiSourceSummary,
+  LlmProviderSummary,
+  SkillSummary,
+  ToolSummary,
+} from '../api/contracts'
 import { useAuthStore } from './auth'
 
 export const useSkillsStore = defineStore('skills', () => {
   const providers = ref<LlmProviderSummary[]>([])
   const tools = ref<ToolSummary[]>([])
+  const sources = ref<ApiSourceSummary[]>([])
   const skills = ref<SkillSummary[]>([])
 
   async function loadProviders(): Promise<void> {
@@ -15,6 +21,9 @@ export const useSkillsStore = defineStore('skills', () => {
   }
   async function loadTools(): Promise<void> {
     tools.value = await request<ToolSummary[]>('/api/admin/skills/eligible-tools')
+  }
+  async function loadSources(): Promise<void> {
+    sources.value = await request<ApiSourceSummary[]>('/api/admin/sources')
   }
   async function loadSkills(): Promise<void> {
     skills.value = await request<SkillSummary[]>('/api/admin/skills')
@@ -41,5 +50,17 @@ export const useSkillsStore = defineStore('skills', () => {
     await request<void>(`/api/admin/skills/${skill.id}`, { method: 'DELETE' }, auth.csrfToken)
     await loadSkills()
   }
-  return { providers, tools, skills, loadProviders, loadTools, loadSkills, save, setRunning, remove }
+  return {
+    providers,
+    tools,
+    sources,
+    skills,
+    loadProviders,
+    loadTools,
+    loadSources,
+    loadSkills,
+    save,
+    setRunning,
+    remove,
+  }
 })

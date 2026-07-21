@@ -83,6 +83,9 @@ describe('Skills and chat', () => {
             },
           ]),
         )
+        .mockResolvedValueOnce(response([
+          { id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://pets.test', document_url: null, allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+        ]))
         .mockResolvedValueOnce(response([])),
     )
 
@@ -96,10 +99,53 @@ describe('Skills and chat', () => {
     expect(screen.getByText('1 Tool bound')).toBeTruthy()
   })
 
+  it('offers enabled Tool mentions after typing @ in the prompt', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response([{ id: 1, name: 'Primary', provider_type: 'openai', base_url: 'https://llm.test/v1', default_model: 'gpt-test', enabled: true, has_api_key: true }]))
+      .mockResolvedValueOnce(response([
+        { id: 2, api_source_id: 1, operation_key: 'GET /pets/{id}', name: 'get_pet', description: 'Get pet', input_schema: {}, execution_schema: {}, tags: ['Pets'], enabled: true },
+        { id: 3, api_source_id: 1, operation_key: 'GET /orders', name: 'list_orders', description: 'List orders', input_schema: {}, execution_schema: {}, tags: ['Orders'], enabled: true },
+      ]))
+      .mockResolvedValueOnce(response([{ id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://pets.test', document_url: null, allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' }]))
+      .mockResolvedValueOnce(response([])))
+
+    render(SkillsView, { global: { plugins: [i18n] } })
+    const prompt = await screen.findByLabelText('System prompt') as HTMLTextAreaElement
+    await fireEvent.update(prompt, 'Use @get')
+    await fireEvent.click(await screen.findByRole('button', { name: 'Mention get_pet' }))
+
+    expect(prompt.value).toBe('Use {{tool:get_pet}}')
+    expect(screen.getByText('1 Tool bound')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Mention list_orders' })).toBeNull()
+  })
+
+  it('groups quick references by API source and Swagger tag', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response([{ id: 1, name: 'Primary', provider_type: 'openai', base_url: 'https://llm.test/v1', default_model: 'gpt-test', enabled: true, has_api_key: true }]))
+      .mockResolvedValueOnce(response([
+        { id: 2, api_source_id: 1, operation_key: 'GET /pets', name: 'list_pets', description: null, input_schema: {}, execution_schema: {}, tags: ['Pet operations'], enabled: true },
+        { id: 3, api_source_id: 2, operation_key: 'GET /orders', name: 'list_orders', description: null, input_schema: {}, execution_schema: {}, tags: ['Order operations'], enabled: true },
+      ]))
+      .mockResolvedValueOnce(response([
+        { id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://pets.test', document_url: null, allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+        { id: 2, name: 'Order API', source_type: 'openapi', base_url: 'https://orders.test', document_url: null, allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+      ]))
+      .mockResolvedValueOnce(response([])))
+
+    const { container } = render(SkillsView, { global: { plugins: [i18n] } })
+
+    expect(await screen.findByRole('heading', { name: 'Pet API' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Order API' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Pet operations' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Order operations' })).toBeTruthy()
+    expect(container.querySelectorAll('details.reference-source-group')).toHaveLength(2)
+  })
+
   it('deletes a managed Skill from its row actions', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(response([{ id: 1, name: 'Primary', provider_type: 'openai', base_url: 'https://llm.test/v1', default_model: 'gpt-test', enabled: true, has_api_key: true }]))
+      .mockResolvedValueOnce(response([]))
       .mockResolvedValueOnce(response([]))
       .mockResolvedValueOnce(response([{ id: 5, name: 'Pet helper', description: null, system_prompt: 'Help', provider_id: 1, model: null, running: false, tools: [] }]))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
@@ -109,8 +155,8 @@ describe('Skills and chat', () => {
     render(SkillsView, { global: { plugins: [i18n] } })
     await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5))
-    expect(fetchMock.mock.calls[3][0]).toBe('/api/admin/skills/5')
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6))
+    expect(fetchMock.mock.calls[4][0]).toBe('/api/admin/skills/5')
   })
 
   it('places the running Skill selector below the input and renders a reply', async () => {

@@ -167,9 +167,21 @@ blockquote { margin: 0; padding-left: 20px; border-left: 2px solid #6558e8; font
 .skill-workbench { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
 .skill-editor textarea, .block-label input { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: white; resize: vertical; }
 .block-label { margin-top: 18px; display: grid; gap: 8px; color: #343b49; font-size: 12px; font-weight: 700; }
+.prompt-field { position: relative; }
+.tool-mention-menu { position: absolute; z-index: 5; left: 0; right: 0; max-height: 250px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; background: white; box-shadow: 0 14px 36px rgba(27,31,43,.18); }
+.tool-mention-menu button { width: 100%; padding: 10px 12px; display: grid; gap: 3px; border: 0; border-bottom: 1px solid var(--line); text-align: left; color: var(--ink); background: white; cursor: pointer; }
+.tool-mention-menu button:hover { background: #f3f1ff; }.tool-mention-menu small { color: var(--muted); }
 .bound-count { margin-top: 12px; color: var(--muted); font-size: 12px; }
 .tool-reference-tray { padding: 24px; border-radius: 16px; color: white; background: linear-gradient(145deg, #152136, #25294f); }
 .tool-reference-tray h2 { margin-bottom: 6px; }.tool-reference-tray .muted { color: #aeb8c8; font-size: 13px; }
+.reference-groups { max-height: 620px; margin-top: 14px; overflow-y: auto; }
+.reference-source-group, .reference-tag-group { margin-top: 8px; }
+.reference-source-group > summary, .reference-tag-group > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
+.reference-source-group > summary::-webkit-details-marker, .reference-tag-group > summary::-webkit-details-marker { display: none; }
+.reference-source-group > summary::before, .reference-tag-group > summary::before { content: '▸'; color: #9fa9bb; }.reference-source-group[open] > summary::before, .reference-tag-group[open] > summary::before { content: '▾'; }
+.reference-source-group h3, .reference-tag-group h4 { margin: 0; }.reference-source-group h3 { font-size: 14px; }.reference-tag-group h4 { font-size: 12px; color: #c6cede; }
+.reference-source-group summary span { margin-left: auto; color: #9fa9bb; font-size: 10px; }
+.reference-tag-group { margin-left: 14px; }
 .reference-tool { width: 100%; margin-top: 9px; padding: 12px; display: grid; gap: 4px; border: 1px solid rgba(255,255,255,.12); border-radius: 9px; text-align: left; color: white; background: rgba(255,255,255,.05); }
 .reference-tool:hover { border-color: #8378fb; background: rgba(101,88,232,.18); }.reference-tool small { color: #9fa9bb; }
 .skill-list { margin-top: 20px; display: grid; gap: 10px; }
