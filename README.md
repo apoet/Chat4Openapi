@@ -53,19 +53,20 @@ conda run -n chatapi ruff check backend/src backend/tests
 ```powershell
 nvm use 20.19.4
 Set-Location frontend
-& 'D:\nvm\nodejs\npm.cmd' install
-& 'D:\nvm\nodejs\npm.cmd' run dev
+npm install
+npm run dev
 ```
 
+With nvm-windows, `nvm use` places the selected Node.js and npm executables on `PATH`.
 Vite starts at `http://127.0.0.1:5173` and proxies `/api`, `/v1`, and `/health` to
 `http://127.0.0.1:8000`.
 
 Run frontend verification:
 
 ```powershell
-& 'D:\nvm\nodejs\npm.cmd' test
-& 'D:\nvm\nodejs\npm.cmd' run typecheck
-& 'D:\nvm\nodejs\npm.cmd' run build
+npm test
+npm run typecheck
+npm run build
 ```
 
 After `npm run build`, FastAPI serves `frontend/dist` and provides SPA fallback for browser routes.
