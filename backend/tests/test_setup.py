@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from chatapi.models.admin import AdminUser
+from chatapi.models.app_setting import AppSetting
 from chatapi.security.passwords import verify_password
 
 
@@ -49,6 +50,29 @@ async def test_setup_accepts_six_character_letter_number_password(
     )
 
     assert response.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_setup_reuses_settings_when_administrator_was_reset(
+    client: httpx.AsyncClient, db_session_factory: sessionmaker[Session]
+) -> None:
+    with db_session_factory() as session:
+        session.add(
+            AppSetting(id=1, default_locale="zh-CN", tool_login_enabled=True)
+        )
+        session.commit()
+
+    response = await client.post(
+        "/api/setup",
+        json={"username": "admin", "password": "abc123", "locale": "en-US"},
+    )
+
+    assert response.status_code == 201
+    with db_session_factory() as session:
+        settings = session.get(AppSetting, 1)
+    assert settings is not None
+    assert settings.default_locale == "en-US"
+    assert settings.tool_login_enabled is True
 
 
 @pytest.mark.asyncio

@@ -41,7 +41,13 @@ def initialize_admin(session: Session, request: SetupRequest) -> SetupStatus:
             locale=request.locale,
         )
     )
-    session.add(AppSetting(id=1, default_locale=request.locale, tool_login_enabled=False))
+    settings = session.get(AppSetting, 1)
+    if settings is None:
+        session.add(
+            AppSetting(id=1, default_locale=request.locale, tool_login_enabled=False)
+        )
+    else:
+        settings.default_locale = request.locale
     try:
         session.commit()
     except IntegrityError as exc:
