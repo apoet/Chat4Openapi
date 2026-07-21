@@ -20,7 +20,7 @@ class AgentConfigResponse(BaseModel):
     name: str
     enabled: bool
     system_prompt: str
-    provider_id: int
+    provider_id: int | None
     model: str | None
     mode: Literal["human_in_loop", "react"]
     max_iterations: int

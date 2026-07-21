@@ -46,6 +46,23 @@ def seed_agent(factory: sessionmaker[Session]) -> int:
         return provider.id
 
 
+def seed_providerless_agent(factory: sessionmaker[Session]) -> None:
+    with factory() as session:
+        session.add(
+            AgentConfig(
+                id=1,
+                name="ChatAPI Agent",
+                enabled=True,
+                system_prompt="Original prompt",
+                provider_id=None,
+                model=None,
+                mode="human_in_loop",
+                max_iterations=8,
+            )
+        )
+        session.commit()
+
+
 def add_provider(
     factory: sessionmaker[Session], *, enabled: bool, deleted: bool = False
 ) -> int:
@@ -97,6 +114,20 @@ async def test_authenticated_admin_can_read_the_singleton_agent(
         "mode": "human_in_loop",
         "max_iterations": 8,
     }
+
+
+@pytest.mark.asyncio
+async def test_authenticated_admin_can_read_providerless_agent(
+    client: httpx.AsyncClient,
+    db_session_factory: sessionmaker[Session],
+) -> None:
+    await login(client)
+    seed_providerless_agent(db_session_factory)
+
+    response = await client.get("/api/admin/agent")
+
+    assert response.status_code == 200
+    assert response.json()["provider_id"] is None
 
 
 @pytest.mark.asyncio
