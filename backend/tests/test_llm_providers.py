@@ -1,0 +1,142 @@
+import json
+
+import httpx
+import pytest
+from cryptography.fernet import Fernet
+from fastapi import FastAPI
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
+
+from chatapi.api.tool_sessions import get_tool_secret_cipher
+from chatapi.llm.client import CanonicalMessage, CanonicalTool, LlmClient
+from chatapi.models import LlmProvider
+from chatapi.security.encryption import SecretCipher
+
+ADMIN = {"username": "admin", "password": "StrongPass!123", "locale": "en-US"}
+
+
+async def csrf(client: httpx.AsyncClient) -> str:
+    await client.post("/api/setup", json=ADMIN)
+    login = await client.post(
+        "/api/admin/auth/login",
+        json={"username": ADMIN["username"], "password": ADMIN["password"]},
+    )
+    return login.json()["csrf_token"]
+
+
+@pytest.mark.asyncio
+async def test_provider_api_encrypts_and_never_returns_api_key(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_session_factory: sessionmaker[Session],
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    token = await csrf(client)
+
+    created = await client.post(
+        "/api/admin/providers",
+        json={
+            "name": "Primary",
+            "provider_type": "openai",
+            "base_url": "https://llm.example.test/v1",
+            "api_key": "plain-secret-key",
+            "default_model": "gpt-test",
+            "enabled": True,
+        },
+        headers={"X-CSRF-Token": token},
+    )
+    listed = await client.get("/api/admin/providers")
+
+    assert created.status_code == 201
+    assert created.json()["has_api_key"] is True
+    assert "api_key" not in created.json()
+    assert "plain-secret-key" not in json.dumps(created.json())
+    assert listed.json()[0]["name"] == "Primary"
+    with db_session_factory() as session:
+        row = session.scalar(select(LlmProvider))
+        assert row is not None
+        assert b"plain-secret-key" not in row.encrypted_api_key
+        assert cipher.decrypt_json(row.encrypted_api_key) == {"api_key": "plain-secret-key"}
+
+
+@pytest.mark.asyncio
+async def test_openai_and_anthropic_adapters_translate_tools_and_messages() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/chat/completions"):
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "get_pet",
+                                            "arguments": '{"id":7}',
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 4},
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "content": [
+                    {"type": "text", "text": "Checking."},
+                    {"type": "tool_use", "id": "tool_1", "name": "get_pet", "input": {"id": 7}},
+                ],
+                "stop_reason": "tool_use",
+                "usage": {"input_tokens": 8, "output_tokens": 3},
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    messages = [
+        CanonicalMessage(role="system", content="Be concise"),
+        CanonicalMessage(role="user", content="Find pet 7"),
+    ]
+    tools = [
+        CanonicalTool(
+            name="get_pet",
+            description="Get a pet",
+            input_schema={"type": "object", "properties": {"id": {"type": "integer"}}},
+        )
+    ]
+    openai = await LlmClient(transport=transport).complete(
+        provider_type="openai",
+        base_url="https://openai.test/v1",
+        api_key="openai-key",
+        model="gpt-test",
+        messages=messages,
+        tools=tools,
+    )
+    anthropic = await LlmClient(transport=transport).complete(
+        provider_type="anthropic",
+        base_url="https://anthropic.test/v1",
+        api_key="anthropic-key",
+        model="claude-test",
+        messages=messages,
+        tools=tools,
+    )
+
+    assert requests[0].headers["Authorization"] == "Bearer openai-key"
+    assert json.loads(requests[0].content)["tools"][0]["function"]["name"] == "get_pet"
+    assert openai.tool_calls[0].arguments == {"id": 7}
+    assert requests[1].headers["x-api-key"] == "anthropic-key"
+    assert json.loads(requests[1].content)["system"] == "Be concise"
+    assert anthropic.content == "Checking."
+    assert anthropic.tool_calls[0].name == "get_pet"

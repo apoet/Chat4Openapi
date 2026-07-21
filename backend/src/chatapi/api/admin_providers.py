@@ -1,0 +1,101 @@
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Depends
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+
+from chatapi.api.admin_auth import AdminContext, require_admin, require_csrf
+from chatapi.api.errors import ApiError
+from chatapi.api.tool_sessions import get_tool_secret_cipher
+from chatapi.models import LlmProvider, Skill
+from chatapi.schemas.providers import (
+    ProviderCreateRequest,
+    ProviderResponse,
+    ProviderUpdateRequest,
+)
+from chatapi.security.encryption import SecretCipher
+
+router = APIRouter(prefix="/api/admin/providers", tags=["admin-providers"])
+
+
+def _response(provider: LlmProvider) -> ProviderResponse:
+    return ProviderResponse.model_validate(provider)
+
+
+def _provider(context: AdminContext, provider_id: int) -> LlmProvider:
+    provider = context.db.get(LlmProvider, provider_id)
+    if provider is None or provider.deleted_at is not None:
+        raise ApiError(404, "providers.not_found")
+    return provider
+
+
+@router.get("", response_model=list[ProviderResponse])
+def list_providers(context: AdminContext = Depends(require_admin)) -> list[ProviderResponse]:
+    providers = context.db.scalars(
+        select(LlmProvider)
+        .where(LlmProvider.deleted_at.is_(None))
+        .order_by(LlmProvider.id)
+    ).all()
+    return [_response(provider) for provider in providers]
+
+
+@router.post("", response_model=ProviderResponse, status_code=201)
+def create_provider(
+    payload: ProviderCreateRequest,
+    context: AdminContext = Depends(require_csrf),
+    cipher: SecretCipher = Depends(get_tool_secret_cipher),
+) -> ProviderResponse:
+    provider = LlmProvider(
+        name=payload.name,
+        provider_type=payload.provider_type,
+        base_url=payload.base_url,
+        encrypted_api_key=cipher.encrypt_json({"api_key": payload.api_key}),
+        default_model=payload.default_model,
+        enabled=payload.enabled,
+    )
+    context.db.add(provider)
+    try:
+        context.db.commit()
+    except IntegrityError as exc:
+        context.db.rollback()
+        raise ApiError(409, "providers.name_conflict") from exc
+    return _response(provider)
+
+
+@router.patch("/{provider_id}", response_model=ProviderResponse)
+def update_provider(
+    provider_id: int,
+    payload: ProviderUpdateRequest,
+    context: AdminContext = Depends(require_csrf),
+    cipher: SecretCipher = Depends(get_tool_secret_cipher),
+) -> ProviderResponse:
+    provider = _provider(context, provider_id)
+    values = payload.model_dump(exclude_unset=True)
+    api_key = values.pop("api_key", None)
+    for key, value in values.items():
+        setattr(provider, key, value)
+    if api_key:
+        provider.encrypted_api_key = cipher.encrypt_json({"api_key": api_key})
+    if provider.enabled is False:
+        for skill in context.db.scalars(
+            select(Skill).where(Skill.provider_id == provider.id, Skill.running.is_(True))
+        ):
+            skill.running = False
+    try:
+        context.db.commit()
+    except IntegrityError as exc:
+        context.db.rollback()
+        raise ApiError(409, "providers.name_conflict") from exc
+    return _response(provider)
+
+
+@router.delete("/{provider_id}", status_code=204)
+def delete_provider(
+    provider_id: int, context: AdminContext = Depends(require_csrf)
+) -> None:
+    provider = _provider(context, provider_id)
+    provider.enabled = False
+    provider.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+    for skill in context.db.scalars(select(Skill).where(Skill.provider_id == provider.id)):
+        skill.running = False
+    context.db.commit()
