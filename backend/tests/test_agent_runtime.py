@@ -130,6 +130,20 @@ def add_compound_skill(session) -> tuple[Skill, Tool]:
     return skill, tool
 
 
+def add_skill_sharing_tool(session, tool: Tool) -> Skill:
+    skill = Skill(
+        name="Shared gene lookup",
+        description="Use the shared gene Tool.",
+        system_prompt="Use the shared gene lookup.",
+        running=True,
+    )
+    session.add(skill)
+    session.flush()
+    session.add(SkillTool(skill_id=skill.id, tool_id=tool.id, position=0))
+    session.commit()
+    return skill
+
+
 @pytest.mark.asyncio
 async def test_routes_loads_skill_and_executes_only_bound_tools(db_session_factory) -> None:
     cipher = SecretCipher(Fernet.generate_key())
@@ -284,6 +298,207 @@ async def test_human_in_loop_pauses_and_resumes_without_tool_approval(
             "text": {"answer": "GRCh38"},
             "tool_call_id": "clarify_1",
             "name": "ask_user",
+        }
+
+
+@pytest.mark.asyncio
+async def test_mixed_clarification_and_business_call_persists_only_clarification(
+    db_session_factory,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as session:
+        skill, _tool = seed_runtime(session, cipher)
+        llm = SequencedLlm(
+            [
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[
+                        CanonicalToolCall(
+                            id="load_1",
+                            name="load_skills",
+                            arguments={"skill_ids": [skill.id]},
+                        )
+                    ],
+                ),
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[
+                        CanonicalToolCall(
+                            id="gene_before_answer",
+                            name="get_gene",
+                            arguments={"symbol": "ABCA4"},
+                        ),
+                        CanonicalToolCall(
+                            id="clarify_reference",
+                            name="ask_user",
+                            arguments={
+                                "question": "Which reference genome?",
+                                "reason": "Coordinates depend on it.",
+                                "fields": ["reference"],
+                            },
+                        ),
+                    ],
+                ),
+                CanonicalResponse(content="Used GRCh38."),
+            ]
+        )
+        executor = RecordingExecutor()
+        runtime = AgentRuntime(session, cipher, llm, executor)
+
+        paused = await runtime.run(AgentTurnRequest("lookup", [skill.id], True))
+
+        assert paused.status == "needs_input"
+        assert executor.calls == []
+        stored_before_resume = session.scalars(
+            select(ChatMessage)
+            .where(ChatMessage.conversation_id == paused.conversation_id)
+            .order_by(ChatMessage.sequence)
+        ).all()
+        assert stored_before_resume[-1].content["tool_calls"] == [
+            {
+                "id": "clarify_reference",
+                "name": "ask_user",
+                "arguments": {
+                    "question": "Which reference genome?",
+                    "reason": "Coordinates depend on it.",
+                    "fields": ["reference"],
+                },
+            }
+        ]
+
+        resumed = await runtime.run(
+            AgentTurnRequest("GRCh38", [], True, conversation_id=paused.conversation_id)
+        )
+
+        assert resumed.status == "completed"
+        assert executor.calls == []
+        resume_history = llm.calls[2]["messages"]
+        assistant = resume_history[-2]
+        observation = resume_history[-1]
+        assert [call.id for call in assistant.tool_calls] == ["clarify_reference"]
+        assert observation.role == "tool"
+        assert observation.tool_call_id == "clarify_reference"
+        assert observation.content == {"answer": "GRCh38"}
+
+
+@pytest.mark.asyncio
+async def test_multiple_clarifications_persist_and_resume_only_the_first(
+    db_session_factory,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as session:
+        skill, _tool = seed_runtime(session, cipher)
+        llm = SequencedLlm(
+            [
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[
+                        CanonicalToolCall(
+                            id="load_1",
+                            name="load_skills",
+                            arguments={"skill_ids": [skill.id]},
+                        )
+                    ],
+                ),
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[
+                        CanonicalToolCall(
+                            id="clarify_reference",
+                            name="ask_user",
+                            arguments={
+                                "question": "Which reference genome?",
+                                "reason": "Coordinates depend on it.",
+                                "fields": ["reference"],
+                            },
+                        ),
+                        CanonicalToolCall(
+                            id="clarify_format",
+                            name="ask_user",
+                            arguments={
+                                "question": "Which output format?",
+                                "reason": "Formatting is ambiguous.",
+                                "fields": ["format"],
+                            },
+                        ),
+                    ],
+                ),
+                CanonicalResponse(content="Used GRCh38."),
+            ]
+        )
+        runtime = AgentRuntime(session, cipher, llm, RecordingExecutor())
+
+        paused = await runtime.run(AgentTurnRequest("lookup", [skill.id], True))
+
+        assert paused.status == "needs_input"
+        assert paused.pending is not None
+        assert paused.pending["tool_call_id"] == "clarify_reference"
+        stored_before_resume = session.scalars(
+            select(ChatMessage)
+            .where(ChatMessage.conversation_id == paused.conversation_id)
+            .order_by(ChatMessage.sequence)
+        ).all()
+        assert [
+            call["id"] for call in stored_before_resume[-1].content["tool_calls"]
+        ] == ["clarify_reference"]
+
+        resumed = await runtime.run(
+            AgentTurnRequest("GRCh38", [], True, conversation_id=paused.conversation_id)
+        )
+
+        assert resumed.status == "completed"
+        resume_history = llm.calls[2]["messages"]
+        assert [call.id for call in resume_history[-2].tool_calls] == [
+            "clarify_reference"
+        ]
+        assert resume_history[-1].tool_call_id == "clarify_reference"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reverse_load_order", [False, True])
+async def test_rejects_cross_skill_business_tool_name_conflicts_independent_of_order(
+    db_session_factory,
+    reverse_load_order: bool,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as session:
+        gene_skill, gene_tool = seed_runtime(session, cipher)
+        shared_skill = add_skill_sharing_tool(session, gene_tool)
+        loaded_ids = [gene_skill.id, shared_skill.id]
+        if reverse_load_order:
+            loaded_ids.reverse()
+        llm = SequencedLlm(
+            [
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[
+                        CanonicalToolCall(
+                            id="load_conflict",
+                            name="load_skills",
+                            arguments={"skill_ids": loaded_ids},
+                        )
+                    ],
+                )
+            ]
+        )
+
+        with pytest.raises(AgentError) as error:
+            await AgentRuntime(session, cipher, llm, RecordingExecutor()).run(
+                AgentTurnRequest(
+                    "lookup",
+                    [gene_skill.id, shared_skill.id],
+                    False,
+                )
+            )
+
+        assert error.value.code == "agent.tool_name_conflict"
+        assert error.value.params == {
+            "conflicts": [
+                {
+                    "tool_name": "get_gene",
+                    "skill_ids": sorted([gene_skill.id, shared_skill.id]),
+                }
+            ]
         }
 
 

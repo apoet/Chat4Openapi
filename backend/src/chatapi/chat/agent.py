@@ -171,14 +171,6 @@ class AgentRuntime:
                     output_tokens=output_tokens,
                 )
 
-            self._persist_message(
-                conversation.id,
-                "assistant",
-                {
-                    "text": response.content,
-                    "tool_calls": [self._stored_call(call) for call in response.tool_calls],
-                },
-            )
             clarification = next(
                 (
                     call
@@ -186,6 +178,15 @@ class AgentRuntime:
                     if call.name == ASK_USER_TOOL.name and can_ask_user
                 ),
                 None,
+            )
+            persisted_calls = [clarification] if clarification is not None else response.tool_calls
+            self._persist_message(
+                conversation.id,
+                "assistant",
+                {
+                    "text": response.content,
+                    "tool_calls": [self._stored_call(call) for call in persisted_calls],
+                },
             )
             if clarification is not None:
                 pending = self._pending_clarification(clarification)
@@ -324,8 +325,17 @@ class AgentRuntime:
             .order_by(SkillTool.skill_id, SkillTool.position)
         ).all()
         by_skill: dict[int, list[Tool]] = {}
+        skill_ids_by_tool_name: dict[str, set[int]] = {}
         for skill_id, tool in rows:
             by_skill.setdefault(skill_id, []).append(tool)
+            skill_ids_by_tool_name.setdefault(tool.name, set()).add(skill_id)
+        conflicts = [
+            {"tool_name": tool_name, "skill_ids": sorted(skill_ids)}
+            for tool_name, skill_ids in sorted(skill_ids_by_tool_name.items())
+            if len(skill_ids) > 1
+        ]
+        if conflicts:
+            raise AgentError("agent.tool_name_conflict", {"conflicts": conflicts})
         canonical: dict[str, CanonicalTool] = {}
         models: dict[str, Tool] = {}
         for skill_id in loaded_skill_ids:
