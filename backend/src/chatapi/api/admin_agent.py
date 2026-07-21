@@ -2,16 +2,11 @@ from fastapi import APIRouter, Depends
 
 from chatapi.api.admin_auth import AdminContext, require_admin, require_csrf
 from chatapi.api.errors import ApiError
+from chatapi.chat.agent import DEFAULT_AGENT_PROMPT
 from chatapi.models import AgentConfig, LlmProvider
 from chatapi.schemas.agents import AgentConfigResponse, AgentConfigWrite
 
 router = APIRouter(prefix="/api/admin/agent", tags=["admin-agent"])
-
-DEFAULT_AGENT_PROMPT = (
-    "You are ChatAPI Agent, the built-in assistant. Use the available Skills and Tools "
-    "to help the user, and return clear Markdown responses."
-)
-
 
 def _agent(context: AdminContext) -> AgentConfig:
     agent = context.db.get(AgentConfig, 1)
