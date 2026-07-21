@@ -14,10 +14,11 @@ from chatapi.api.tool_sessions import (
     get_tool_executor,
     get_tool_secret_cipher,
 )
-from chatapi.chat.orchestrator import ChatError, ChatOrchestrator
+from chatapi.chat.agent import AgentError, AgentRuntime, AgentTurnRequest, AgentTurnResult
 from chatapi.db.session import get_db_session
 from chatapi.llm.client import LlmClient, LlmProviderError
-from chatapi.models import Skill
+from chatapi.models import AgentConfig, Conversation, Skill
+from chatapi.schemas.chat import ChatTurnRequest, ChatTurnResponse
 from chatapi.security.encryption import SecretCipher
 from chatapi.tools.executor import ToolExecutor
 
@@ -37,8 +38,116 @@ def _skill_id(model: str) -> int:
         raise ApiError(404, "chat.skill_not_found") from exc
 
 
-def _session_id(body: dict[str, Any], request: Request, header: str | None) -> str | None:
-    return body.get("tool_session_id") or header or request.cookies.get(TOOL_SESSION_COOKIE)
+def _candidate_skill_ids(body: dict[str, Any]) -> list[int]:
+    model = body.get("model", "")
+    extension_present = "chatapi_skill_ids" in body
+    if model == "agent-default":
+        candidate_ids = body.get("chatapi_skill_ids", [])
+        if (
+            not isinstance(candidate_ids, list)
+            or len(candidate_ids) > 32
+            or any(
+                isinstance(skill_id, bool) or not isinstance(skill_id, int) or skill_id < 1
+                for skill_id in candidate_ids
+            )
+        ):
+            raise ApiError(422, "validation.invalid", fields=["body.chatapi_skill_ids"])
+        return list(dict.fromkeys(candidate_ids))
+    if extension_present:
+        raise ApiError(409, "chat.candidate_scope_conflict")
+    return [_skill_id(model)]
+
+
+def _session_id(
+    body: dict[str, Any],
+    request: Request,
+    chatapi_header: str | None,
+    legacy_header: str | None,
+) -> str | None:
+    return (
+        body.get("tool_session_id")
+        or chatapi_header
+        or legacy_header
+        or request.cookies.get(TOOL_SESSION_COOKIE)
+    )
+
+
+def _content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            str(block.get("text", ""))
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return str(content)
+
+
+def _latest_user_content(body: dict[str, Any]) -> str:
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        raise ApiError(422, "validation.invalid", fields=["body.messages"])
+    user_message = next(
+        (
+            message
+            for message in reversed(messages)
+            if isinstance(message, dict) and message.get("role") == "user"
+        ),
+        None,
+    )
+    if user_message is None:
+        raise ApiError(422, "validation.invalid", fields=["body.messages"])
+    return _content_text(user_message.get("content", ""))
+
+
+def _agent_error(exc: AgentError) -> ApiError:
+    status_code = 404 if exc.code == "agent.conversation_not_found" else 409
+    return ApiError(status_code, exc.code, **exc.params)
+
+
+def _resolved_candidate_ids(db: Session, candidate_skill_ids: list[int]) -> list[int]:
+    if candidate_skill_ids:
+        return list(dict.fromkeys(candidate_skill_ids))
+    return list(
+        db.scalars(
+            select(Skill.id)
+            .where(Skill.running.is_(True), Skill.deleted_at.is_(None))
+            .order_by(Skill.id)
+        )
+    )
+
+
+def _validate_conversation_scope(
+    db: Session,
+    conversation_id: str | None,
+    candidate_skill_ids: list[int],
+    *,
+    scope_supplied: bool,
+) -> None:
+    if conversation_id is None or not scope_supplied:
+        return
+    conversation = db.get(Conversation, conversation_id)
+    if conversation is None or conversation.deleted_at is not None:
+        return
+    requested = _resolved_candidate_ids(db, candidate_skill_ids)
+    if set(requested) != set(conversation.candidate_skill_ids):
+        raise ApiError(409, "chat.candidate_scope_locked")
+
+
+async def _run_agent(
+    turn: AgentTurnRequest,
+    db: Session,
+    cipher: SecretCipher,
+    llm: LlmClient,
+    executor: ToolExecutor,
+) -> AgentTurnResult:
+    try:
+        return await AgentRuntime(db, cipher, llm, executor).run(turn)
+    except AgentError as exc:
+        raise _agent_error(exc) from exc
+    except LlmProviderError as exc:
+        raise ApiError(409, "chat.failed", reason=str(exc)) from exc
 
 
 async def _run(
@@ -48,26 +157,82 @@ async def _run(
     cipher: SecretCipher,
     llm: LlmClient,
     executor: ToolExecutor,
-    tool_session_header: str | None,
+    chatapi_tool_session_header: str | None,
+    legacy_tool_session_header: str | None,
 ):
-    messages = list(body.get("messages", []))
-    system = body.get("system")
-    if system:
-        if isinstance(system, list):
-            system = "\n".join(
-                block.get("text", "") if isinstance(block, dict) else str(block)
-                for block in system
-            )
-        messages.insert(0, {"role": "system", "content": system})
-    try:
-        return await ChatOrchestrator(db, cipher, llm, executor).run(
-            skill_id=_skill_id(body.get("model", "")),
-            messages=messages,
-            tool_session_id=_session_id(body, request, tool_session_header),
-            conversation_id=body.get("conversation_id"),
-        )
-    except (ChatError, LlmProviderError) as exc:
-        raise ApiError(409, "chat.failed", reason=str(exc)) from exc
+    candidate_skill_ids = _candidate_skill_ids(body)
+    conversation_id = body.get("conversation_id")
+    _validate_conversation_scope(
+        db,
+        conversation_id,
+        candidate_skill_ids,
+        scope_supplied="chatapi_skill_ids" in body or body.get("model") != "agent-default",
+    )
+    return await _run_agent(
+        AgentTurnRequest(
+            user_content=_latest_user_content(body),
+            candidate_skill_ids=candidate_skill_ids,
+            interactive=False,
+            conversation_id=conversation_id,
+            tool_session_id=_session_id(
+                body,
+                request,
+                chatapi_tool_session_header,
+                legacy_tool_session_header,
+            ),
+        ),
+        db,
+        cipher,
+        llm,
+        executor,
+    )
+
+
+@router.post("/api/chat/turns", response_model=ChatTurnResponse)
+async def browser_turn(
+    payload: ChatTurnRequest,
+    request: Request,
+    chatapi_tool_session_header: str | None = Header(
+        default=None, alias="X-ChatAPI-Tool-Session"
+    ),
+    legacy_tool_session_header: str | None = Header(
+        default=None, alias="X-Tool-Session-ID"
+    ),
+    db: Session = Depends(get_db_session),
+    cipher: SecretCipher = Depends(get_tool_secret_cipher),
+    llm: LlmClient = Depends(get_llm_client),
+    executor: ToolExecutor = Depends(get_tool_executor),
+) -> ChatTurnResponse:
+    _validate_conversation_scope(
+        db,
+        payload.conversation_id,
+        payload.candidate_skill_ids,
+        scope_supplied="candidate_skill_ids" in payload.model_fields_set,
+    )
+    result = await _run_agent(
+        AgentTurnRequest(
+            user_content=payload.message,
+            candidate_skill_ids=payload.candidate_skill_ids,
+            interactive=True,
+            conversation_id=payload.conversation_id,
+            tool_session_id=(
+                chatapi_tool_session_header
+                or legacy_tool_session_header
+                or request.cookies.get(TOOL_SESSION_COOKIE)
+            ),
+        ),
+        db,
+        cipher,
+        llm,
+        executor,
+    )
+    return ChatTurnResponse(
+        status=result.status,
+        conversation_id=result.conversation_id,
+        message=result.content,
+        loaded_skill_ids=result.loaded_skill_ids,
+        pending=result.pending,
+    )
 
 
 @router.get("/v1/models")
@@ -77,15 +242,28 @@ def models(db: Session = Depends(get_db_session)) -> dict[str, Any]:
         .where(Skill.running.is_(True), Skill.deleted_at.is_(None))
         .order_by(Skill.id)
     ).all()
+    agent = db.get(AgentConfig, 1)
+    generic = {
+        "id": "agent-default",
+        "object": "model",
+        "created": 0,
+        "owned_by": "chatapi",
+        "name": agent.name if agent is not None else "ChatAPI Agent",
+        "description": "Built-in Agent with automatic Skill routing.",
+    }
     return {
         "object": "list",
-        "data": [
+        "data": [generic]
+        + [
             {
                 "id": f"skill-{skill.id}",
                 "object": "model",
                 "created": int(skill.created_at.timestamp()) if skill.created_at else 0,
                 "owned_by": "chatapi",
                 "name": skill.name,
+                "description": (
+                    f"Built-in Agent restricted to candidate Skill {skill.name}."
+                ),
             }
             for skill in skills
         ],
@@ -96,13 +274,27 @@ def models(db: Session = Depends(get_db_session)) -> dict[str, Any]:
 async def openai_chat(
     body: dict[str, Any],
     request: Request,
-    tool_session_header: str | None = Header(default=None, alias="X-Tool-Session-ID"),
+    chatapi_tool_session_header: str | None = Header(
+        default=None, alias="X-ChatAPI-Tool-Session"
+    ),
+    legacy_tool_session_header: str | None = Header(
+        default=None, alias="X-Tool-Session-ID"
+    ),
     db: Session = Depends(get_db_session),
     cipher: SecretCipher = Depends(get_tool_secret_cipher),
     llm: LlmClient = Depends(get_llm_client),
     executor: ToolExecutor = Depends(get_tool_executor),
 ):
-    result = await _run(body, request, db, cipher, llm, executor, tool_session_header)
+    result = await _run(
+        body,
+        request,
+        db,
+        cipher,
+        llm,
+        executor,
+        chatapi_tool_session_header,
+        legacy_tool_session_header,
+    )
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
     model = body["model"]
@@ -147,13 +339,27 @@ async def openai_chat(
 async def anthropic_messages(
     body: dict[str, Any],
     request: Request,
-    tool_session_header: str | None = Header(default=None, alias="X-Tool-Session-ID"),
+    chatapi_tool_session_header: str | None = Header(
+        default=None, alias="X-ChatAPI-Tool-Session"
+    ),
+    legacy_tool_session_header: str | None = Header(
+        default=None, alias="X-Tool-Session-ID"
+    ),
     db: Session = Depends(get_db_session),
     cipher: SecretCipher = Depends(get_tool_secret_cipher),
     llm: LlmClient = Depends(get_llm_client),
     executor: ToolExecutor = Depends(get_tool_executor),
 ):
-    result = await _run(body, request, db, cipher, llm, executor, tool_session_header)
+    result = await _run(
+        body,
+        request,
+        db,
+        cipher,
+        llm,
+        executor,
+        chatapi_tool_session_header,
+        legacy_tool_session_header,
+    )
     message_id = f"msg_{uuid.uuid4().hex}"
     if body.get("stream"):
         start = {
