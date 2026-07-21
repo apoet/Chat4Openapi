@@ -774,6 +774,67 @@ async def test_shared_tool_remains_authorized_by_another_loaded_skill_after_llm_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("agent_state", ["disabled", "deleted"])
+async def test_inactive_agent_revokes_shared_tool_during_llm_wait(
+    db_session_factory,
+    agent_state: str,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as session:
+        first, tool = seed_runtime(session, cipher)
+        second = add_skill_sharing_tool(session, tool)
+        llm = DeferredToolCallLlm(
+            [
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[
+                        CanonicalToolCall(
+                            "load",
+                            "load_skills",
+                            {"skill_ids": [first.id, second.id]},
+                        )
+                    ],
+                ),
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[
+                        CanonicalToolCall("gene", "get_gene", {"symbol": "ABCA4"})
+                    ],
+                ),
+                CanonicalResponse(content="The Agent authorization was revoked."),
+            ]
+        )
+        executor = RecordingExecutor()
+        task = asyncio.create_task(
+            AgentRuntime(session, cipher, llm, executor).run(
+                turn("lookup", [first.id, second.id], False)
+            )
+        )
+        await asyncio.wait_for(llm.tool_call_started.wait(), timeout=2)
+
+        with db_session_factory() as concurrent:
+            agent = concurrent.get(Agent, TEST_AGENT_ID)
+            if agent_state == "disabled":
+                agent.enabled = False
+            else:
+                agent.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+            concurrent.commit()
+
+        llm.release_tool_call.set()
+        result = await task
+
+        assert result.status == "completed"
+        assert result.content == "The Agent authorization was revoked."
+        assert executor.calls == []
+        assert llm.calls[2]["messages"][-1].content == {
+            "error": "tool_unavailable",
+            "tool": "get_gene",
+        }
+        conversation = session.get(Conversation, result.conversation_id)
+        assert conversation.agent_status == "completed"
+
+
+@pytest.mark.asyncio
 async def test_distinct_tools_with_the_same_name_are_rejected(db_session_factory) -> None:
     cipher = SecretCipher(Fernet.generate_key())
     with db_session_factory() as session:

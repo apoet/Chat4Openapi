@@ -538,11 +538,14 @@ class AgentRuntime:
                     (AgentSkill.skill_id == SkillTool.skill_id)
                     & (AgentSkill.agent_id == conversation.agent_id),
                 )
+                .join(Agent, Agent.id == AgentSkill.agent_id)
                 .join(Tool, Tool.id == SkillTool.tool_id)
                 .join(ApiSource, ApiSource.id == Tool.api_source_id)
                 .where(
                     SkillTool.skill_id.in_(conversation.loaded_skill_ids),
                     SkillTool.tool_id == tool.id,
+                    Agent.enabled.is_(True),
+                    Agent.deleted_at.is_(None),
                     Skill.running.is_(True),
                     Skill.deleted_at.is_(None),
                     Tool.enabled.is_(True),
