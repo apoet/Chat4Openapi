@@ -9,9 +9,11 @@ from sqlalchemy.exc import IntegrityError
 
 from chatapi.api.admin_auth import AdminContext, require_admin, require_csrf
 from chatapi.api.errors import ApiError
-from chatapi.models import ApiSource, GlobalToolAuthConfig, Tool
+from chatapi.models import ApiSource, GlobalToolAuthConfig, Skill, SkillTool, Tool
 from chatapi.schemas.tools import (
+    ApiSourceEnabledRequest,
     ApiSourceSummary,
+    ApiSourceUpdateRequest,
     SourceImportRequest,
     SourceImportResponse,
     SourceUrlImportRequest,
@@ -171,6 +173,102 @@ def list_sources(context: AdminContext = Depends(require_admin)) -> list[ApiSour
         select(ApiSource).where(ApiSource.deleted_at.is_(None)).order_by(ApiSource.id)
     ).all()
     return [ApiSourceSummary.model_validate(source) for source in sources]
+
+
+def _managed_source(context: AdminContext, source_id: int) -> ApiSource:
+    source = context.db.get(ApiSource, source_id)
+    if source is None or source.deleted_at is not None:
+        raise ApiError(404, "tools.source_not_found")
+    return source
+
+
+def _source_tool_ids(context: AdminContext, source_id: int) -> list[int]:
+    return list(
+        context.db.scalars(
+            select(Tool.id).where(
+                Tool.api_source_id == source_id,
+                Tool.deleted_at.is_(None),
+            )
+        )
+    )
+
+
+def _ensure_source_not_login_source(context: AdminContext, tool_ids: list[int]) -> None:
+    config = context.db.get(GlobalToolAuthConfig, 1)
+    if (
+        config is not None
+        and config.enabled
+        and config.login_tool_id is not None
+        and config.login_tool_id in tool_ids
+    ):
+        raise ApiError(409, "tools.login_tool_conflict")
+
+
+def _stop_skills_using_tools(context: AdminContext, tool_ids: list[int]) -> None:
+    if not tool_ids:
+        return
+    skills = context.db.scalars(
+        select(Skill)
+        .join(SkillTool, SkillTool.skill_id == Skill.id)
+        .where(SkillTool.tool_id.in_(tool_ids), Skill.running.is_(True))
+        .distinct()
+    ).all()
+    for skill in skills:
+        skill.running = False
+
+
+@router.put("/sources/{source_id}", response_model=ApiSourceSummary)
+def update_source(
+    source_id: int,
+    payload: ApiSourceUpdateRequest,
+    context: AdminContext = Depends(require_csrf),
+) -> ApiSourceSummary:
+    source = _managed_source(context, source_id)
+    source.name = payload.name
+    source.base_url = payload.base_url
+    source.allow_private_networks = payload.allow_private_networks
+    context.db.commit()
+    return ApiSourceSummary.model_validate(source)
+
+
+@router.patch("/sources/{source_id}/enabled", response_model=ApiSourceSummary)
+def set_source_enabled(
+    source_id: int,
+    payload: ApiSourceEnabledRequest,
+    context: AdminContext = Depends(require_csrf),
+) -> ApiSourceSummary:
+    source = _managed_source(context, source_id)
+    tool_ids = _source_tool_ids(context, source_id)
+    if not payload.enabled:
+        _ensure_source_not_login_source(context, tool_ids)
+        _stop_skills_using_tools(context, tool_ids)
+    source.enabled = payload.enabled
+    context.db.commit()
+    return ApiSourceSummary.model_validate(source)
+
+
+@router.delete("/sources/{source_id}", status_code=204)
+def delete_source(
+    source_id: int,
+    context: AdminContext = Depends(require_csrf),
+) -> None:
+    source = _managed_source(context, source_id)
+    tools = context.db.scalars(
+        select(Tool).where(
+            Tool.api_source_id == source_id,
+            Tool.deleted_at.is_(None),
+        )
+    ).all()
+    tool_ids = [tool.id for tool in tools]
+    _ensure_source_not_login_source(context, tool_ids)
+    _stop_skills_using_tools(context, tool_ids)
+    deleted_at = datetime.now(UTC).replace(tzinfo=None)
+    for tool in tools:
+        tool.enabled = False
+        tool.deleted_at = deleted_at
+    source.enabled = False
+    source.deleted_at = deleted_at
+    context.db.commit()
 
 
 @router.get("/tools", response_model=list[ToolSummary])

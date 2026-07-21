@@ -43,7 +43,7 @@ export default {
   },
   nav: { overview: '概览', build: '构建', logout: '退出登录', language: '语言' },
   status: { ready: '系统运行正常' },
-  sources: { eyebrow: 'API 目录', title: 'API 来源', subtitle: '导入 Swagger 2.0 或 OpenAPI 3.x JSON/YAML 文档。', name: '来源名称', baseUrl: '基础 URL（可选）', document: 'OpenAPI 文档', import: '导入来源', importing: '正在导入…', empty: '尚未导入 API 来源。' },
+  sources: { eyebrow: 'API 目录', title: 'API 来源', subtitle: '导入 Swagger 2.0 或 OpenAPI 3.x JSON/YAML 文档。', name: '来源名称', baseUrl: '基础 URL（可选）', document: 'OpenAPI 文档', import: '导入来源', importing: '正在导入…', empty: '尚未导入 API 来源。', editName: '编辑来源名称', editBaseUrl: '编辑基础 URL', allowPrivate: '允许访问私有网络目标', save: '保存更改' },
   tools: { eyebrow: '运行时目录', title: 'Tools', subtitle: '检查已导入操作，仅开放可信的 Tool。', enabled: '已启用', disabled: '已停用', enable: '启用', disable: '停用', delete: '删除', empty: '没有符合筛选条件的 Tool。', filter: { all: '全部', enabled: '已启用', disabled: '已停用' } },
   toolAuth: { nav: 'Tool 登录认证', eyebrow: '原 API 用户身份', title: 'Tool 登录认证', subtitle: '绑定一个已启用的登录 Tool。每个 Tool Session 只登录一次，并共享该原 API 用户身份。', enable: '要求登录原 API', enableHint: '管理员凭据绝不会用于调用 Tool。', loginTool: '登录 Tool', selectTool: '选择已启用的 Tool', tokenPath: 'Token JSON 路径', usernameField: '用户名字段', passwordField: '密码字段', idle: '空闲过期（分钟）', absolute: '绝对过期（小时）', save: '保存认证配置' },
   providers: { eyebrow: '模型运行时', title: '大模型供应商', subtitle: '连接 OpenAI 兼容或 Anthropic 兼容接口。', name: '供应商名称', type: '协议', baseUrl: '基础 URL', model: '默认模型', apiKey: 'API Key', save: '添加供应商', test: '测试', testing: '测试中…', testSuccess: '连接成功' },

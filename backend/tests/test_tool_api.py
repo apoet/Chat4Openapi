@@ -95,6 +95,7 @@ async def test_tool_lifecycle_and_login_binding_conflicts(client: httpx.AsyncCli
         headers={"X-CSRF-Token": csrf},
     )
     tool_id = imported.json()["tools"][0]["id"]
+    source_id = imported.json()["source"]["id"]
 
     enabled = await client.patch(
         f"/api/admin/tools/{tool_id}/enabled",
@@ -125,12 +126,64 @@ async def test_tool_lifecycle_and_login_binding_conflicts(client: httpx.AsyncCli
     delete = await client.delete(
         f"/api/admin/tools/{tool_id}", headers={"X-CSRF-Token": csrf}
     )
+    disable_source = await client.patch(
+        f"/api/admin/sources/{source_id}/enabled",
+        json={"enabled": False},
+        headers={"X-CSRF-Token": csrf},
+    )
+    delete_source = await client.delete(
+        f"/api/admin/sources/{source_id}", headers={"X-CSRF-Token": csrf}
+    )
 
     assert enabled.status_code == 200
     assert configured.status_code == 200
     assert disable.status_code == 409
     assert disable.json()["error"]["code"] == "tools.login_tool_conflict"
     assert delete.status_code == 409
+    assert disable_source.status_code == 409
+    assert delete_source.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_api_source_can_be_edited_disabled_and_deleted(
+    client: httpx.AsyncClient,
+) -> None:
+    csrf = await admin_login(client)
+    imported = await client.post(
+        "/api/admin/sources/import",
+        json=import_payload(),
+        headers={"X-CSRF-Token": csrf},
+    )
+    source_id = imported.json()["source"]["id"]
+
+    edited = await client.put(
+        f"/api/admin/sources/{source_id}",
+        json={
+            "name": "Renamed API",
+            "base_url": "https://renamed.example.test/api",
+            "allow_private_networks": True,
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    disabled = await client.patch(
+        f"/api/admin/sources/{source_id}/enabled",
+        json={"enabled": False},
+        headers={"X-CSRF-Token": csrf},
+    )
+    deleted = await client.delete(
+        f"/api/admin/sources/{source_id}", headers={"X-CSRF-Token": csrf}
+    )
+    sources = await client.get("/api/admin/sources")
+    tools = await client.get("/api/admin/tools")
+
+    assert edited.status_code == 200
+    assert edited.json()["name"] == "Renamed API"
+    assert edited.json()["allow_private_networks"] is True
+    assert disabled.status_code == 200
+    assert disabled.json()["enabled"] is False
+    assert deleted.status_code == 204
+    assert sources.json() == []
+    assert tools.json() == []
 
 
 @pytest.mark.asyncio

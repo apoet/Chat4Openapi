@@ -22,6 +22,62 @@ beforeEach(() => {
 })
 
 describe('Tool administration views', () => {
+  it('edits and deletes an API source', async () => {
+    const source = {
+      id: 1,
+      name: 'Pet API',
+      source_type: 'openapi',
+      base_url: 'https://api.test',
+      allow_private_networks: false,
+      enabled: true,
+      created_at: '2026-07-21T00:00:00',
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([source]))
+      .mockResolvedValueOnce(jsonResponse({ ...source, name: 'Pet API v2', base_url: 'https://v2.api.test' }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ApiSourcesView, { global: { plugins: [i18n] } })
+    await fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    await fireEvent.update(screen.getByLabelText('Edit source name'), 'Pet API v2')
+    await fireEvent.update(screen.getByLabelText('Edit base URL'), 'https://v2.api.test')
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/sources/1')
+    await screen.findByText('Pet API v2')
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    expect(fetchMock.mock.calls[2][0]).toBe('/api/admin/sources/1')
+    await waitFor(() => expect(screen.queryByText('Pet API v2')).toBeNull())
+  })
+
+  it('disables an enabled API source', async () => {
+    const source = {
+      id: 2,
+      name: 'Orders API',
+      source_type: 'openapi',
+      base_url: 'https://orders.test',
+      allow_private_networks: false,
+      enabled: true,
+      created_at: '2026-07-21T00:00:00',
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([source]))
+      .mockResolvedValueOnce(jsonResponse({ ...source, enabled: false }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ApiSourcesView, { global: { plugins: [i18n] } })
+    await fireEvent.click(await screen.findByRole('button', { name: 'Disable' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/sources/2/enabled')
+    expect(await screen.findByText('Disabled')).toBeTruthy()
+  })
+
   it('lists default-disabled Tools and enables one', async () => {
     const fetchMock = vi
       .fn()

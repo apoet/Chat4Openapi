@@ -30,6 +30,16 @@ class ApiSourceSummary(BaseModel):
     created_at: datetime
 
 
+class ApiSourceUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    base_url: str = Field(min_length=1, max_length=2048)
+    allow_private_networks: bool = False
+
+
+class ApiSourceEnabledRequest(BaseModel):
+    enabled: bool
+
+
 class ToolSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

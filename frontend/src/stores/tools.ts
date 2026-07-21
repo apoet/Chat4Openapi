@@ -74,6 +74,43 @@ export const useToolsStore = defineStore('tools', () => {
     await loadSources()
   }
 
+  async function updateSource(
+    source: ApiSourceSummary,
+    payload: { name: string; base_url: string; allow_private_networks: boolean },
+  ): Promise<void> {
+    const auth = useAuthStore()
+    const updated = await perform(() =>
+      request<ApiSourceSummary>(
+        `/api/admin/sources/${source.id}`,
+        { method: 'PUT', body: JSON.stringify(payload) },
+        auth.csrfToken,
+      ),
+    )
+    const index = sources.value.findIndex((item) => item.id === updated.id)
+    if (index >= 0) sources.value[index] = updated
+  }
+
+  async function setSourceEnabled(source: ApiSourceSummary, enabled: boolean): Promise<void> {
+    const auth = useAuthStore()
+    const updated = await perform(() =>
+      request<ApiSourceSummary>(
+        `/api/admin/sources/${source.id}/enabled`,
+        { method: 'PATCH', body: JSON.stringify({ enabled }) },
+        auth.csrfToken,
+      ),
+    )
+    const index = sources.value.findIndex((item) => item.id === updated.id)
+    if (index >= 0) sources.value[index] = updated
+  }
+
+  async function deleteSource(source: ApiSourceSummary): Promise<void> {
+    const auth = useAuthStore()
+    await perform(() =>
+      request<void>(`/api/admin/sources/${source.id}`, { method: 'DELETE' }, auth.csrfToken),
+    )
+    sources.value = sources.value.filter((item) => item.id !== source.id)
+  }
+
   async function setEnabled(tool: ToolSummary, enabled: boolean): Promise<void> {
     const auth = useAuthStore()
     const updated = await perform(() =>
@@ -116,6 +153,9 @@ export const useToolsStore = defineStore('tools', () => {
     loadTools,
     loadAuthConfig,
     importFile,
+    updateSource,
+    setSourceEnabled,
+    deleteSource,
     setEnabled,
     deleteTool,
     saveAuthConfig,

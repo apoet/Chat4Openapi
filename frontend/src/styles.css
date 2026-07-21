@@ -98,6 +98,10 @@ blockquote { margin: 0; padding-left: 20px; border-left: 2px solid #6558e8; font
 .resource-list { margin-top: 20px; display: grid; gap: 10px; }
 .resource-row { padding: 17px 18px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
 .resource-row p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.source-inline-editor { grid-column: 2 / -1; display: grid; grid-template-columns: 1fr 1.5fr; align-items: end; gap: 12px; }
+.source-inline-editor label:not(.checkbox-label) { display: grid; gap: 7px; color: #343b49; font-size: 12px; font-weight: 700; }
+.source-inline-editor input:not([type="checkbox"]) { height: 42px; padding: 0 11px; border: 1px solid var(--line); border-radius: 9px; }
+.checkbox-label { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
 .resource-icon { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 10px; color: #6558e8; background: #eeecff; font-size: 10px; font-weight: 800; }
 .status-pill { padding: 5px 9px; border-radius: 999px; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
 .status-pill.enabled { color: #247550; background: #e2f5ea; }

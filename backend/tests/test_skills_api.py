@@ -20,7 +20,7 @@ async def login(client: httpx.AsyncClient) -> str:
     return response.json()["csrf_token"]
 
 
-def seed(factory: sessionmaker[Session], cipher: SecretCipher) -> tuple[int, int, int, int]:
+def seed(factory: sessionmaker[Session], cipher: SecretCipher) -> tuple[int, int, int, int, int]:
     with factory() as session:
         provider = LlmProvider(
             name="Primary",
@@ -47,7 +47,7 @@ def seed(factory: sessionmaker[Session], cipher: SecretCipher) -> tuple[int, int
             )
         )
         session.commit()
-        return provider.id, enabled.id, disabled.id, login_tool.id
+        return provider.id, source.id, enabled.id, disabled.id, login_tool.id
 
 
 def make_tool(source_id: int, name: str, enabled: bool, operation: str) -> Tool:
@@ -71,7 +71,9 @@ async def test_skill_lifecycle_binds_only_enabled_non_login_tools(
     cipher = SecretCipher(Fernet.generate_key())
     app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
     csrf = await login(client)
-    provider_id, enabled_id, disabled_id, login_id = seed(db_session_factory, cipher)
+    provider_id, source_id, enabled_id, disabled_id, login_id = seed(
+        db_session_factory, cipher
+    )
 
     disabled = await client.post(
         "/api/admin/skills",
@@ -110,6 +112,17 @@ async def test_skill_lifecycle_binds_only_enabled_non_login_tools(
     )
     eligible = await client.get("/api/admin/skills/eligible-tools")
     running = await client.get("/api/skills")
+    await client.put(
+        "/api/admin/tool-auth",
+        json={"enabled": False},
+        headers={"X-CSRF-Token": csrf},
+    )
+    source_disabled = await client.patch(
+        f"/api/admin/sources/{source_id}/enabled",
+        json={"enabled": False},
+        headers={"X-CSRF-Token": csrf},
+    )
+    skills_after_disable = await client.get("/api/admin/skills")
     stopped = await client.post(
         f"/api/admin/skills/{skill_id}/stop", headers={"X-CSRF-Token": csrf}
     )
@@ -122,4 +135,6 @@ async def test_skill_lifecycle_binds_only_enabled_non_login_tools(
     assert started.json()["running"] is True
     assert [item["name"] for item in eligible.json()] == ["enabled_tool"]
     assert [item["name"] for item in running.json()] == ["Pet helper"]
+    assert source_disabled.status_code == 200
+    assert skills_after_disable.json()[0]["running"] is False
     assert stopped.json()["running"] is False
