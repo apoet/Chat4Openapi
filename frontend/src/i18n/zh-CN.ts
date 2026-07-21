@@ -51,13 +51,15 @@ export default {
   chat: { title: '对话', eyebrow: '已准备好', emptyTitle: '你的 API 能做什么？', emptyHint: '选择运行中的 Skill，然后用自然语言提问。', message: '消息', placeholder: '输入问题…', send: '发送', skill: 'Skill', skillHint: '仅显示运行中的 Skill', apiLogin: '原 API 登录', loginTitle: '登录后开始对话', loginHint: '此凭据属于原 API 业务用户，与管理员账号完全隔离。', login: '进入对话' },
   action: { continue: '继续' },
   error: {
-    'setup.already_initialized': '此 ChatAPI 实例已经完成初始化。',
-    'auth.invalid_credentials': '用户名或密码不正确。',
-    'auth.required': '请先登录。',
-    'auth.session_invalid': '当前会话已失效。',
-    'auth.session_expired': '会话已过期，请重新登录。',
-    'auth.csrf_invalid': '安全令牌无效，请刷新后重试。',
-    'validation.invalid': '请检查表单字段后重试。',
+    setup: { already_initialized: '此 ChatAPI 实例已经完成初始化。' },
+    auth: {
+      invalid_credentials: '用户名或密码不正确。',
+      required: '请先登录。',
+      session_invalid: '当前会话已失效。',
+      session_expired: '会话已过期，请重新登录。',
+      csrf_invalid: '安全令牌无效，请刷新后重试。',
+    },
+    validation: { invalid: '请检查表单字段后重试。' },
     unknown: '发生错误，请重试。',
   },
 }

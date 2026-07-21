@@ -51,13 +51,15 @@ export default {
   chat: { title: 'Chat', eyebrow: 'Ready to work', emptyTitle: 'What can your APIs do?', emptyHint: 'Choose a running Skill, then ask in plain language.', message: 'Message', placeholder: 'Ask a question…', send: 'Send', skill: 'Skill', skillHint: 'Running Skills only', apiLogin: 'Original API login', loginTitle: 'Sign in before chatting', loginHint: 'These credentials belong to the original API and are isolated from the administrator.', login: 'Continue to chat' },
   action: { continue: 'Continue' },
   error: {
-    'setup.already_initialized': 'This ChatAPI instance is already initialized.',
-    'auth.invalid_credentials': 'The username or password is incorrect.',
-    'auth.required': 'Please sign in to continue.',
-    'auth.session_invalid': 'Your session is no longer valid.',
-    'auth.session_expired': 'Your session expired. Please sign in again.',
-    'auth.csrf_invalid': 'The security token is invalid. Refresh and try again.',
-    'validation.invalid': 'Check the highlighted fields and try again.',
+    setup: { already_initialized: 'This ChatAPI instance is already initialized.' },
+    auth: {
+      invalid_credentials: 'The username or password is incorrect.',
+      required: 'Please sign in to continue.',
+      session_invalid: 'Your session is no longer valid.',
+      session_expired: 'Your session expired. Please sign in again.',
+      csrf_invalid: 'The security token is invalid. Refresh and try again.',
+    },
+    validation: { invalid: 'Check the highlighted fields and try again.' },
     unknown: 'Something went wrong. Please try again.',
   },
 }
