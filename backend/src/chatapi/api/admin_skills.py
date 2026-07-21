@@ -11,7 +11,6 @@ from chatapi.db.session import get_db_session
 from chatapi.models import (
     ApiSource,
     GlobalToolAuthConfig,
-    LlmProvider,
     Skill,
     SkillTool,
     Tool,
@@ -27,13 +26,6 @@ def _skill(context: AdminContext, skill_id: int) -> Skill:
     if skill is None or skill.deleted_at is not None:
         raise ApiError(404, "skills.not_found")
     return skill
-
-
-def _validate_provider(context: AdminContext, provider_id: int) -> LlmProvider:
-    provider = context.db.get(LlmProvider, provider_id)
-    if provider is None or provider.deleted_at is not None or not provider.enabled:
-        raise ApiError(409, "skills.provider_unavailable")
-    return provider
 
 
 def _eligible_tools(context: AdminContext, tool_ids: list[int]) -> list[Tool]:
@@ -71,8 +63,6 @@ def _response(db: Session, skill: Skill) -> SkillResponse:
         name=skill.name,
         description=skill.description,
         system_prompt=skill.system_prompt,
-        provider_id=skill.provider_id,
-        model=skill.model,
         running=skill.running,
         tools=[ToolSummary.model_validate(tool) for tool in tools],
     )
@@ -83,15 +73,12 @@ def _write_skill(
     payload: SkillWriteRequest,
     skill: Skill | None = None,
 ) -> SkillResponse:
-    _validate_provider(context, payload.provider_id)
     tools = _eligible_tools(context, payload.tool_ids)
     if skill is None:
         skill = Skill(
             name=payload.name,
             description=payload.description,
             system_prompt=payload.system_prompt,
-            provider_id=payload.provider_id,
-            model=payload.model,
         )
         context.db.add(skill)
         context.db.flush()
@@ -99,8 +86,6 @@ def _write_skill(
         skill.name = payload.name
         skill.description = payload.description
         skill.system_prompt = payload.system_prompt
-        skill.provider_id = payload.provider_id
-        skill.model = payload.model
         skill.running = False
         context.db.execute(delete(SkillTool).where(SkillTool.skill_id == skill.id))
         context.db.flush()
@@ -169,9 +154,6 @@ def start_skill(
     skill_id: int, context: AdminContext = Depends(require_csrf)
 ) -> SkillResponse:
     skill = _skill(context, skill_id)
-    if skill.provider_id is None:
-        raise ApiError(409, "skills.provider_unavailable")
-    _validate_provider(context, skill.provider_id)
     binding_ids = list(
         context.db.scalars(
             select(SkillTool.tool_id)

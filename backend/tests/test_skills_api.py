@@ -1,12 +1,8 @@
 import httpx
 import pytest
-from cryptography.fernet import Fernet
-from fastapi import FastAPI
 from sqlalchemy.orm import Session, sessionmaker
 
-from chatapi.api.tool_sessions import get_tool_secret_cipher
-from chatapi.models import ApiSource, GlobalToolAuthConfig, LlmProvider, Tool
-from chatapi.security.encryption import SecretCipher
+from chatapi.models import ApiSource, GlobalToolAuthConfig, Tool
 
 ADMIN = {"username": "admin", "password": "StrongPass!123", "locale": "en-US"}
 
@@ -20,18 +16,10 @@ async def login(client: httpx.AsyncClient) -> str:
     return response.json()["csrf_token"]
 
 
-def seed(factory: sessionmaker[Session], cipher: SecretCipher) -> tuple[int, int, int, int, int]:
+def seed(factory: sessionmaker[Session]) -> tuple[int, int, int, int]:
     with factory() as session:
-        provider = LlmProvider(
-            name="Primary",
-            provider_type="openai",
-            base_url="https://llm.test/v1",
-            encrypted_api_key=cipher.encrypt_json({"api_key": "secret"}),
-            default_model="gpt-test",
-            enabled=True,
-        )
         source = ApiSource(name="API", source_type="openapi", base_url="https://api.test")
-        session.add_all([provider, source])
+        session.add(source)
         session.flush()
         enabled = make_tool(source.id, "enabled_tool", True, "GET /enabled")
         disabled = make_tool(source.id, "disabled_tool", False, "GET /disabled")
@@ -47,7 +35,7 @@ def seed(factory: sessionmaker[Session], cipher: SecretCipher) -> tuple[int, int
             )
         )
         session.commit()
-        return provider.id, source.id, enabled.id, disabled.id, login_tool.id
+        return source.id, enabled.id, disabled.id, login_tool.id
 
 
 def make_tool(source_id: int, name: str, enabled: bool, operation: str) -> Tool:
@@ -65,22 +53,17 @@ def make_tool(source_id: int, name: str, enabled: bool, operation: str) -> Tool:
 @pytest.mark.asyncio
 async def test_skill_lifecycle_binds_only_enabled_non_login_tools(
     client: httpx.AsyncClient,
-    app: FastAPI,
     db_session_factory: sessionmaker[Session],
 ) -> None:
-    cipher = SecretCipher(Fernet.generate_key())
-    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
     csrf = await login(client)
-    provider_id, source_id, enabled_id, disabled_id, login_id = seed(
-        db_session_factory, cipher
-    )
+    source_id, enabled_id, disabled_id, login_id = seed(db_session_factory)
 
     disabled = await client.post(
         "/api/admin/skills",
         json={
             "name": "Bad disabled",
+            "description": None,
             "system_prompt": "Help",
-            "provider_id": provider_id,
             "tool_ids": [disabled_id],
         },
         headers={"X-CSRF-Token": csrf},
@@ -89,8 +72,8 @@ async def test_skill_lifecycle_binds_only_enabled_non_login_tools(
         "/api/admin/skills",
         json={
             "name": "Bad login",
+            "description": None,
             "system_prompt": "Help",
-            "provider_id": provider_id,
             "tool_ids": [login_id],
         },
         headers={"X-CSRF-Token": csrf},
@@ -101,12 +84,21 @@ async def test_skill_lifecycle_binds_only_enabled_non_login_tools(
             "name": "Pet helper",
             "description": "Uses pet tools",
             "system_prompt": "Use {{tool:enabled_tool}} when needed.",
-            "provider_id": provider_id,
             "tool_ids": [enabled_id],
         },
         headers={"X-CSRF-Token": csrf},
     )
     skill_id = created.json()["id"]
+    updated = await client.put(
+        f"/api/admin/skills/{skill_id}",
+        json={
+            "name": "Pet operations",
+            "description": "Updated pet tools",
+            "system_prompt": "Use the enabled pet tool.",
+            "tool_ids": [enabled_id],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
     started = await client.post(
         f"/api/admin/skills/{skill_id}/start", headers={"X-CSRF-Token": csrf}
     )
@@ -131,10 +123,16 @@ async def test_skill_lifecycle_binds_only_enabled_non_login_tools(
     assert disabled.json()["error"]["code"] == "skills.tool_unavailable"
     assert login_bound.status_code == 409
     assert created.status_code == 201
+    assert "provider_id" not in created.json()
+    assert "model" not in created.json()
     assert created.json()["tools"][0]["name"] == "enabled_tool"
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Pet operations"
+    assert "provider_id" not in updated.json()
+    assert "model" not in updated.json()
     assert started.json()["running"] is True
     assert [item["name"] for item in eligible.json()] == ["enabled_tool"]
-    assert [item["name"] for item in running.json()] == ["Pet helper"]
+    assert [item["name"] for item in running.json()] == ["Pet operations"]
     assert source_disabled.status_code == 200
     assert skills_after_disable.json()[0]["running"] is False
     assert stopped.json()["running"] is False

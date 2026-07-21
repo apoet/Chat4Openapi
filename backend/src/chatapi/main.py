@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from chatapi.api.admin_agent import router as admin_agent_router
 from chatapi.api.admin_auth import router as admin_auth_router
 from chatapi.api.admin_tools import router as admin_tools_router
 from chatapi.api.admin_providers import router as admin_providers_router
@@ -40,6 +41,7 @@ def create_app(frontend_dist: Path | None = None) -> FastAPI:
     app.include_router(health_router)
     app.include_router(setup_router)
     app.include_router(admin_auth_router)
+    app.include_router(admin_agent_router)
     app.include_router(admin_tools_router)
     app.include_router(admin_providers_router)
     app.include_router(admin_skills_router)
