@@ -51,6 +51,11 @@ export interface ToolSummary {
   enabled: boolean
 }
 
+export interface ToolParameterOverrideWrite {
+  description: string | null
+  example: unknown | null
+}
+
 export interface SourceImportResponse {
   source: ApiSourceSummary
   tools: ToolSummary[]

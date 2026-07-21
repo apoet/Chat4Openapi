@@ -9,6 +9,7 @@ import { useToolsStore } from '../stores/tools'
 interface ToolParameterView {
   name: string
   description: string | null
+  example: unknown
   type: string
   location: string
   required: boolean
@@ -37,6 +38,34 @@ function parameterType(schema: Record<string, unknown>): string {
     return typeof itemType === 'string' ? `array<${itemType}>` : 'array'
   }
   return format ? `${type} · ${format}` : type
+}
+
+function displayExample(value: unknown): string {
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function exampleDraft(value: unknown): string {
+  if (value === undefined || value === null) return ''
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function parseExample(value: string): unknown | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  try {
+    return JSON.parse(trimmed) as unknown
+  } catch {
+    return trimmed
+  }
 }
 
 function toolParameters(tool: ToolSummary): ToolParameterView[] {
@@ -71,6 +100,7 @@ function toolParameters(tool: ToolSummary): ToolParameterView[] {
     return {
       name,
       description: typeof schema.description === 'string' ? schema.description : null,
+      example: schema.example,
       type: parameterType(schema),
       location: locations.get(name) || 'input',
       required: required.has(name),
@@ -86,6 +116,12 @@ const filter = ref<'all' | 'enabled' | 'disabled'>('all')
 const searchQuery = ref('')
 const editingDescriptionId = ref<number | null>(null)
 const descriptionDraft = ref('')
+const editingParameter = ref<{ toolId: number, name: string } | null>(null)
+const parameterDescriptionDraft = ref('')
+const parameterExampleDraft = ref('')
+const parameterSaving = ref(false)
+const parameterSuccess = ref<{ toolId: number, name: string } | null>(null)
+const parameterError = ref('')
 const sourceId = computed(() => {
   const value = route?.query.source_id
   if (typeof value !== 'string' || !/^\d+$/.test(value)) return null
@@ -160,6 +196,43 @@ async function saveDescription(tool: ToolSummary): Promise<void> {
   cancelDescriptionEdit()
 }
 
+function isEditingParameter(tool: ToolSummary, parameter: ToolParameterView): boolean {
+  return editingParameter.value?.toolId === tool.id
+    && editingParameter.value.name === parameter.name
+}
+
+function startParameterEdit(tool: ToolSummary, parameter: ToolParameterView): void {
+  editingParameter.value = { toolId: tool.id, name: parameter.name }
+  parameterDescriptionDraft.value = parameter.description || ''
+  parameterExampleDraft.value = exampleDraft(parameter.example)
+  parameterSuccess.value = null
+  parameterError.value = ''
+}
+
+function cancelParameterEdit(): void {
+  editingParameter.value = null
+  parameterDescriptionDraft.value = ''
+  parameterExampleDraft.value = ''
+  parameterError.value = ''
+}
+
+async function saveParameter(tool: ToolSummary, parameter: ToolParameterView): Promise<void> {
+  parameterSaving.value = true
+  parameterError.value = ''
+  try {
+    await store.updateToolParameter(tool, parameter.name, {
+      description: parameterDescriptionDraft.value.trim() || null,
+      example: parseExample(parameterExampleDraft.value),
+    })
+    editingParameter.value = null
+    parameterSuccess.value = { toolId: tool.id, name: parameter.name }
+  } catch {
+    parameterError.value = t('tools.parameterSaveError')
+  } finally {
+    parameterSaving.value = false
+  }
+}
+
 onMounted(() => void Promise.all([store.loadTools(), store.loadSources()]))
 </script>
 
@@ -193,7 +266,23 @@ onMounted(() => void Promise.all([store.loadTools(), store.loadSources()]))
             <div class="parameter-list">
               <div v-for="parameter in tool.parameters" :key="parameter.name" class="parameter-row">
                 <div class="parameter-heading"><code>{{ parameter.name }}</code><span>{{ t(`tools.location.${parameter.location}`) }}</span><span>{{ parameter.type }}</span><b :class="{ optional: !parameter.required }">{{ parameter.required ? t('tools.required') : t('tools.optional') }}</b></div>
-                <p v-if="parameter.description">{{ parameter.description }}</p>
+                <template v-if="isEditingParameter(tool, parameter)">
+                  <div class="parameter-editor">
+                    <label><span>{{ t('tools.parameterDescriptionLabel') }}</span><textarea v-model="parameterDescriptionDraft" rows="3" maxlength="4000" /></label>
+                    <label><span>{{ t('tools.parameterExampleLabel') }}</span><textarea v-model="parameterExampleDraft" rows="2" /></label>
+                    <p class="parameter-editor-hint">{{ t('tools.parameterExampleHint') }}</p>
+                    <p v-if="parameterError" class="parameter-save-error" role="alert">{{ parameterError }}</p>
+                    <div class="parameter-editor-actions"><button class="primary-action" :disabled="parameterSaving" @click="saveParameter(tool, parameter)">{{ t('tools.saveParameter') }}</button><button class="secondary-action" :disabled="parameterSaving" @click="cancelParameterEdit">{{ t('tools.cancelParameter') }}</button></div>
+                  </div>
+                </template>
+                <template v-else>
+                  <div class="parameter-guidance">
+                    <p v-if="parameter.description"><strong>{{ t('tools.parameterDescription') }}</strong><span>{{ parameter.description }}</span></p>
+                    <p v-if="parameter.example !== undefined"><strong>{{ t('tools.parameterExample') }}</strong><code>{{ displayExample(parameter.example) }}</code></p>
+                  </div>
+                  <button class="parameter-edit-action" @click="startParameterEdit(tool, parameter)">{{ t('tools.editParameter') }}</button>
+                  <p v-if="parameterSuccess?.toolId === tool.id && parameterSuccess.name === parameter.name" class="parameter-save-success" role="status">{{ t('tools.parameterSaveSuccess') }}</p>
+                </template>
               </div>
             </div>
           </details>

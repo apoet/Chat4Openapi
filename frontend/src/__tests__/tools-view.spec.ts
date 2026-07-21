@@ -154,6 +154,177 @@ describe('Tool administration views', () => {
     expect(await screen.findByText('Search all pets')).toBeTruthy()
   })
 
+  it('edits parameter guidance while keeping Swagger structure read-only', async () => {
+    const tool = {
+      id: 8,
+      api_source_id: 1,
+      operation_key: 'GET /genes/{geneSymbol}',
+      name: 'getGene',
+      description: 'Get a gene',
+      input_schema: {
+        type: 'object',
+        properties: {
+          geneSymbol: {
+            type: 'string',
+            description: 'Swagger gene symbol',
+            example: 'BRCA1',
+          },
+        },
+        required: ['geneSymbol'],
+      },
+      execution_schema: {
+        parameters: [
+          { name: 'geneSymbol', in: 'path', required: true, argument: 'geneSymbol' },
+        ],
+      },
+      tags: ['Genes'],
+      enabled: true,
+    }
+    const sources = [
+      { id: 1, name: 'Gene API', source_type: 'openapi', base_url: 'https://api.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+    ]
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse(sources))
+      if (init?.method === 'PUT') {
+        return Promise.resolve(jsonResponse({
+          ...tool,
+          input_schema: {
+            ...tool.input_schema,
+            properties: {
+              geneSymbol: {
+                type: 'string',
+                description: 'HGNC gene symbol',
+                example: 'ABCA4',
+              },
+            },
+          },
+        }))
+      }
+      return Promise.resolve(jsonResponse([tool]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    const parameterName = await screen.findByText('geneSymbol')
+    const parameterRow = parameterName.closest('.parameter-row') as HTMLElement
+    const structuralFields = parameterRow.querySelector('.parameter-heading') as HTMLElement
+    expect(structuralFields.textContent).toContain('Path')
+    expect(structuralFields.textContent).toContain('string')
+    expect(structuralFields.textContent).toContain('Required')
+    expect(structuralFields.querySelector('input, textarea, select')).toBeNull()
+    expect(screen.getByText('Swagger gene symbol')).toBeTruthy()
+    expect(screen.getByText('BRCA1')).toBeTruthy()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit parameter' }))
+    await fireEvent.update(screen.getByLabelText('Parameter description'), 'HGNC gene symbol')
+    await fireEvent.update(screen.getByLabelText('Example (JSON or text)'), '"ABCA4"')
+    await fireEvent.click(screen.getByRole('button', { name: 'Save parameter' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    const overrideCall = fetchMock.mock.calls.find(([input]) => String(input).includes('/parameters/'))
+    expect(overrideCall?.[0]).toBe('/api/admin/tools/8/parameters/geneSymbol')
+    expect(overrideCall?.[1]).toEqual(expect.objectContaining({
+      method: 'PUT',
+      body: JSON.stringify({ description: 'HGNC gene symbol', example: 'ABCA4' }),
+    }))
+    expect(await screen.findByText('HGNC gene symbol')).toBeTruthy()
+    expect(screen.getByText('ABCA4')).toBeTruthy()
+    expect(screen.getByText('Parameter guidance saved.')).toBeTruthy()
+  })
+
+  it('clears overrides to restore Swagger guidance', async () => {
+    const tool = {
+      id: 8,
+      api_source_id: 1,
+      operation_key: 'GET /genes/{geneSymbol}',
+      name: 'getGene',
+      description: 'Get a gene',
+      input_schema: {
+        type: 'object',
+        properties: {
+          geneSymbol: {
+            type: 'string',
+            description: 'HGNC gene symbol',
+            example: 'ABCA4',
+          },
+        },
+        required: ['geneSymbol'],
+      },
+      execution_schema: { parameters: [{ in: 'path', argument: 'geneSymbol' }] },
+      tags: ['Genes'],
+      enabled: true,
+    }
+    const swaggerTool = {
+      ...tool,
+      input_schema: {
+        ...tool.input_schema,
+        properties: {
+          geneSymbol: {
+            type: 'string',
+            description: 'Swagger gene symbol',
+            example: 'BRCA1',
+          },
+        },
+      },
+    }
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse([]))
+      if (init?.method === 'PUT') return Promise.resolve(jsonResponse(swaggerTool))
+      return Promise.resolve(jsonResponse([tool]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    await fireEvent.click(await screen.findByRole('button', { name: 'Edit parameter' }))
+    await fireEvent.update(screen.getByLabelText('Parameter description'), '')
+    await fireEvent.update(screen.getByLabelText('Example (JSON or text)'), '')
+    await fireEvent.click(screen.getByRole('button', { name: 'Save parameter' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    const overrideCall = fetchMock.mock.calls.find(([input]) => String(input).includes('/parameters/'))
+    expect(JSON.parse((overrideCall?.[1] as RequestInit).body as string)).toEqual({
+      description: null,
+      example: null,
+    })
+    expect(await screen.findByText('Swagger gene symbol')).toBeTruthy()
+    expect(screen.getByText('BRCA1')).toBeTruthy()
+  })
+
+  it('keeps the parameter editor open and reports save errors', async () => {
+    const tool = {
+      id: 8,
+      api_source_id: 1,
+      operation_key: 'GET /genes',
+      name: 'getGene',
+      description: null,
+      input_schema: {
+        type: 'object',
+        properties: { geneSymbol: { type: 'string' } },
+      },
+      execution_schema: {},
+      tags: ['Genes'],
+      enabled: true,
+    }
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/sources')) return Promise.resolve(jsonResponse([]))
+      if (init?.method === 'PUT') {
+        return Promise.resolve(jsonResponse({ error: { code: 'unknown', params: {} } }, 500))
+      }
+      return Promise.resolve(jsonResponse([tool]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    await fireEvent.click(await screen.findByRole('button', { name: 'Edit parameter' }))
+    await fireEvent.update(screen.getByLabelText('Parameter description'), 'HGNC gene symbol')
+    await fireEvent.click(screen.getByRole('button', { name: 'Save parameter' }))
+
+    expect(await screen.findByText('Unable to save parameter guidance. Try again.')).toBeTruthy()
+    expect((screen.getByLabelText('Parameter description') as HTMLTextAreaElement).value).toBe('HGNC gene symbol')
+  })
+
   it('allows each API source group to collapse and expand', async () => {
     const tools = [
       { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: [], enabled: false },

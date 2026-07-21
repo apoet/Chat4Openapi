@@ -7,6 +7,7 @@ import type {
   SourceImportResponse,
   SourceRefreshResult,
   ToolAuthConfig,
+  ToolParameterOverrideWrite,
   ToolSummary,
 } from '../api/contracts'
 import { useAuthStore } from './auth'
@@ -204,6 +205,23 @@ export const useToolsStore = defineStore('tools', () => {
     if (index >= 0) tools.value[index] = updated
   }
 
+  async function updateToolParameter(
+    tool: ToolSummary,
+    parameterName: string,
+    payload: ToolParameterOverrideWrite,
+  ): Promise<void> {
+    const auth = useAuthStore()
+    const updated = await perform(() =>
+      request<ToolSummary>(
+        `/api/admin/tools/${tool.id}/parameters/${encodeURIComponent(parameterName)}`,
+        { method: 'PUT', body: JSON.stringify(payload) },
+        auth.csrfToken,
+      ),
+    )
+    const index = tools.value.findIndex((item) => item.id === updated.id)
+    if (index >= 0) tools.value[index] = updated
+  }
+
   async function deleteTool(tool: ToolSummary): Promise<void> {
     const auth = useAuthStore()
     await perform(() =>
@@ -241,6 +259,7 @@ export const useToolsStore = defineStore('tools', () => {
     deleteSource,
     setEnabled,
     updateToolDescription,
+    updateToolParameter,
     deleteTool,
     saveAuthConfig,
   }
