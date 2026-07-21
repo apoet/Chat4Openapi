@@ -77,6 +77,16 @@ async def test_tool_import_requires_admin_and_csrf(client: httpx.AsyncClient) ->
 
 
 @pytest.mark.asyncio
+async def test_public_tool_session_config_reports_login_requirement(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get("/api/tool-session/config")
+
+    assert response.status_code == 200
+    assert response.json() == {"enabled": False}
+
+
+@pytest.mark.asyncio
 async def test_tool_lifecycle_and_login_binding_conflicts(client: httpx.AsyncClient) -> None:
     csrf = await admin_login(client)
     imported = await client.post(

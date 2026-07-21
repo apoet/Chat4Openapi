@@ -108,6 +108,7 @@ async def test_skill_lifecycle_binds_only_enabled_non_login_tools(
     started = await client.post(
         f"/api/admin/skills/{skill_id}/start", headers={"X-CSRF-Token": csrf}
     )
+    eligible = await client.get("/api/admin/skills/eligible-tools")
     running = await client.get("/api/skills")
     stopped = await client.post(
         f"/api/admin/skills/{skill_id}/stop", headers={"X-CSRF-Token": csrf}
@@ -119,5 +120,6 @@ async def test_skill_lifecycle_binds_only_enabled_non_login_tools(
     assert created.status_code == 201
     assert created.json()["tools"][0]["name"] == "enabled_tool"
     assert started.json()["running"] is True
+    assert [item["name"] for item in eligible.json()] == ["enabled_tool"]
     assert [item["name"] for item in running.json()] == ["Pet helper"]
     assert stopped.json()["running"] is False

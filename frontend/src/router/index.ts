@@ -6,7 +6,8 @@ export function createAppRouter(): Router {
   const router = createRouter({
     history: createWebHistory(),
     routes: [
-      { path: '/', redirect: '/admin' },
+      { path: '/', redirect: '/chat' },
+      { path: '/chat', name: 'chat', component: () => import('../views/ChatView.vue') },
       { path: '/setup', name: 'setup', component: () => import('../views/SetupView.vue') },
       { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
       {
@@ -18,6 +19,8 @@ export function createAppRouter(): Router {
           { path: 'sources', name: 'sources', component: () => import('../views/ApiSourcesView.vue') },
           { path: 'tools', name: 'tools', component: () => import('../views/ToolsView.vue') },
           { path: 'tool-auth', name: 'tool-auth', component: () => import('../views/ToolAuthView.vue') },
+          { path: 'providers', name: 'providers', component: () => import('../views/ProvidersView.vue') },
+          { path: 'skills', name: 'skills', component: () => import('../views/SkillsView.vue') },
         ],
       },
     ],

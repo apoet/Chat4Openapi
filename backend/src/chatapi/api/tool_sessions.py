@@ -53,6 +53,12 @@ def get_tool_session_service(
     return ToolSessionService(db, cipher, executor)
 
 
+@router.get("/api/tool-session/config")
+def browser_config(db: Session = Depends(get_db_session)) -> dict[str, bool]:
+    config = db.get(GlobalToolAuthConfig, 1)
+    return {"enabled": bool(config is not None and config.enabled)}
+
+
 def _session_error(exc: Exception) -> ApiError:
     if isinstance(exc, ToolLoginDisabled):
         return ApiError(409, "tool_session.login_disabled")

@@ -1,6 +1,8 @@
 # Skills, LLM Chat, and Compatibility API Implementation Plan
 
-**Status:** Ready for implementation after the completed Tool Runtime phase.
+**Status:** Core implementation complete. Remaining hardening includes transparent peripheral
+provider proxying, incremental upstream streaming/cancellation, and external authenticated client
+end-to-end fixtures.
 
 **Goal:** Configure OpenAI/Anthropic-compatible model providers, compose enabled managed Tools into startable Skills, run Tool-aware conversations, and expose OpenAI and Anthropic compatible APIs plus a bilingual chat UI.
 

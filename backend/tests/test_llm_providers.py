@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from chatapi.api.tool_sessions import get_tool_secret_cipher
-from chatapi.llm.client import CanonicalMessage, CanonicalTool, LlmClient
+from chatapi.llm.client import CanonicalMessage, CanonicalResponse, CanonicalTool, LlmClient
 from chatapi.models import LlmProvider
 from chatapi.security.encryption import SecretCipher
 
@@ -58,6 +58,44 @@ async def test_provider_api_encrypts_and_never_returns_api_key(
         assert row is not None
         assert b"plain-secret-key" not in row.encrypted_api_key
         assert cipher.decrypt_json(row.encrypted_api_key) == {"api_key": "plain-secret-key"}
+
+
+@pytest.mark.asyncio
+async def test_provider_connection_test_uses_encrypted_configuration(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    token = await csrf(client)
+    created = await client.post(
+        "/api/admin/providers",
+        json={
+            "name": "Connection test",
+            "provider_type": "openai",
+            "base_url": "https://llm.example.test/v1",
+            "api_key": "connection-secret",
+            "default_model": "gpt-test",
+        },
+        headers={"X-CSRF-Token": token},
+    )
+    captured: dict[str, object] = {}
+
+    async def complete(_self: LlmClient, **kwargs: object) -> CanonicalResponse:
+        captured.update(kwargs)
+        return CanonicalResponse(content="OK")
+
+    monkeypatch.setattr(LlmClient, "complete", complete)
+
+    tested = await client.post(
+        f"/api/admin/providers/{created.json()['id']}/test",
+        headers={"X-CSRF-Token": token},
+    )
+
+    assert tested.status_code == 200
+    assert tested.json() == {"ok": True, "model": "gpt-test", "response": "OK"}
+    assert captured["api_key"] == "connection-secret"
 
 
 @pytest.mark.asyncio

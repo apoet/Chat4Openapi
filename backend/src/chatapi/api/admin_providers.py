@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from chatapi.api.admin_auth import AdminContext, require_admin, require_csrf
 from chatapi.api.errors import ApiError
 from chatapi.api.tool_sessions import get_tool_secret_cipher
+from chatapi.llm.client import CanonicalMessage, LlmClient, LlmProviderError
 from chatapi.models import LlmProvider, Skill
 from chatapi.schemas.providers import (
     ProviderCreateRequest,
@@ -60,6 +61,32 @@ def create_provider(
         context.db.rollback()
         raise ApiError(409, "providers.name_conflict") from exc
     return _response(provider)
+
+
+@router.post("/{provider_id}/test")
+async def test_provider(
+    provider_id: int,
+    context: AdminContext = Depends(require_csrf),
+    cipher: SecretCipher = Depends(get_tool_secret_cipher),
+) -> dict[str, str | bool]:
+    provider = _provider(context, provider_id)
+    secret = cipher.decrypt_json(provider.encrypted_api_key)
+    try:
+        result = await LlmClient().complete(
+            provider_type=provider.provider_type,
+            base_url=provider.base_url,
+            api_key=str(secret["api_key"]),
+            model=provider.default_model,
+            messages=[CanonicalMessage(role="user", content="Reply with OK.")],
+            max_tokens=8,
+        )
+    except LlmProviderError as exc:
+        raise ApiError(409, "providers.test_failed", status=exc.status_code) from exc
+    return {
+        "ok": True,
+        "model": provider.default_model,
+        "response": result.content,
+    }
 
 
 @router.patch("/{provider_id}", response_model=ProviderResponse)

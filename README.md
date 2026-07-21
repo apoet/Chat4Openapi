@@ -2,11 +2,12 @@
 
 Chat with your APIs through managed MCP Tools and Skills.
 
-The current implementation contains the platform foundation and Tool Runtime: SQLite migrations,
-first-run single-administrator setup, secure administrator sessions, English/Chinese localization,
-Swagger 2.0 and OpenAPI 3.x import, managed Tool lifecycle, encrypted original-API Tool Sessions,
-safe request-scoped execution, a dynamic FastMCP endpoint, and the Vue Tool administration UI.
-Skills, model providers, chat, and compatible LLM APIs are the next implementation phase.
+The current implementation contains the platform foundation, Tool Runtime, and the core Skills/chat
+runtime: SQLite migrations, first-run single-administrator setup, secure administrator sessions,
+English/Chinese localization, Swagger 2.0 and OpenAPI 3.x import, managed Tool lifecycle, encrypted
+original-API Tool Sessions, safe request-scoped execution, a dynamic FastMCP endpoint, encrypted
+OpenAI/Anthropic-compatible provider configuration, startable Skills, compatible chat APIs, and Vue
+administration/chat surfaces.
 
 ## Requirements
 
@@ -74,6 +75,18 @@ Unknown `/api/*`, `/v1/*`, and `/anthropic/*` paths always remain JSON 404 respo
 5. External MCP clients connect to `http://127.0.0.1:8000/mcp/`. When Tool authentication is
    enabled, first create a Tool Session through `POST /v1/tool-sessions`, then pass the returned
    `tool_session_id` to MCP Tool calls.
+
+## Skills and chat
+
+1. Add and test an OpenAI-compatible or Anthropic-compatible provider under **Providers**.
+2. Under **Skills**, select a provider and click enabled Tools in the quick-reference tray. Login,
+   disabled, deleted, or source-disabled Tools are never offered for Skill binding.
+3. Start the Skill and open **Chat**. The running Skill selector is below the message input.
+4. If original-API login is enabled, sign in once on the chat gate. Its encrypted Tool Session is
+   reused for every Tool call in that browser session.
+
+OpenAI clients can use `/v1/models` and `/v1/chat/completions`; Anthropic clients can use
+`/v1/messages`. Both protocols accept `skill-<id>` as the model and support streaming responses.
 
 ## First run
 

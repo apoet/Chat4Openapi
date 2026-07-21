@@ -45,6 +45,9 @@ export default {
   sources: { eyebrow: 'API 目录', title: 'API 来源', subtitle: '导入 Swagger 2.0 或 OpenAPI 3.x JSON/YAML 文档。', name: '来源名称', baseUrl: '基础 URL（可选）', document: 'OpenAPI 文档', import: '导入来源', importing: '正在导入…', empty: '尚未导入 API 来源。' },
   tools: { eyebrow: '运行时目录', title: 'Tools', subtitle: '检查已导入操作，仅开放可信的 Tool。', enabled: '已启用', disabled: '已停用', enable: '启用', disable: '停用', delete: '删除', empty: '没有符合筛选条件的 Tool。', filter: { all: '全部', enabled: '已启用', disabled: '已停用' } },
   toolAuth: { nav: 'Tool 登录认证', eyebrow: '原 API 用户身份', title: 'Tool 登录认证', subtitle: '绑定一个已启用的登录 Tool。每个 Tool Session 只登录一次，并共享该原 API 用户身份。', enable: '要求登录原 API', enableHint: '管理员凭据绝不会用于调用 Tool。', loginTool: '登录 Tool', selectTool: '选择已启用的 Tool', tokenPath: 'Token JSON 路径', usernameField: '用户名字段', passwordField: '密码字段', idle: '空闲过期（分钟）', absolute: '绝对过期（小时）', save: '保存认证配置' },
+  providers: { eyebrow: '模型运行时', title: '大模型供应商', subtitle: '连接 OpenAI 兼容或 Anthropic 兼容接口。', name: '供应商名称', type: '协议', baseUrl: '基础 URL', model: '默认模型', apiKey: 'API Key', save: '添加供应商', test: '测试', testing: '测试中…', testSuccess: '连接成功' },
+  skills: { eyebrow: '能力编排', title: 'Skills', subtitle: '组合模型、指令和有序的 Tool 白名单。', name: 'Skill 名称', provider: '供应商', description: '描述', prompt: '系统提示词', bound: '已绑定 {count} 个 Tool', save: '保存 Skill', edit: '编辑', cancel: '取消', quickReference: '快捷引用', enabledTools: '已启用 Tools', quickHint: '点击 Tool 即可绑定，并在光标处插入稳定引用。', noTools: '请先启用 Tool，再到此处引用。', start: '启动', stop: '停止' },
+  chat: { title: '对话', eyebrow: '已准备好', emptyTitle: '你的 API 能做什么？', emptyHint: '选择运行中的 Skill，然后用自然语言提问。', message: '消息', placeholder: '输入问题…', send: '发送', skill: 'Skill', skillHint: '仅显示运行中的 Skill', apiLogin: '原 API 登录', loginTitle: '登录后开始对话', loginHint: '此凭据属于原 API 业务用户，与管理员账号完全隔离。', login: '进入对话' },
   action: { continue: '继续' },
   error: {
     'setup.already_initialized': '此 ChatAPI 实例已经完成初始化。',

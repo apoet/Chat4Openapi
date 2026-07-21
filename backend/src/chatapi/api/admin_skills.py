@@ -126,6 +126,28 @@ def list_admin_skills(
     return [_response(context.db, skill) for skill in skills]
 
 
+@router.get("/api/admin/skills/eligible-tools", response_model=list[ToolSummary])
+def list_eligible_tools(
+    context: AdminContext = Depends(require_admin),
+) -> list[ToolSummary]:
+    config = context.db.get(GlobalToolAuthConfig, 1)
+    login_tool_id = config.login_tool_id if config is not None and config.enabled else None
+    statement = (
+        select(Tool)
+        .join(ApiSource, ApiSource.id == Tool.api_source_id)
+        .where(
+            Tool.deleted_at.is_(None),
+            Tool.enabled.is_(True),
+            ApiSource.deleted_at.is_(None),
+            ApiSource.enabled.is_(True),
+        )
+        .order_by(Tool.id)
+    )
+    if login_tool_id is not None:
+        statement = statement.where(Tool.id != login_tool_id)
+    return [ToolSummary.model_validate(tool) for tool in context.db.scalars(statement)]
+
+
 @router.post("/api/admin/skills", response_model=SkillResponse, status_code=201)
 def create_skill(
     payload: SkillWriteRequest, context: AdminContext = Depends(require_csrf)

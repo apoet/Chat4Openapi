@@ -67,3 +67,24 @@ export interface ToolAuthConfig {
   idle_minutes: number
   absolute_hours: number
 }
+
+export interface LlmProviderSummary {
+  id: number
+  name: string
+  provider_type: 'openai' | 'anthropic'
+  base_url: string
+  default_model: string
+  enabled: boolean
+  has_api_key: boolean
+}
+
+export interface SkillSummary {
+  id: number
+  name: string
+  description: string | null
+  system_prompt: string
+  provider_id: number | null
+  model: string | null
+  running: boolean
+  tools: ToolSummary[]
+}
