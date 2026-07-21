@@ -47,7 +47,7 @@ def _bound_skill_ids(db: Session, agent_id: int) -> list[int]:
         db.scalars(
             select(AgentSkill.skill_id)
             .where(AgentSkill.agent_id == agent_id)
-            .order_by(AgentSkill.position)
+            .order_by(AgentSkill.position, AgentSkill.skill_id)
         )
     )
 
@@ -62,12 +62,16 @@ def _eligible_bound_skill_ids(db: Session, agent_id: int) -> list[int]:
                 Skill.running.is_(True),
                 Skill.deleted_at.is_(None),
             )
-            .order_by(AgentSkill.position)
+            .order_by(AgentSkill.position, AgentSkill.skill_id)
         )
     )
 
 
-def _candidate_skill_ids(body: dict[str, Any], context: AgentKeyContext) -> list[int]:
+def _candidate_skill_ids(
+    body: dict[str, Any],
+    context: AgentKeyContext,
+    conversation: Conversation | None,
+) -> list[int]:
     db = context.db
     model = body.get("model", "")
     extension_present = "chat4openapi_skill_ids" in body
@@ -89,17 +93,19 @@ def _candidate_skill_ids(body: dict[str, Any], context: AgentKeyContext) -> list
             raise ApiError(422, "validation.invalid", fields=["body.chat4openapi_skill_ids"])
         candidate_ids = list(dict.fromkeys(candidate_ids))
         forbidden = [skill_id for skill_id in candidate_ids if skill_id not in bound_set]
-        if forbidden:
+        if forbidden and conversation is None:
             raise ApiError(404, "chat.skill_not_found")
         if extension_present and candidate_ids:
             return candidate_ids
         eligible_ids = _eligible_bound_skill_ids(db, context.agent.id)
-        if not eligible_ids:
+        if not eligible_ids and conversation is None:
             raise ApiError(409, "agent.no_eligible_skills")
         return eligible_ids
     if extension_present:
         raise ApiError(409, "chat.candidate_scope_conflict")
     skill_id = _skill_id(model)
+    if conversation is not None:
+        return [skill_id]
     skill = db.get(Skill, skill_id)
     if skill is None or skill_id not in bound_set:
         raise ApiError(404, "chat.skill_not_found")
@@ -268,9 +274,9 @@ async def _run(
     *,
     anthropic: bool,
 ):
-    candidate_skill_ids = _candidate_skill_ids(body, key_context)
     model = body.get("model", "")
     conversation_id = body.get("conversation_id")
+    conversation = None
     if conversation_id is not None:
         conversation = db.get(Conversation, conversation_id)
         if (
@@ -279,6 +285,7 @@ async def _run(
             or conversation.agent_id != key_context.agent.id
         ):
             raise ApiError(404, "agent.conversation_not_found")
+    candidate_skill_ids = _candidate_skill_ids(body, key_context, conversation)
     _validate_compatibility_scope(
         db,
         conversation_id,
@@ -370,7 +377,7 @@ def models(
         .join(AgentSkill, AgentSkill.skill_id == Skill.id)
         .where(Skill.running.is_(True), Skill.deleted_at.is_(None))
         .where(AgentSkill.agent_id == context.agent.id)
-        .order_by(AgentSkill.position)
+        .order_by(AgentSkill.position, Skill.id)
     ).all()
     generic = {
         "id": "agent-default",

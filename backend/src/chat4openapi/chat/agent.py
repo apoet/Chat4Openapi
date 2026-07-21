@@ -347,7 +347,7 @@ class AgentRuntime:
                 )
             else:
                 tool = tool_map.models.get(call.name)
-                if tool is None:
+                if tool is None or not self._tool_is_authorized(conversation, tool):
                     observation = {"error": "tool_unavailable", "tool": call.name}
                 else:
                     schema = self._strict_tool_schema(effective_input_schema(self._session, tool))
@@ -525,6 +525,35 @@ class AgentRuntime:
                     input_schema=effective_input_schema(self._session, tool),
                 )
         return self._BoundTools(canonical, models)
+
+    def _tool_is_authorized(self, conversation: Conversation, tool: Tool) -> bool:
+        if not conversation.loaded_skill_ids:
+            return False
+        return (
+            self._session.scalar(
+                select(SkillTool.skill_id)
+                .join(Skill, Skill.id == SkillTool.skill_id)
+                .join(
+                    AgentSkill,
+                    (AgentSkill.skill_id == SkillTool.skill_id)
+                    & (AgentSkill.agent_id == conversation.agent_id),
+                )
+                .join(Tool, Tool.id == SkillTool.tool_id)
+                .join(ApiSource, ApiSource.id == Tool.api_source_id)
+                .where(
+                    SkillTool.skill_id.in_(conversation.loaded_skill_ids),
+                    SkillTool.tool_id == tool.id,
+                    Skill.running.is_(True),
+                    Skill.deleted_at.is_(None),
+                    Tool.enabled.is_(True),
+                    Tool.deleted_at.is_(None),
+                    ApiSource.enabled.is_(True),
+                    ApiSource.deleted_at.is_(None),
+                )
+                .limit(1)
+            )
+            is not None
+        )
 
     async def _execute_tool(
         self, tool: Tool, arguments: dict[str, Any], tool_session_id: str | None

@@ -1,4 +1,6 @@
+import asyncio
 import json
+from datetime import UTC, datetime
 
 import pytest
 from cryptography.fernet import Fernet
@@ -40,6 +42,20 @@ class SequencedLlm:
 
     async def complete(self, **kwargs):
         self.calls.append(kwargs)
+        return self.responses.pop(0)
+
+
+class DeferredToolCallLlm(SequencedLlm):
+    def __init__(self, responses: list[CanonicalResponse]) -> None:
+        super().__init__(responses)
+        self.tool_call_started = asyncio.Event()
+        self.release_tool_call = asyncio.Event()
+
+    async def complete(self, **kwargs):
+        self.calls.append(kwargs)
+        if len(self.calls) == 2:
+            self.tool_call_started.set()
+            await self.release_tool_call.wait()
         return self.responses.pop(0)
 
 
@@ -646,6 +662,115 @@ async def test_shared_tool_is_exposed_once_across_loaded_skills(
 
         assert result.content == "Shared Tool loaded."
         assert [tool.name for tool in llm.calls[1]["tools"]] == ["get_gene"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("revocation", ["stopped", "deleted", "unbound"])
+async def test_tool_call_is_reauthorized_after_llm_wait(
+    db_session_factory,
+    revocation: str,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as session:
+        skill, _tool = seed_runtime(session, cipher)
+        llm = DeferredToolCallLlm(
+            [
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[
+                        CanonicalToolCall("load", "load_skills", {"skill_ids": [skill.id]})
+                    ],
+                ),
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[
+                        CanonicalToolCall("gene", "get_gene", {"symbol": "ABCA4"})
+                    ],
+                ),
+                CanonicalResponse(content="Authorization was revoked."),
+            ]
+        )
+        executor = RecordingExecutor()
+        task = asyncio.create_task(
+            AgentRuntime(session, cipher, llm, executor).run(
+                turn("lookup", [skill.id], False)
+            )
+        )
+        await asyncio.wait_for(llm.tool_call_started.wait(), timeout=2)
+
+        with db_session_factory() as concurrent:
+            stored = concurrent.get(Skill, skill.id)
+            if revocation == "stopped":
+                stored.running = False
+            elif revocation == "deleted":
+                stored.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+            else:
+                concurrent.query(AgentSkill).filter_by(
+                    agent_id=TEST_AGENT_ID,
+                    skill_id=skill.id,
+                ).delete()
+            concurrent.commit()
+
+        llm.release_tool_call.set()
+        result = await task
+
+        assert result.content == "Authorization was revoked."
+        assert executor.calls == []
+        assert llm.calls[2]["messages"][-1].content == {
+            "error": "tool_unavailable",
+            "tool": "get_gene",
+        }
+
+
+@pytest.mark.asyncio
+async def test_shared_tool_remains_authorized_by_another_loaded_skill_after_llm_wait(
+    db_session_factory,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as session:
+        first, tool = seed_runtime(session, cipher)
+        second = add_skill_sharing_tool(session, tool)
+        llm = DeferredToolCallLlm(
+            [
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[
+                        CanonicalToolCall(
+                            "load",
+                            "load_skills",
+                            {"skill_ids": [first.id, second.id]},
+                        )
+                    ],
+                ),
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[
+                        CanonicalToolCall("gene", "get_gene", {"symbol": "ABCA4"})
+                    ],
+                ),
+                CanonicalResponse(content="Shared authorization remained valid."),
+            ]
+        )
+        executor = RecordingExecutor()
+        task = asyncio.create_task(
+            AgentRuntime(session, cipher, llm, executor).run(
+                turn("lookup", [first.id, second.id], False)
+            )
+        )
+        await asyncio.wait_for(llm.tool_call_started.wait(), timeout=2)
+
+        with db_session_factory() as concurrent:
+            concurrent.query(AgentSkill).filter_by(
+                agent_id=TEST_AGENT_ID,
+                skill_id=first.id,
+            ).delete()
+            concurrent.commit()
+
+        llm.release_tool_call.set()
+        result = await task
+
+        assert result.content == "Shared authorization remained valid."
+        assert [call[0] for call in executor.calls] == ["get_gene"]
 
 
 @pytest.mark.asyncio

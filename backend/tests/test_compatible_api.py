@@ -632,7 +632,7 @@ async def test_existing_unavailable_skill_alias_is_rejected(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("unavailable_state", ["stopped", "deleted"])
+@pytest.mark.parametrize("unavailable_state", ["stopped", "deleted", "unbound"])
 async def test_existing_skill_alias_continuation_records_unavailable_failure(
     client: httpx.AsyncClient,
     app: FastAPI,
@@ -656,8 +656,10 @@ async def test_existing_skill_alias_continuation_records_unavailable_failure(
         stored = session.get(Skill, skill.id)
         if unavailable_state == "stopped":
             stored.running = False
-        else:
+        elif unavailable_state == "deleted":
             stored.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        else:
+            session.query(AgentSkill).filter_by(agent_id=1, skill_id=skill.id).delete()
         session.commit()
 
     continued = await client.post(
@@ -1024,6 +1026,68 @@ async def test_agent_default_rejects_when_key_agent_has_no_eligible_bound_skills
     assert llm.calls == []
     with db_session_factory() as session:
         assert session.query(Conversation).count() == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("revocation", ["stopped", "deleted", "unbound"])
+@pytest.mark.parametrize("explicit_scope", [False, True])
+async def test_agent_default_existing_conversation_delegates_empty_catalog_to_runtime(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_session_factory,
+    revocation: str,
+    explicit_scope: bool,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    llm = FinalAnswerLlm()
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: llm
+    skill = seed(db_session_factory, cipher)
+    scope = {"chat4openapi_skill_ids": [skill.id]} if explicit_scope else {}
+    created = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "agent-default",
+            "messages": [{"role": "user", "content": "Hello"}],
+            **scope,
+        },
+    )
+    conversation_id = created.json()["chat4openapi_conversation_id"]
+    with db_session_factory() as session:
+        stored = session.get(Skill, skill.id)
+        if revocation == "stopped":
+            stored.running = False
+        elif revocation == "deleted":
+            stored.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        else:
+            session.query(AgentSkill).filter_by(agent_id=1, skill_id=skill.id).delete()
+        session.commit()
+
+    continued = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "agent-default",
+            "conversation_id": conversation_id,
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hello from the Agent."},
+                {"role": "user", "content": "Continue"},
+            ],
+            **scope,
+        },
+    )
+
+    assert continued.status_code == 409
+    assert continued.json() == {
+        "error": {"code": "agent.no_eligible_skills", "params": {}}
+    }
+    assert len(llm.calls) == 1
+    with db_session_factory() as session:
+        conversation = session.get(Conversation, conversation_id)
+        assert conversation.agent_status == "failed"
+        assert conversation.latest_failure_summary == (
+            "No eligible Skills remain for this conversation."
+        )
 
 
 @pytest.mark.asyncio

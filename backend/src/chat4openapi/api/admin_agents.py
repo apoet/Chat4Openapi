@@ -24,7 +24,7 @@ def _response(context: AdminContext, agent: Agent) -> AgentResponse:
         context.db.scalars(
             select(AgentSkill.skill_id)
             .where(AgentSkill.agent_id == agent.id)
-            .order_by(AgentSkill.position)
+            .order_by(AgentSkill.position, AgentSkill.skill_id)
         )
     )
     response = AgentResponse.model_validate(agent)

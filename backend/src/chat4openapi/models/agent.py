@@ -54,7 +54,7 @@ class Agent(Base):
     skills: Mapped[list["AgentSkill"]] = relationship(
         back_populates="agent",
         cascade="all, delete-orphan",
-        order_by="AgentSkill.position",
+        order_by="(AgentSkill.position, AgentSkill.skill_id)",
     )
     api_keys: Mapped[list["AgentApiKey"]] = relationship(
         back_populates="agent", cascade="all, delete-orphan"
