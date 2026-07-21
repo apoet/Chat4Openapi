@@ -110,6 +110,33 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    connection = op.get_bind()
+    rows = connection.execute(
+        sa.text("SELECT id, name FROM tools ORDER BY name, id")
+    ).all()
+    used_names = {str(row.name) for row in rows}
+    first_id_by_name: dict[str, int] = {}
+    for row in rows:
+        tool_id = int(row.id)
+        name = str(row.name)
+        if name not in first_id_by_name:
+            first_id_by_name[name] = tool_id
+            continue
+        suffix = f"__legacy_{tool_id}"
+        base = name[: 128 - len(suffix)]
+        replacement = f"{base}{suffix}"
+        counter = 2
+        while replacement in used_names:
+            suffix = f"__legacy_{tool_id}_{counter}"
+            base = name[: 128 - len(suffix)]
+            replacement = f"{base}{suffix}"
+            counter += 1
+        connection.execute(
+            sa.text("UPDATE tools SET name = :name WHERE id = :tool_id"),
+            {"name": replacement, "tool_id": tool_id},
+        )
+        used_names.add(replacement)
+
     with op.batch_alter_table("tools") as batch_op:
         batch_op.create_unique_constraint("uq_tools_name", ["name"])
 

@@ -150,3 +150,56 @@ def test_0007_allows_distinct_tool_rows_to_share_a_name(tmp_path: Path) -> None:
             )
         )
     engine.dispose()
+
+
+def test_0007_downgrade_deterministically_names_colliding_tools(tmp_path: Path) -> None:
+    database_url = sqlite_url(tmp_path / "tool-name-downgrade.db")
+    config = Config("backend/alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "head")
+    engine = create_engine_for_url(database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO api_sources (id, name, source_type, base_url, enabled)
+                VALUES
+                    (1, 'First', 'openapi', 'https://first.test', true),
+                    (2, 'Second', 'openapi', 'https://second.test', true)
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO tools
+                    (id, api_source_id, operation_key, name, input_schema,
+                     execution_schema, enabled)
+                VALUES
+                    (10, 1, 'GET /first', 'shared_name', '{}', '{}', true),
+                    (20, 2, 'GET /second', 'shared_name', '{}', '{}', true)
+                """
+            )
+        )
+    engine.dispose()
+
+    command.downgrade(config, "0006_varcards_markdown_prompt")
+
+    engine = create_engine_for_url(database_url)
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT id, name FROM tools ORDER BY id")
+        ).all()
+    assert rows == [(10, "shared_name"), (20, "shared_name__legacy_20")]
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO tools
+                    (api_source_id, operation_key, name, input_schema,
+                     execution_schema, enabled)
+                VALUES (1, 'GET /third', 'shared_name', '{}', '{}', true)
+                """
+            )
+        )
+    engine.dispose()

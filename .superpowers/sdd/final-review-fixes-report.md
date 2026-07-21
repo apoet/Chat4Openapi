@@ -33,3 +33,22 @@ Implemented every Critical/Important finding from the final whole-branch review,
 - `git diff --check` — clean (line-ending conversion warnings only).
 
 The two existing Vitest `fireEvent.change` advisories remain unrelated and non-failing.
+
+## Follow-up review fixes
+
+- Compatibility alias continuation: `skill-<id>` validates stopped/deleted state only when creating a conversation. Existing conversations delegate availability filtering to `AgentRuntime`, so unavailable single-skill scopes fail as `agent.no_eligible_skills` while persisting `failed` and `latest_failure_summary`; future multi-candidate scopes can continue with remaining eligible Skills.
+- Browser scope locking: continuation validation now distinguishes an omitted candidate field from an explicitly supplied empty list. Explicit scopes reject `[]`, automatic scopes accept `[]`, and omitted fields inherit the persisted scope. Compatibility requests with an explicitly empty extension now persist an automatic scope.
+- Migration downgrade safety: `0007` deterministically preserves colliding Tool rows by retaining the lowest-ID original name and renaming later collisions to a bounded `__legacy_<id>` form (with a deterministic suffix if needed) before restoring the unique constraint.
+
+### Follow-up TDD evidence
+
+- Initial focused RED: 5 failures / 1 pass for stopped/deleted alias continuation, explicit-empty scope locking, omitted-field continuation, and collision-data downgrade. The omitted-field failure exposed only a test fixture lifetime issue and was corrected to share its sequenced provider.
+- Additional RED: 1 failure for an explicit empty compatibility extension being persisted as an explicit scope.
+- Focused GREEN: 6 passed, followed by 1 passed for the compatibility empty-extension case. Related runtime/API/migration coverage: 65 passed.
+
+### Final verification after follow-up
+
+- `conda run -n chatapi pytest backend/tests -q` — 155 passed.
+- `conda run -n chatapi ruff check backend/src backend/tests` — All checks passed.
+- `D:\nvm\nodejs\npm.cmd test` — 8 files, 59 tests passed.
+- `D:\nvm\nodejs\npm.cmd run build` — `vue-tsc --noEmit` and Vite production build succeeded.

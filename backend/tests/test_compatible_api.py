@@ -320,6 +320,45 @@ async def test_agent_default_and_extension_scope_delegate_non_interactively(
 
 
 @pytest.mark.asyncio
+async def test_agent_default_explicit_empty_extension_remains_automatic_on_continuation(
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    llm = FinalAnswerLlm()
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: llm
+    seed(db_session_factory, cipher)
+    created = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "agent-default",
+            "chatapi_skill_ids": [],
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+    conversation_id = created.json()["chatapi_conversation_id"]
+
+    continued = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "agent-default",
+            "chatapi_skill_ids": [],
+            "conversation_id": conversation_id,
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hello from the Agent."},
+                {"role": "user", "content": "Continue"},
+            ],
+        },
+    )
+
+    assert continued.status_code == 200
+    with db_session_factory() as session:
+        conversation = session.get(Conversation, conversation_id)
+        assert conversation.candidate_scope_source == "automatic"
+
+
+@pytest.mark.asyncio
 async def test_skill_alias_rejects_conflicting_extension_scope(
     client: httpx.AsyncClient, app: FastAPI, db_session_factory
 ) -> None:
@@ -552,6 +591,62 @@ async def test_existing_unavailable_skill_alias_is_rejected(
         "params": {"skill_ids": [skill.id]},
     }
     assert llm.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unavailable_state", ["stopped", "deleted"])
+async def test_existing_skill_alias_continuation_records_unavailable_failure(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_session_factory,
+    unavailable_state: str,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    llm = FinalAnswerLlm()
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: llm
+    skill = seed(db_session_factory, cipher)
+    created = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": f"skill-{skill.id}",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+    conversation_id = created.json()["chatapi_conversation_id"]
+    with db_session_factory() as session:
+        stored = session.get(Skill, skill.id)
+        if unavailable_state == "stopped":
+            stored.running = False
+        else:
+            stored.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        session.commit()
+
+    continued = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": f"skill-{skill.id}",
+            "conversation_id": conversation_id,
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hello from the Agent."},
+                {"role": "user", "content": "Continue"},
+            ],
+        },
+    )
+
+    assert continued.status_code == 409
+    assert continued.json()["error"] == {
+        "code": "agent.no_eligible_skills",
+        "params": {},
+    }
+    assert len(llm.calls) == 1
+    with db_session_factory() as session:
+        conversation = session.get(Conversation, conversation_id)
+        assert conversation.agent_status == "failed"
+        assert conversation.latest_failure_summary == (
+            "No eligible Skills remain for this conversation."
+        )
 
 
 @pytest.mark.asyncio

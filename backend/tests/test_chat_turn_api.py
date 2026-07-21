@@ -175,6 +175,62 @@ async def test_browser_turn_rejects_candidate_changes_for_existing_conversation(
 
 
 @pytest.mark.asyncio
+async def test_browser_explicit_scope_rejects_explicit_empty_candidate_list(
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    first, _second = seed_agent(db_session_factory, cipher)
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: SequencedLlm(
+        [CanonicalResponse(content="First.")]
+    )
+    created = await client.post(
+        "/api/chat/turns",
+        json={"message": "Hello", "candidate_skill_ids": [first.id]},
+    )
+
+    continued = await client.post(
+        "/api/chat/turns",
+        json={
+            "message": "Continue",
+            "conversation_id": created.json()["conversation_id"],
+            "candidate_skill_ids": [],
+        },
+    )
+
+    assert continued.status_code == 409
+    assert continued.json()["error"]["code"] == "chat.candidate_scope_locked"
+
+
+@pytest.mark.asyncio
+async def test_browser_explicit_scope_can_be_omitted_on_continuation(
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    first, _second = seed_agent(db_session_factory, cipher)
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    llm = SequencedLlm(
+        [CanonicalResponse(content="First."), CanonicalResponse(content="Second.")]
+    )
+    app.dependency_overrides[get_llm_client] = lambda: llm
+    created = await client.post(
+        "/api/chat/turns",
+        json={"message": "Hello", "candidate_skill_ids": [first.id]},
+    )
+
+    continued = await client.post(
+        "/api/chat/turns",
+        json={
+            "message": "Continue",
+            "conversation_id": created.json()["conversation_id"],
+        },
+    )
+
+    assert continued.status_code == 200
+    assert continued.json()["message"] == "Second."
+
+
+@pytest.mark.asyncio
 async def test_browser_auto_scope_continuation_does_not_recompute_changed_catalog(
     client: httpx.AsyncClient, app: FastAPI, db_session_factory
 ) -> None:

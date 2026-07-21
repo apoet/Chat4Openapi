@@ -62,7 +62,10 @@ def _candidate_skill_ids(body: dict[str, Any], db: Session) -> list[int]:
     skill = db.get(Skill, skill_id)
     if skill is None:
         raise ApiError(404, "chat.skill_not_found")
-    if skill.deleted_at is not None or not skill.running:
+    if (
+        body.get("conversation_id") is None
+        and (skill.deleted_at is not None or not skill.running)
+    ):
         raise ApiError(409, "agent.skill_unavailable", skill_ids=[skill_id])
     return [skill_id]
 
@@ -165,15 +168,17 @@ def _validate_conversation_scope(
     *,
     scope_supplied: bool,
 ) -> None:
-    if conversation_id is None or not scope_supplied or not candidate_skill_ids:
+    if conversation_id is None or not scope_supplied:
         return
     conversation = db.get(Conversation, conversation_id)
     if conversation is None or conversation.deleted_at is not None:
         return
+    requested_source = "explicit" if candidate_skill_ids else "automatic"
     requested = list(dict.fromkeys(candidate_skill_ids))
-    if (
-        conversation.candidate_scope_source != "explicit"
-        or set(requested) != set(conversation.candidate_skill_ids)
+    if conversation.candidate_scope_source != requested_source:
+        raise ApiError(409, "chat.candidate_scope_locked")
+    if requested_source == "explicit" and set(requested) != set(
+        conversation.candidate_skill_ids
     ):
         raise ApiError(409, "chat.candidate_scope_locked")
 
@@ -256,7 +261,7 @@ async def _run(
             incoming_messages=_incoming_messages(body, anthropic=anthropic),
             candidate_scope_source=(
                 "explicit"
-                if model.startswith("skill-") or "chatapi_skill_ids" in body
+                if model.startswith("skill-") or candidate_skill_ids
                 else "automatic"
             ),
         ),
