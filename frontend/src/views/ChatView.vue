@@ -6,7 +6,11 @@ import { ApiError, request } from '../api/client'
 import type { ChatTurnRequest, ChatTurnResponse, SkillSummary } from '../api/contracts'
 import SkillMultiSelect from '../components/SkillMultiSelect.vue'
 
-type ChatMessage = { role: 'user' | 'assistant'; content: string }
+type ChatMessage = {
+  role: 'user' | 'assistant'
+  content: string
+  kind: 'message' | 'clarification'
+}
 type LocalChatSessionV2 = {
   version: 2
   id: string
@@ -38,6 +42,7 @@ const username = ref('')
 const password = ref('')
 const sending = ref(false)
 const errorMessage = ref('')
+const sessionErrors = ref<Record<string, string>>({})
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -50,12 +55,28 @@ function isIdList(value: unknown): value is number[] {
     && value.every((id) => Number.isInteger(id) && id > 0)
 }
 
-function isMessages(value: unknown): value is ChatMessage[] {
-  return Array.isArray(value) && value.every((message) =>
+function parseMessages(
+  value: unknown,
+  status: 'completed' | 'needs_input',
+): ChatMessage[] | null {
+  if (!Array.isArray(value) || !value.every((message) =>
     isRecord(message)
     && (message.role === 'user' || message.role === 'assistant')
-    && typeof message.content === 'string',
-  )
+    && typeof message.content === 'string'
+    && (message.kind === undefined || message.kind === 'message' || message.kind === 'clarification'),
+  )) return null
+
+  return value.map((message, index) => ({
+    role: message.role as ChatMessage['role'],
+    content: message.content as string,
+    kind: message.kind === 'message' || message.kind === 'clarification'
+      ? message.kind
+      : (status === 'needs_input'
+          && index === value.length - 1
+          && message.role === 'assistant'
+        ? 'clarification'
+        : 'message'),
+  }))
 }
 
 function parseSession(value: unknown): LocalChatSessionV2 | null {
@@ -63,7 +84,6 @@ function parseSession(value: unknown): LocalChatSessionV2 | null {
     || typeof value.id !== 'string'
     || !(value.conversationId === null || typeof value.conversationId === 'string')
     || typeof value.title !== 'string'
-    || !isMessages(value.messages)
     || typeof value.updatedAt !== 'string') return null
 
   if (value.version === 2) {
@@ -71,6 +91,8 @@ function parseSession(value: unknown): LocalChatSessionV2 | null {
       || !isIdList(value.loadedSkillIds)
       || (value.status !== 'completed' && value.status !== 'needs_input')
       || !(value.pending === null || isRecord(value.pending))) return null
+    const messages = parseMessages(value.messages, value.status)
+    if (!messages) return null
     return {
       version: 2,
       id: value.id,
@@ -80,12 +102,14 @@ function parseSession(value: unknown): LocalChatSessionV2 | null {
       loadedSkillIds: [...value.loadedSkillIds],
       status: value.status,
       pending: value.pending ? { ...value.pending } : null,
-      messages: value.messages.map((message) => ({ ...message })),
+      messages,
       updatedAt: value.updatedAt,
     }
   }
 
   if (!Number.isInteger(value.skillId) || (value.skillId as number) <= 0) return null
+  const messages = parseMessages(value.messages, 'completed')
+  if (!messages) return null
   return {
     version: 2,
     id: value.id,
@@ -95,7 +119,7 @@ function parseSession(value: unknown): LocalChatSessionV2 | null {
     loadedSkillIds: [],
     status: 'completed',
     pending: null,
-    messages: value.messages.map((message) => ({ ...message })),
+    messages,
     updatedAt: value.updatedAt,
   }
 }
@@ -167,7 +191,7 @@ function openSession(session: LocalChatSessionV2): void {
   pending.value = session.pending ? { ...session.pending } : null
   messages.value = session.messages.map((message) => ({ ...message }))
   input.value = ''
-  errorMessage.value = ''
+  errorMessage.value = sessionErrors.value[session.id] ?? ''
 }
 
 function startNewChat(): void {
@@ -181,8 +205,35 @@ function startNewChat(): void {
   errorMessage.value = ''
 }
 
-function isClarification(message: ChatMessage, index: number): boolean {
-  return message.role === 'assistant' && status.value === 'needs_input' && index === messages.value.length - 1
+function saveSessionResult(sessionId: string, result: ChatTurnResponse): void {
+  const session = sessions.value.find((item) => item.id === sessionId)
+  if (!session) return
+  session.conversationId = result.conversation_id
+  session.loadedSkillIds = [...result.loaded_skill_ids]
+  session.status = result.status
+  session.pending = result.pending ? { ...result.pending } : null
+  session.messages.push({
+    role: 'assistant',
+    content: result.message,
+    kind: result.status === 'needs_input' ? 'clarification' : 'message',
+  })
+  session.updatedAt = new Date().toISOString()
+  sessions.value = [session, ...sessions.value.filter((item) => item.id !== sessionId)]
+  persistSessions()
+
+  if (activeSessionId.value === sessionId) {
+    conversationId.value = session.conversationId
+    loadedSkillIds.value = [...session.loadedSkillIds]
+    status.value = session.status
+    pending.value = session.pending ? { ...session.pending } : null
+    messages.value = session.messages.map((message) => ({ ...message }))
+  }
+}
+
+function formatTurnError(error: unknown): string {
+  return error instanceof ApiError
+    ? (typeof error.params.reason === 'string' ? error.params.reason : error.code)
+    : (error instanceof Error ? error.message : t('error.unknown'))
 }
 
 onMounted(async () => {
@@ -219,26 +270,26 @@ async function send(): Promise<void> {
     conversation_id: conversationId.value,
     candidate_skill_ids: [...selectedSkillIds.value],
   }
-  messages.value.push({ role: 'user', content })
+  messages.value.push({ role: 'user', content, kind: 'message' })
   input.value = ''
   errorMessage.value = ''
   saveActiveSession()
+  const sessionId = activeSessionId.value
+  if (!sessionId) return
+  const nextErrors = { ...sessionErrors.value }
+  delete nextErrors[sessionId]
+  sessionErrors.value = nextErrors
   sending.value = true
   try {
     const result = await request<ChatTurnResponse>('/api/chat/turns', {
       method: 'POST',
       body: JSON.stringify(body),
     })
-    conversationId.value = result.conversation_id
-    loadedSkillIds.value = [...result.loaded_skill_ids]
-    status.value = result.status
-    pending.value = result.pending ? { ...result.pending } : null
-    messages.value.push({ role: 'assistant', content: result.message })
-    saveActiveSession()
+    saveSessionResult(sessionId, result)
   } catch (error) {
-    errorMessage.value = error instanceof ApiError
-      ? (typeof error.params.reason === 'string' ? error.params.reason : error.code)
-      : (error instanceof Error ? error.message : t('error.unknown'))
+    const message = formatTurnError(error)
+    sessionErrors.value = { ...sessionErrors.value, [sessionId]: message }
+    if (activeSessionId.value === sessionId) errorMessage.value = message
   } finally {
     sending.value = false
   }
@@ -284,9 +335,9 @@ async function send(): Promise<void> {
           <article
             v-for="(message, index) in messages"
             :key="index"
-            :class="['message', message.role, { clarification: isClarification(message, index) }]"
+            :class="['message', message.role, { clarification: message.kind === 'clarification' }]"
           >
-            <strong v-if="isClarification(message, index)" class="clarification-label">{{ t('chat.clarification') }}</strong>
+            <strong v-if="message.kind === 'clarification'" class="clarification-label">{{ t('chat.clarification') }}</strong>
             <span>{{ message.content }}</span>
             <small v-if="message.role === 'assistant' && index === messages.length - 1 && loadedSkillIds.length" class="loaded-skills">
               {{ t('chat.loadedSkills', { names: skillNames(loadedSkillIds) }) }}

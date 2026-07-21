@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import type { SkillSummary } from '../api/contracts'
@@ -22,6 +22,14 @@ const selectedSkills = computed(() => props.modelValue.map((id) => ({
   id,
   name: props.skills.find((skill) => skill.id === id)?.name ?? t('chat.unknownSkill'),
 })))
+
+watch(() => props.disabled, (disabled) => {
+  if (disabled) open.value = false
+}, { flush: 'sync' })
+
+function isSkillDisabled(id: number): boolean {
+  return props.disabled || (!props.modelValue.includes(id) && props.modelValue.length >= props.max)
+}
 
 function toggleMenu(): void {
   if (!props.disabled) open.value = !open.value
@@ -66,19 +74,20 @@ function removeSkill(id: number): void {
     >
       {{ t('chat.chooseSkills') }}
     </button>
-    <ul v-if="open" class="skill-select-menu" role="listbox" :aria-label="t('chat.candidateSkills')" aria-multiselectable="true">
+    <ul v-if="open && !disabled" class="skill-select-menu" role="listbox" :aria-label="t('chat.candidateSkills')" aria-multiselectable="true">
       <li
         v-for="skill in skills"
         :key="skill.id"
         role="option"
         :aria-selected="modelValue.includes(skill.id)"
+        :aria-disabled="isSkillDisabled(skill.id)"
       >
         <label>
           <input
             type="checkbox"
             :aria-label="skill.name"
             :checked="modelValue.includes(skill.id)"
-            :disabled="!modelValue.includes(skill.id) && modelValue.length >= max"
+            :disabled="isSkillDisabled(skill.id)"
             @change="toggleSkill(skill.id)"
           />
           <span>{{ skill.name }}</span>

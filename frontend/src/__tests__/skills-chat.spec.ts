@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18n } from '../i18n'
 import { useAuthStore } from '../stores/auth'
+import SkillMultiSelect from '../components/SkillMultiSelect.vue'
 import ChatView from '../views/ChatView.vue'
 import ProvidersView from '../views/ProvidersView.vue'
 import SkillsView from '../views/SkillsView.vue'
@@ -13,6 +14,15 @@ function response(value: unknown, status = 200): Response {
     status,
     headers: { 'content-type': 'application/json' },
   })
+}
+
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+} {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((next) => { resolve = next })
+  return { promise, resolve }
 }
 
 beforeEach(() => {
@@ -258,6 +268,45 @@ describe('Skills and chat', () => {
       pending: null,
     })
     expect(stored[0].skillId).toBeUndefined()
+    expect(stored[0].messages).toEqual([
+      { role: 'user', content: '查询ABCA4位点', kind: 'message' },
+      { role: 'assistant', content: 'ABCA4 variants found.', kind: 'message' },
+    ])
+  })
+
+  it('safely restores pending v2 sessions whose messages predate explicit kinds', async () => {
+    localStorage.setItem('chatapi.chat.sessions.v1', JSON.stringify([{
+      version: 2,
+      id: 'pending-v2',
+      conversationId: 'conversation-pending',
+      title: 'Pending question',
+      skillIds: [],
+      loadedSkillIds: [1],
+      status: 'needs_input',
+      pending: { fields: ['reference'] },
+      messages: [
+        { role: 'user', content: 'Find variants' },
+        { role: 'assistant', content: 'Which reference genome?' },
+      ],
+      updatedAt: '2026-07-21T00:00:00.000Z',
+    }]))
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response({ enabled: false }))
+      .mockResolvedValueOnce(response([])))
+
+    const restored = render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+
+    expect(await screen.findByText('Which reference genome?')).toBeTruthy()
+    expect(restored.container.querySelector('.message.clarification')).toBeTruthy()
+    expect((screen.getByLabelText('Message') as HTMLTextAreaElement).placeholder).toBe('Answer the clarification…')
+    const stored = JSON.parse(localStorage.getItem('chatapi.chat.sessions.v1') ?? '[]')
+    expect(stored[0].pending).toEqual({ fields: ['reference'] })
+    expect(stored[0].messages).toEqual([
+      { role: 'user', content: 'Find variants', kind: 'message' },
+      { role: 'assistant', content: 'Which reference genome?', kind: 'clarification' },
+    ])
   })
 
   it('persists clarification state and resumes the same Agent conversation', async () => {
@@ -316,6 +365,8 @@ describe('Skills and chat', () => {
     await fireEvent.update(screen.getByLabelText('Message'), 'GRCh38')
     await fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     expect(await screen.findByText('Using GRCh38.')).toBeTruthy()
+    const clarification = screen.getByText('Which reference genome?').closest('article')
+    expect(clarification?.classList.contains('clarification')).toBe(true)
     expect(JSON.parse(resumedFetch.mock.calls[2][1]?.body as string)).toEqual({
       message: 'GRCh38',
       conversation_id: 'conversation-abca4',
@@ -323,6 +374,88 @@ describe('Skills and chat', () => {
     })
     stored = JSON.parse(localStorage.getItem('chatapi.chat.sessions.v1') ?? '[]')
     expect(stored[0]).toMatchObject({ status: 'completed', pending: null })
+    expect(stored[0].messages.map((message: { kind: string }) => message.kind)).toEqual([
+      'message', 'clarification', 'message', 'message',
+    ])
+
+    restored.unmount()
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response({ enabled: false }))
+      .mockResolvedValueOnce(response([skill])))
+    const completedReload = render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    expect(await screen.findByText('Using GRCh38.')).toBeTruthy()
+    expect(screen.getByText('Which reference genome?').closest('article')?.classList.contains('clarification')).toBe(true)
+    expect(completedReload.container.querySelectorAll('.message.clarification')).toHaveLength(1)
+  })
+
+  it('writes a deferred response only to the local session that started the turn', async () => {
+    const turn = deferred<Response>()
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ enabled: false }))
+      .mockResolvedValueOnce(response([]))
+      .mockImplementationOnce(() => turn.promise)
+    vi.stubGlobal('fetch', fetchMock)
+    render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+
+    await fireEvent.update(screen.getByLabelText('Message'), 'Find Milo')
+    await fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    turn.resolve(response({
+      status: 'completed', conversation_id: 'conversation-1', message: 'Milo is ready.', loaded_skill_ids: [1], pending: null,
+    }))
+
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(false))
+    expect(screen.queryByText('Milo is ready.')).toBeNull()
+    expect(screen.getByText('What can your APIs do?')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: 'Find Milo' }))
+    expect(await screen.findByText('Milo is ready.')).toBeTruthy()
+    const stored = JSON.parse(localStorage.getItem('chatapi.chat.sessions.v1') ?? '[]')
+    expect(stored.find((session: { title: string }) => session.title === 'Find Milo')).toMatchObject({
+      conversationId: 'conversation-1',
+      messages: [
+        { role: 'user', content: 'Find Milo', kind: 'message' },
+        { role: 'assistant', content: 'Milo is ready.', kind: 'message' },
+      ],
+    })
+  })
+
+  it('attributes a deferred request error to its originating history session', async () => {
+    localStorage.setItem('chatapi.chat.sessions.v1', JSON.stringify([
+      {
+        version: 2, id: 'origin', conversationId: 'conversation-origin', title: 'Origin', skillIds: [], loadedSkillIds: [],
+        status: 'completed', pending: null, messages: [{ role: 'user', content: 'Earlier origin message' }], updatedAt: '2026-07-21T00:00:01.000Z',
+      },
+      {
+        version: 2, id: 'other', conversationId: 'conversation-other', title: 'Other', skillIds: [], loadedSkillIds: [],
+        status: 'completed', pending: null, messages: [{ role: 'user', content: 'Other message' }], updatedAt: '2026-07-21T00:00:00.000Z',
+      },
+    ]))
+    const turn = deferred<Response>()
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ enabled: false }))
+      .mockResolvedValueOnce(response([]))
+      .mockImplementationOnce(() => turn.promise)
+    vi.stubGlobal('fetch', fetchMock)
+    render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+
+    await fireEvent.update(screen.getByLabelText('Message'), 'Fail this turn')
+    await fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Other' }))
+    turn.resolve(response({ error: { code: 'turn_failed', params: { reason: 'Origin failed' } } }, 500))
+
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(false))
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByText('Other message')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: 'Origin' }))
+    expect((await screen.findByRole('alert')).textContent).toBe('Origin failed')
   })
 
   it('locks candidate Skills after the first turn and copies them into a new chat', async () => {
@@ -344,11 +477,32 @@ describe('Skills and chat', () => {
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Pet helper' }))
     await fireEvent.update(screen.getByLabelText('Message'), 'Find Milo')
     await fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(screen.queryByRole('listbox', { name: 'Candidate Skills' })).toBeNull()
     await screen.findByText('Done')
     expect((screen.getByRole('button', { name: 'Select candidate Skills' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'Remove Pet helper' }) as HTMLButtonElement).disabled).toBe(true)
 
     await fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
     expect((screen.getByRole('button', { name: 'Select candidate Skills' }) as HTMLButtonElement).disabled).toBe(false)
     expect(screen.getByRole('button', { name: 'Remove Pet helper' })).toBeTruthy()
+  })
+
+  it('exposes true disabled state for choices at the selection limit', async () => {
+    render(SkillMultiSelect, {
+      props: {
+        modelValue: [1],
+        max: 1,
+        skills: [
+          { id: 1, name: 'Pet helper', description: null, system_prompt: 'Help', running: true, tools: [] },
+          { id: 2, name: 'Order helper', description: null, system_prompt: 'Help', running: true, tools: [] },
+        ],
+      },
+      global: { plugins: [i18n] },
+    })
+    await fireEvent.click(screen.getByRole('button', { name: 'Select candidate Skills' }))
+
+    expect((screen.getByRole('checkbox', { name: 'Order helper' }) as HTMLInputElement).disabled).toBe(true)
+    expect(screen.getByRole('checkbox', { name: 'Order helper' }).closest('[role="option"]')?.getAttribute('aria-disabled')).toBe('true')
+    expect((screen.getByRole('checkbox', { name: 'Pet helper' }) as HTMLInputElement).disabled).toBe(false)
   })
 })
