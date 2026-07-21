@@ -15,7 +15,7 @@ from chat4openapi.llm.client import (
     LlmClient,
     LlmProviderError,
 )
-from chat4openapi.models import AgentConfig, LlmProvider
+from chat4openapi.models import Agent, LlmProvider
 from chat4openapi.security.encryption import SecretCipher
 
 ADMIN = {"username": "admin", "password": "StrongPass!123", "locale": "en-US"}
@@ -126,16 +126,29 @@ def seed_provider_lifecycle(
         )
         session.add_all([referenced, unreferenced])
         session.flush()
-        session.add(
-            AgentConfig(
-                id=1,
-                name="Chat4Openapi Agent",
-                enabled=True,
-                system_prompt="Use configured Skills.",
-                provider_id=referenced.id,
-                mode="human_in_loop",
-                max_iterations=8,
-            )
+        session.add_all(
+            [
+                Agent(
+                    id=1,
+                    name="First Agent",
+                    enabled=True,
+                    is_default=True,
+                    system_prompt="Use configured Skills.",
+                    provider_id=referenced.id,
+                    mode="human_in_loop",
+                    max_iterations=8,
+                ),
+                Agent(
+                    id=2,
+                    name="Second Agent",
+                    enabled=False,
+                    is_default=False,
+                    system_prompt="Use other configured Skills.",
+                    provider_id=referenced.id,
+                    mode="react",
+                    max_iterations=8,
+                ),
+            ]
         )
         session.commit()
         return referenced.id, unreferenced.id
@@ -161,7 +174,10 @@ async def test_agent_provider_cannot_be_disabled_or_deleted(
     )
 
     expected = {
-        "error": {"code": "providers.agent_in_use", "params": {"agent_id": 1}}
+        "error": {
+            "code": "providers.agent_in_use",
+            "params": {"agent_ids": [1, 2]},
+        }
     }
     assert disabled.status_code == 409
     assert disabled.json() == expected
@@ -172,7 +188,7 @@ async def test_agent_provider_cannot_be_disabled_or_deleted(
         assert provider is not None
         assert provider.enabled is True
         assert provider.deleted_at is None
-        assert session.get(AgentConfig, 1).provider_id == referenced_id
+        assert session.get(Agent, 1).provider_id == referenced_id
 
 
 @pytest.mark.asyncio
@@ -204,7 +220,7 @@ async def test_unreferenced_provider_can_be_disabled_and_deleted(
         assert provider is not None
         assert provider.enabled is False
         assert provider.deleted_at is not None
-        assert session.get(AgentConfig, 1).provider_id == referenced_id
+        assert session.get(Agent, 1).provider_id == referenced_id
 
 
 @pytest.mark.asyncio

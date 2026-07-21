@@ -96,6 +96,6 @@ class AgentApiKey(Base):
     agent: Mapped[Agent] = relationship(back_populates="api_keys")
 
 
-# Temporary M2 compatibility for singleton-era runtime code. M3 switches callers
-# to explicit Agent selection and removes the old semantic name.
+# Internal compatibility for runtime code that still resolves Agent ID 1.
+# M5 removes the fixed-ID selection and this alias.
 AgentConfig = Agent

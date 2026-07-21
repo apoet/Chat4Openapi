@@ -8,7 +8,7 @@ from chat4openapi.api.admin_auth import AdminContext, require_admin, require_csr
 from chat4openapi.api.errors import ApiError
 from chat4openapi.api.tool_sessions import get_tool_secret_cipher
 from chat4openapi.llm.client import CanonicalMessage, LlmClient, LlmProviderError
-from chat4openapi.models import AgentConfig, LlmProvider
+from chat4openapi.models import Agent, LlmProvider
 from chat4openapi.schemas.providers import (
     ProviderCreateRequest,
     ProviderResponse,
@@ -31,9 +31,15 @@ def _provider(context: AdminContext, provider_id: int) -> LlmProvider:
 
 
 def _ensure_not_agent_provider(context: AdminContext, provider_id: int) -> None:
-    agent = context.db.get(AgentConfig, 1)
-    if agent is not None and agent.provider_id == provider_id:
-        raise ApiError(409, "providers.agent_in_use", agent_id=agent.id)
+    agent_ids = list(
+        context.db.scalars(
+            select(Agent.id)
+            .where(Agent.provider_id == provider_id, Agent.deleted_at.is_(None))
+            .order_by(Agent.id)
+        )
+    )
+    if agent_ids:
+        raise ApiError(409, "providers.agent_in_use", agent_ids=agent_ids)
 
 
 @router.get("", response_model=list[ProviderResponse])
