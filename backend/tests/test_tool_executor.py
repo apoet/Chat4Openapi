@@ -48,10 +48,20 @@ async def allow_network(_url: httpx.URL, _allow_private: bool) -> None:
     return None
 
 
+def test_does_not_duplicate_an_overlapping_base_path() -> None:
+    api_source = source()
+    api_source.base_url = "https://api.example.test/admin-api"
+
+    target = ToolExecutor._target_url(api_source, "/admin-api/pets/{pet_id}", {"pet_id": 7})
+
+    assert target == "https://api.example.test/admin-api/pets/7"
+
+
 @pytest.mark.asyncio
 async def test_places_arguments_and_request_scoped_auth() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url == "https://api.example.test/v1/pets/a%2Fb?trace=t&api_key=secret"
+        assert request.headers["User-Agent"] == "ChatAPI/0.1"
         assert request.headers["X-Mode"] == "safe"
         assert request.headers["Authorization"] == "Bearer token"
         assert request.headers["Cookie"] in {"region=eu; sid=session", "sid=session; region=eu"}

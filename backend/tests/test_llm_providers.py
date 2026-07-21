@@ -8,7 +8,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from chatapi.api.tool_sessions import get_tool_secret_cipher
-from chatapi.llm.client import CanonicalMessage, CanonicalResponse, CanonicalTool, LlmClient
+from chatapi.llm.client import (
+    CanonicalMessage,
+    CanonicalResponse,
+    CanonicalTool,
+    LlmClient,
+    LlmProviderError,
+)
 from chatapi.models import LlmProvider
 from chatapi.security.encryption import SecretCipher
 
@@ -178,3 +184,35 @@ async def test_openai_and_anthropic_adapters_translate_tools_and_messages() -> N
     assert json.loads(requests[1].content)["system"] == "Be concise"
     assert anthropic.content == "Checking."
     assert anthropic.tool_calls[0].name == "get_pet"
+
+
+@pytest.mark.asyncio
+async def test_llm_client_normalizes_network_failures() -> None:
+    def fail(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("certificate verify failed", request=request)
+
+    with pytest.raises(LlmProviderError) as error:
+        await LlmClient(transport=httpx.MockTransport(fail)).complete(
+            provider_type="openai",
+            base_url="https://openai.test/v1",
+            api_key="secret",
+            model="gpt-test",
+            messages=[CanonicalMessage(role="user", content="hello")],
+        )
+
+    assert error.value.status_code == 502
+    assert error.value.details == {"message": "certificate verify failed"}
+
+
+def test_openai_tool_results_are_serialized_as_json_strings() -> None:
+    message = LlmClient._openai_message(CanonicalMessage(
+        role="tool",
+        content={"code": 0, "data": {"chromosome": "1", "map_location": "1p22.1"}},
+        tool_call_id="call_1",
+        name="get_gene",
+    ))
+
+    assert json.loads(message["content"]) == {
+        "code": 0,
+        "data": {"chromosome": "1", "map_location": "1p22.1"},
+    }

@@ -18,6 +18,7 @@ function response(value: unknown, status = 200): Response {
 beforeEach(() => {
   setActivePinia(createPinia())
   useAuthStore().csrfToken = 'csrf'
+  localStorage.clear()
 })
 
 describe('Skills and chat', () => {
@@ -201,5 +202,59 @@ describe('Skills and chat', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
     expect(await screen.findByText('Milo is ready.')).toBeTruthy()
     expect(container.querySelector('.skill-dock')).toBeTruthy()
+  })
+
+  it('stores conversations in the browser and restores them after remounting', async () => {
+    const skill = {
+      id: 5,
+      name: 'Varcards2-Gene',
+      description: null,
+      system_prompt: 'Query gene variants',
+      provider_id: 1,
+      model: null,
+      running: true,
+      tools: [],
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response({ enabled: false }))
+      .mockResolvedValueOnce(response([skill]))
+      .mockResolvedValueOnce(response({
+        choices: [{ message: { role: 'assistant', content: 'ABCA4 variants found.' } }],
+        chatapi_conversation_id: 'conversation-abca4',
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const first = render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await screen.findByRole('option', { name: 'Varcards2-Gene' })
+    await fireEvent.update(await screen.findByLabelText('Message'), '查询ABCA4位点')
+    await fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(await screen.findByText('ABCA4 variants found.')).toBeTruthy()
+
+    const stored = JSON.parse(localStorage.getItem('chatapi.chat.sessions.v1') ?? '[]')
+    expect(stored).toMatchObject([{
+      conversationId: 'conversation-abca4',
+      skillId: 5,
+      title: '查询ABCA4位点',
+      messages: [
+        { role: 'user', content: '查询ABCA4位点' },
+        { role: 'assistant', content: 'ABCA4 variants found.' },
+      ],
+    }])
+    first.unmount()
+
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response({ enabled: false }))
+      .mockResolvedValueOnce(response([skill])))
+    render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+
+    expect(await screen.findByRole('button', { name: '查询ABCA4位点' })).toBeTruthy()
+    await screen.findByRole('option', { name: 'Varcards2-Gene' })
+    expect(screen.getByText('ABCA4 variants found.')).toBeTruthy()
+    expect((screen.getByLabelText('Skill') as HTMLSelectElement).value).toBe('5')
   })
 })

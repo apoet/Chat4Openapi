@@ -2,7 +2,7 @@ from cryptography.fernet import Fernet
 import pytest
 from sqlalchemy import select
 
-from chatapi.chat.orchestrator import ChatOrchestrator, SkillNotRunning, ToolLoopLimitExceeded
+from chatapi.chat.orchestrator import ChatError, ChatOrchestrator, SkillNotRunning, ToolLoopLimitExceeded
 from chatapi.llm.client import CanonicalResponse, CanonicalToolCall
 from chatapi.models import (
     ApiSource,
@@ -14,6 +14,7 @@ from chatapi.models import (
 )
 from chatapi.security.encryption import SecretCipher
 from chatapi.tools.executor import ToolExecutionResult
+from chatapi.tools.errors import ToolExecutionError
 
 
 class SequencedLlm:
@@ -33,6 +34,11 @@ class RecordingExecutor:
     async def execute(self, tool, _source, arguments, auth):
         self.calls.append((tool.name, arguments, auth))
         return ToolExecutionResult(200, {"name": "Milo"}, "application/json")
+
+
+class FailingExecutor:
+    async def execute(self, _tool, _source, _arguments, _auth):
+        raise ToolExecutionError("upstream_error", "Upstream API returned HTTP 403")
 
 
 def seed(session, cipher: SecretCipher, *, running: bool = True) -> Skill:
@@ -132,3 +138,20 @@ async def test_rejects_stopped_skill_and_unbounded_model_loop(db_session_factory
                 RecordingExecutor(),
                 max_iterations=2,
             ).run(skill_id=stopped.id, messages=[{"role": "user", "content": "loop"}])
+
+
+@pytest.mark.asyncio
+async def test_normalizes_tool_failures_as_chat_errors(db_session_factory) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as session:
+        skill = seed(session, cipher)
+        llm = SequencedLlm([
+            CanonicalResponse(content="", tool_calls=[CanonicalToolCall(
+                id="call_1", name="get_pet", arguments={"id": 7},
+            )]),
+        ])
+
+        with pytest.raises(ChatError, match="get_pet.*upstream_error"):
+            await ChatOrchestrator(session, cipher, llm, FailingExecutor()).run(
+                skill_id=skill.id, messages=[{"role": "user", "content": "Find pet 7"}],
+            )

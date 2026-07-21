@@ -1,11 +1,13 @@
 import asyncio
 import json
+import ssl
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote, urlsplit
 
 import httpx
+import truststore
 
 from chatapi.models import ApiSource, Tool
 from chatapi.tools.errors import ToolExecutionError
@@ -64,7 +66,14 @@ class ToolExecutor:
         if "{" in path or "}" in path:
             raise ToolExecutionError("missing_argument", "A required path argument is missing")
         base = httpx.URL(source.base_url)
-        combined_path = f"{base.path.rstrip('/')}/{path.lstrip('/')}"
+        base_path = base.path.rstrip("/")
+        operation_path = f"/{path.lstrip('/')}"
+        if base_path and (
+            operation_path == base_path or operation_path.startswith(f"{base_path}/")
+        ):
+            combined_path = operation_path
+        else:
+            combined_path = f"{base_path}/{path.lstrip('/')}"
         return base.copy_with(path=combined_path, query=None)
 
     async def execute(
@@ -106,7 +115,7 @@ class ToolExecutor:
             raise ToolExecutionError("invalid_target", "Tool target uses a different origin")
 
         query: dict[str, Any] = {}
-        headers: dict[str, str] = {}
+        headers: dict[str, str] = {"User-Agent": "ChatAPI/0.1"}
         cookies: dict[str, str] = {}
         for parameter in execution.get("parameters", []):
             argument = parameter.get("argument", parameter.get("name"))
@@ -150,7 +159,10 @@ class ToolExecutor:
 
         timeout = httpx.Timeout(30, connect=10)
         async with httpx.AsyncClient(
-            transport=self._transport, timeout=timeout, follow_redirects=False
+            transport=self._transport,
+            timeout=timeout,
+            follow_redirects=False,
+            verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
         ) as client:
             request = client.build_request(
                 method, target, params=query, headers=headers, **request_kwargs

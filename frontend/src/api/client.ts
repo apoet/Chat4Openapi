@@ -22,10 +22,16 @@ export async function request<T>(
   const response = await fetch(path, { ...init, headers, credentials: 'include' })
   if (response.status === 204) return undefined as T
 
-  const payload = (await response.json()) as T | ApiErrorEnvelope
+  const text = await response.text()
+  let payload: T | ApiErrorEnvelope
+  try {
+    payload = (text ? JSON.parse(text) : {}) as T | ApiErrorEnvelope
+  } catch {
+    throw new ApiError(response.status, response.ok ? 'response.invalid_json' : `http.${response.status}`)
+  }
   if (!response.ok) {
     const envelope = payload as ApiErrorEnvelope
-    throw new ApiError(response.status, envelope.error.code, envelope.error.params)
+    throw new ApiError(response.status, envelope.error?.code ?? `http.${response.status}`, envelope.error?.params)
   }
   return payload as T
 }

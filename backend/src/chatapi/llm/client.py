@@ -1,8 +1,10 @@
 import json
+import ssl
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+import truststore
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,11 +75,15 @@ class LlmClient:
     async def _post(
         self, url: str, headers: dict[str, str], payload: dict[str, Any]
     ) -> dict[str, Any]:
-        async with httpx.AsyncClient(
-            transport=self._transport,
-            timeout=httpx.Timeout(60, connect=10),
-        ) as client:
-            response = await client.post(url, headers=headers, json=payload)
+        try:
+            async with httpx.AsyncClient(
+                transport=self._transport,
+                timeout=httpx.Timeout(60, connect=10),
+                verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
+            ) as client:
+                response = await client.post(url, headers=headers, json=payload)
+        except httpx.RequestError as exc:
+            raise LlmProviderError(502, {"message": str(exc)}) from exc
         try:
             data = response.json()
         except ValueError:
@@ -141,7 +147,10 @@ class LlmClient:
 
     @staticmethod
     def _openai_message(message: CanonicalMessage) -> dict[str, Any]:
-        result = {"role": message.role, "content": message.content}
+        content = message.content
+        if message.role == "tool" and not isinstance(content, str):
+            content = json.dumps(content, ensure_ascii=False, separators=(",", ":"))
+        result = {"role": message.role, "content": content}
         if message.tool_call_id:
             result["tool_call_id"] = message.tool_call_id
         if message.name:

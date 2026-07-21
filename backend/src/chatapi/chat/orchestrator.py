@@ -24,6 +24,7 @@ from chatapi.models import (
 from chatapi.security.encryption import SecretCipher
 from chatapi.tool_sessions.service import ToolSessionService
 from chatapi.tools.executor import RequestAuth, ToolExecutionResult
+from chatapi.tools.errors import ToolExecutionError
 
 
 class LlmCompleter(Protocol):
@@ -180,17 +181,20 @@ class ChatOrchestrator:
     async def _execute_tool(
         self, tool: Tool, arguments: dict[str, Any], tool_session_id: str | None
     ) -> ToolExecutionResult:
-        config = self._session.get(GlobalToolAuthConfig, 1)
-        if config is not None and config.enabled:
-            if not tool_session_id:
-                raise ChatToolSessionRequired("Original API Tool Session is required")
-            return await ToolSessionService(
-                self._session, self._cipher, self._tool_runner
-            ).execute(tool, arguments, tool_session_id)
-        source = self._session.get(ApiSource, tool.api_source_id)
-        if source is None:
-            raise ChatToolUnavailable("Tool API Source is unavailable")
-        return await self._tool_runner.execute(tool, source, arguments, RequestAuth())
+        try:
+            config = self._session.get(GlobalToolAuthConfig, 1)
+            if config is not None and config.enabled:
+                if not tool_session_id:
+                    raise ChatToolSessionRequired("Original API Tool Session is required")
+                return await ToolSessionService(
+                    self._session, self._cipher, self._tool_runner
+                ).execute(tool, arguments, tool_session_id)
+            source = self._session.get(ApiSource, tool.api_source_id)
+            if source is None:
+                raise ChatToolUnavailable("Tool API Source is unavailable")
+            return await self._tool_runner.execute(tool, source, arguments, RequestAuth())
+        except ToolExecutionError as exc:
+            raise ChatError(f"Tool {tool.name} failed: {exc.code}") from exc
 
     def _conversation(self, skill_id: int, conversation_id: str | None) -> Conversation:
         if conversation_id:
