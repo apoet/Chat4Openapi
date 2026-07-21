@@ -50,13 +50,27 @@ def test_agent_runtime_migration_creates_persistence_schema(tmp_path: Path) -> N
     engine = create_engine_for_url(database_url)
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
-    conversation_columns = {
-        column["name"] for column in inspector.get_columns("conversations")
-    }
+    conversation_column_details = inspector.get_columns("conversations")
+    conversation_columns = {column["name"] for column in conversation_column_details}
+    conversation_agent_column = next(
+        column for column in conversation_column_details if column["name"] == "agent_id"
+    )
     skill_columns = {column["name"] for column in inspector.get_columns("skills")}
+    agent_skill_columns = {column["name"] for column in inspector.get_columns("agent_skills")}
+    agent_key_columns = {column["name"] for column in inspector.get_columns("agent_api_keys")}
+    with engine.connect() as connection:
+        default_agents = connection.execute(
+            text("SELECT id, is_default FROM agents ORDER BY id")
+        ).all()
     engine.dispose()
 
-    assert {"agent_config", "tool_parameter_overrides"} <= table_names
+    assert {
+        "agents",
+        "agent_skills",
+        "agent_api_keys",
+        "tool_parameter_overrides",
+    } <= table_names
+    assert "agent_config" not in table_names
     assert {
         "candidate_skill_ids",
         "loaded_skill_ids",
@@ -65,14 +79,29 @@ def test_agent_runtime_migration_creates_persistence_schema(tmp_path: Path) -> N
         "pending_clarification",
         "candidate_scope_source",
         "latest_failure_summary",
+        "agent_id",
     } <= conversation_columns
-    agent_columns = {column["name"] for column in inspector.get_columns("agent_config")}
-    agent_checks = {
-        constraint["name"] for constraint in inspector.get_check_constraints("agent_config")
-    }
-    assert {"created_at", "updated_at"} <= agent_columns
+    agent_columns = {column["name"] for column in inspector.get_columns("agents")}
+    agent_checks = {constraint["name"] for constraint in inspector.get_check_constraints("agents")}
+    assert {"is_default", "created_at", "updated_at", "deleted_at"} <= agent_columns
+    assert {"agent_id", "skill_id", "position"} == agent_skill_columns
+    assert {
+        "agent_id",
+        "label",
+        "key_prefix",
+        "key_hash",
+        "enabled",
+        "expires_at",
+        "last_used_at",
+        "created_at",
+        "updated_at",
+        "revoked_at",
+        "deleted_at",
+    } <= agent_key_columns
     assert {"ck_agent_mode", "ck_agent_max_iterations"} <= agent_checks
     assert {"provider_id", "model"}.isdisjoint(skill_columns)
+    assert conversation_agent_column["nullable"] is False
+    assert default_agents == [(1, 1)]
 
 
 def test_database_constraints_reject_invalid_agent_runtime_settings(tmp_path: Path) -> None:
@@ -83,9 +112,33 @@ def test_database_constraints_reject_invalid_agent_runtime_settings(tmp_path: Pa
     engine = create_engine_for_url(database_url)
 
     with pytest.raises(IntegrityError), engine.begin() as connection:
-        connection.execute(text("UPDATE agent_config SET mode = 'invalid' WHERE id = 1"))
+        connection.execute(text("UPDATE agents SET mode = 'invalid' WHERE id = 1"))
     with pytest.raises(IntegrityError), engine.begin() as connection:
-        connection.execute(text("UPDATE agent_config SET max_iterations = 1 WHERE id = 1"))
+        connection.execute(text("UPDATE agents SET max_iterations = 1 WHERE id = 1"))
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO agents
+                    (name, enabled, is_default, system_prompt, mode, max_iterations)
+                VALUES
+                    ('Another Default', true, true, 'Prompt', 'react', 8)
+                """
+            )
+        )
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO agents
+                    (name, enabled, is_default, system_prompt, mode,
+                     max_iterations, deleted_at)
+                VALUES
+                    ('Deleted Default', false, true, 'Prompt', 'react', 8,
+                     CURRENT_TIMESTAMP)
+                """
+            )
+        )
 
     engine.dispose()
 
@@ -99,9 +152,7 @@ def test_0007_downgrade_and_reupgrade_round_trip(tmp_path: Path) -> None:
     command.downgrade(config, "0006_varcards_markdown_prompt")
     engine = create_engine_for_url(database_url)
     inspector = inspect(engine)
-    conversation_columns = {
-        column["name"] for column in inspector.get_columns("conversations")
-    }
+    conversation_columns = {column["name"] for column in inspector.get_columns("conversations")}
     agent_columns = {column["name"] for column in inspector.get_columns("agent_config")}
     engine.dispose()
     assert "candidate_scope_source" not in conversation_columns
@@ -111,10 +162,8 @@ def test_0007_downgrade_and_reupgrade_round_trip(tmp_path: Path) -> None:
     command.upgrade(config, "head")
     engine = create_engine_for_url(database_url)
     inspector = inspect(engine)
-    conversation_columns = {
-        column["name"] for column in inspector.get_columns("conversations")
-    }
-    agent_columns = {column["name"] for column in inspector.get_columns("agent_config")}
+    conversation_columns = {column["name"] for column in inspector.get_columns("conversations")}
+    agent_columns = {column["name"] for column in inspector.get_columns("agents")}
     engine.dispose()
     assert {"candidate_scope_source", "latest_failure_summary"} <= conversation_columns
     assert {"created_at", "updated_at"} <= agent_columns
@@ -187,9 +236,7 @@ def test_0007_downgrade_deterministically_names_colliding_tools(tmp_path: Path) 
 
     engine = create_engine_for_url(database_url)
     with engine.connect() as connection:
-        rows = connection.execute(
-            text("SELECT id, name FROM tools ORDER BY id")
-        ).all()
+        rows = connection.execute(text("SELECT id, name FROM tools ORDER BY id")).all()
     assert rows == [(10, "shared_name"), (20, "shared_name__legacy_20")]
     with pytest.raises(IntegrityError), engine.begin() as connection:
         connection.execute(

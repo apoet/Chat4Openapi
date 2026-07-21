@@ -223,9 +223,7 @@ def test_markdown_prompt_migration_preserves_a_customized_varcards_prompt(
         ),
     ],
 )
-def test_0007_upgrades_only_known_legacy_agent_prompts(
-    tmp_path: Path, legacy_prompt: str
-) -> None:
+def test_0007_upgrades_only_known_legacy_agent_prompts(tmp_path: Path, legacy_prompt: str) -> None:
     database_path = tmp_path / f"legacy-{len(legacy_prompt)}.db"
     config = migration_config(database_path)
     command.upgrade(config, "0006_varcards_markdown_prompt")
@@ -242,7 +240,7 @@ def test_0007_upgrades_only_known_legacy_agent_prompts(
     engine = create_engine_for_url(sqlite_url(database_path))
     with engine.connect() as connection:
         prompt = connection.execute(
-            text("SELECT system_prompt FROM agent_config WHERE id = 1")
+            text("SELECT system_prompt FROM agents WHERE id = 1")
         ).scalar_one()
     engine.dispose()
     assert prompt == DEFAULT_AGENT_PROMPT
@@ -266,7 +264,7 @@ def test_0007_preserves_custom_agent_prompt(tmp_path: Path) -> None:
     engine = create_engine_for_url(sqlite_url(database_path))
     with engine.connect() as connection:
         prompt = connection.execute(
-            text("SELECT system_prompt FROM agent_config WHERE id = 1")
+            text("SELECT system_prompt FROM agents WHERE id = 1")
         ).scalar_one()
     engine.dispose()
     assert prompt == custom_prompt
