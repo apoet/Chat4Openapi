@@ -49,6 +49,8 @@ class ToolSummary(BaseModel):
     name: str
     description: str | None
     input_schema: dict[str, Any]
+    execution_schema: dict[str, Any]
+    tags: list[str] = Field(default_factory=list)
     enabled: bool
 
 

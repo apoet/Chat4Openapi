@@ -45,6 +45,8 @@ export interface ToolSummary {
   name: string
   description: string | null
   input_schema: Record<string, unknown>
+  execution_schema: Record<string, unknown>
+  tags: string[]
   enabled: boolean
 }
 

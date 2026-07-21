@@ -23,6 +23,51 @@ beforeEach(() => {
 })
 
 describe('Tool administration views', () => {
+  it('presents Tool tags and parameter documentation', async () => {
+    const tools = [
+      {
+        id: 1,
+        api_source_id: 1,
+        operation_key: 'GET /pets/{petId}',
+        name: 'getPet',
+        description: 'Get a pet',
+        input_schema: {
+          type: 'object',
+          properties: {
+            petId: { type: 'string', description: 'Unique pet identifier' },
+            tenantId: { type: 'integer', format: 'int64', description: 'Tenant identifier' },
+          },
+          required: ['petId'],
+        },
+        execution_schema: {
+          parameters: [
+            { name: 'petId', in: 'path', required: true, argument: 'petId' },
+            { name: 'tenant-id', in: 'header', required: false, argument: 'tenantId' },
+          ],
+        },
+        tags: ['Pets', 'Public'],
+        enabled: false,
+      },
+    ]
+    const sources = [
+      { id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://pets.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+    ]
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => Promise.resolve(
+      jsonResponse(String(input).endsWith('/sources') ? sources : tools),
+    )))
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+
+    expect(await screen.findByText('Pets')).toBeTruthy()
+    expect(screen.getByText('Public')).toBeTruthy()
+    expect(screen.getByText('Unique pet identifier')).toBeTruthy()
+    expect(screen.getByText('Tenant identifier')).toBeTruthy()
+    expect(screen.getByText('Path')).toBeTruthy()
+    expect(screen.getByText('Header')).toBeTruthy()
+    expect(screen.getByText('Required')).toBeTruthy()
+    expect(screen.getByText('Optional')).toBeTruthy()
+  })
+
   it('groups Tools by API source name', async () => {
     const tools = [
       { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, enabled: false },
@@ -41,6 +86,26 @@ describe('Tool administration views', () => {
 
     expect(await screen.findByRole('heading', { name: 'Pet API' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Orders API' })).toBeTruthy()
+  })
+
+  it('allows each API source group to collapse and expand', async () => {
+    const tools = [
+      { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: [], enabled: false },
+    ]
+    const sources = [
+      { id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://pets.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+    ]
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => Promise.resolve(
+      jsonResponse(String(input).endsWith('/sources') ? sources : tools),
+    )))
+
+    const { container } = render(ToolsView, { global: { plugins: [i18n] } })
+    await screen.findByRole('heading', { name: 'Pet API' })
+    const group = container.querySelector('details.tool-source-group') as HTMLDetailsElement
+
+    expect(group.open).toBe(true)
+    await fireEvent.click(group.querySelector('summary') as HTMLElement)
+    expect(group.open).toBe(false)
   })
 
   it('jumps from an API source to its Tools', async () => {

@@ -29,8 +29,16 @@ from chatapi.tools.network_policy import UnsafeNetworkTarget, validate_network_t
 router = APIRouter(prefix="/api/admin", tags=["admin-tools"])
 
 
-def _tool_summary(tool: Tool) -> ToolSummary:
-    return ToolSummary.model_validate(tool)
+def _tool_summary(tool: Tool, spec: dict | None = None) -> ToolSummary:
+    summary = ToolSummary.model_validate(tool)
+    if spec is None:
+        return summary
+    method, path = tool.operation_key.split(" ", 1)
+    operation = spec.get("paths", {}).get(path, {}).get(method.lower(), {})
+    tags = operation.get("tags", []) if isinstance(operation, dict) else []
+    return summary.model_copy(
+        update={"tags": [str(tag) for tag in tags if isinstance(tag, str)]}
+    )
 
 
 async def _persist_import(
@@ -90,7 +98,7 @@ async def _persist_import(
         raise ApiError(409, "tools.name_conflict") from exc
     return SourceImportResponse(
         source=ApiSourceSummary.model_validate(source),
-        tools=[_tool_summary(tool) for tool in tools],
+        tools=[_tool_summary(tool, spec) for tool in tools],
     )
 
 
@@ -285,7 +293,14 @@ def list_tools(
     if enabled is not None:
         statement = statement.where(Tool.enabled.is_(enabled))
     tools = context.db.scalars(statement.order_by(Tool.id)).all()
-    return [_tool_summary(tool) for tool in tools]
+    source_ids = {tool.api_source_id for tool in tools}
+    source_specs = {
+        source.id: json.loads(source.spec_snapshot)
+        for source in context.db.scalars(
+            select(ApiSource).where(ApiSource.id.in_(source_ids))
+        )
+    }
+    return [_tool_summary(tool, source_specs.get(tool.api_source_id)) for tool in tools]
 
 
 def _managed_tool(context: AdminContext, tool_id: int) -> Tool:
@@ -312,7 +327,9 @@ def set_tool_enabled(
         _ensure_not_login_tool(context, tool_id)
     tool.enabled = payload.enabled
     context.db.commit()
-    return _tool_summary(tool)
+    source = context.db.get(ApiSource, tool.api_source_id)
+    spec = json.loads(source.spec_snapshot) if source is not None else None
+    return _tool_summary(tool, spec)
 
 
 @router.delete("/tools/{tool_id}", status_code=204)

@@ -107,6 +107,35 @@ async def test_tool_import_requires_admin_and_csrf(client: httpx.AsyncClient) ->
 
 
 @pytest.mark.asyncio
+async def test_tool_list_exposes_tags_and_execution_metadata(
+    client: httpx.AsyncClient,
+) -> None:
+    csrf = await admin_login(client)
+    payload = import_payload()
+    document = json.loads(payload["document"])
+    document["paths"]["/pets"]["post"]["tags"] = ["Pets", "Public"]
+    payload["document"] = json.dumps(document)
+    imported = await client.post(
+        "/api/admin/sources/import",
+        json=payload,
+        headers={"X-CSRF-Token": csrf},
+    )
+
+    listed = await client.get("/api/admin/tools")
+
+    assert imported.status_code == 201
+    assert listed.status_code == 200
+    tool = listed.json()[0]
+    assert tool["tags"] == ["Pets", "Public"]
+    assert tool["execution_schema"]["parameters"][0] == {
+        "name": "trace",
+        "in": "query",
+        "required": False,
+        "argument": "trace",
+    }
+
+
+@pytest.mark.asyncio
 async def test_public_tool_session_config_reports_login_requirement(
     client: httpx.AsyncClient,
 ) -> None:
