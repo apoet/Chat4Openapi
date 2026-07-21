@@ -1,16 +1,38 @@
+import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+import pytest_asyncio
 from cryptography.fernet import Fernet
 from fastapi import FastAPI
+from sqlalchemy import select
 
 from chat4openapi.api.tool_sessions import get_tool_secret_cipher
 from chat4openapi.chat.api import get_llm_client
 from chat4openapi.llm.client import CanonicalResponse, CanonicalToolCall, LlmProviderError
-from chat4openapi.models import AgentConfig, ChatMessage, Conversation, LlmProvider, Skill
+from chat4openapi.models import (
+    Agent,
+    AgentApiKey,
+    AgentConfig,
+    AgentSkill,
+    ChatMessage,
+    Conversation,
+    LlmProvider,
+    Skill,
+)
 from chat4openapi.security.encryption import SecretCipher
+
+
+API_SECRET = "c4o_compatible_test_key_000000000000000000000000"
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def compatible_bearer(client: httpx.AsyncClient):
+    client.headers["Authorization"] = f"Bearer {API_SECRET}"
+    yield
+    client.headers.pop("Authorization", None)
 
 
 class FinalAnswerLlm:
@@ -56,6 +78,18 @@ def seed(factory, cipher: SecretCipher) -> Skill:
             running=True,
         )
         session.add(skill)
+        session.flush()
+        session.add_all(
+            [
+                AgentSkill(agent_id=1, skill_id=skill.id, position=0),
+                AgentApiKey(
+                    agent_id=1,
+                    label="Compatible tests",
+                    key_prefix=API_SECRET[:12],
+                    key_hash=hashlib.sha256(API_SECRET.encode()).hexdigest(),
+                ),
+            ]
+        )
         session.commit()
         return skill
 
@@ -89,9 +123,10 @@ async def test_openai_models_completion_and_sse_are_compatible(
 
     assert [model["id"] for model in models.json()["data"]] == [
         "agent-default",
+        "agent-1",
         f"skill-{skill.id}",
     ]
-    assert models.json()["data"][1]["name"] == "General helper"
+    assert models.json()["data"][2]["name"] == "General helper"
     body = completion.json()
     assert body["object"] == "chat.completion"
     assert body["choices"][0]["message"] == {
@@ -682,3 +717,262 @@ async def test_provider_failure_uses_redacted_structured_api_envelope(
         conversation = session.query(Conversation).one()
         assert conversation.agent_status == "failed"
         assert conversation.latest_failure_summary == "LLM provider request failed."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("GET", "/v1/models", None),
+        (
+            "POST",
+            "/v1/chat/completions",
+            {"model": "agent-default", "messages": [{"role": "user", "content": "Hi"}]},
+        ),
+        (
+            "POST",
+            "/v1/messages",
+            {
+                "model": "agent-default",
+                "max_tokens": 16,
+                "messages": [{"role": "user", "content": "Hi"}],
+            },
+        ),
+    ],
+)
+async def test_compatible_endpoints_require_a_bearer_key_before_request_validation(
+    client: httpx.AsyncClient,
+    method: str,
+    path: str,
+    body: dict | None,
+) -> None:
+    response = await client.request(
+        method,
+        path,
+        json=body,
+        headers={"Authorization": ""},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "auth.api_key_required"
+
+
+@pytest.mark.asyncio
+async def test_invalid_key_is_rejected_without_echoing_it(
+    client: httpx.AsyncClient,
+    db_session_factory,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    seed(db_session_factory, cipher)
+    invalid = "c4o_invalid_secret_that_must_never_be_echoed"
+
+    response = await client.post(
+        "/v1/chat/completions",
+        json={"model": "nonsense", "messages": []},
+        headers={"Authorization": f"Bearer {invalid}"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "auth.api_key_invalid"
+    assert invalid not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "expected_code"),
+    [
+        ("expired", "auth.api_key_expired"),
+        ("revoked", "auth.api_key_revoked"),
+        ("deleted", "auth.api_key_invalid"),
+    ],
+)
+async def test_inactive_keys_are_rejected_without_updating_last_used(
+    client: httpx.AsyncClient,
+    db_session_factory,
+    state: str,
+    expected_code: str,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    seed(db_session_factory, cipher)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    with db_session_factory() as session:
+        key = session.scalar(select(AgentApiKey))
+        assert key is not None
+        if state == "expired":
+            key.expires_at = now - timedelta(seconds=1)
+        elif state == "revoked":
+            key.enabled = False
+            key.revoked_at = now
+        else:
+            key.enabled = False
+            key.deleted_at = now
+        session.commit()
+
+    response = await client.get("/v1/models")
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == expected_code
+    with db_session_factory() as session:
+        assert session.scalar(select(AgentApiKey.last_used_at)) is None
+
+
+@pytest.mark.asyncio
+async def test_successful_authentication_updates_last_used(
+    client: httpx.AsyncClient,
+    db_session_factory,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    seed(db_session_factory, cipher)
+
+    response = await client.get("/v1/models")
+
+    assert response.status_code == 200
+    with db_session_factory() as session:
+        assert session.scalar(select(AgentApiKey.last_used_at)) is not None
+
+
+@pytest.mark.asyncio
+async def test_key_selects_its_agent_and_only_lists_bound_skill_models(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_session_factory,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    llm = FinalAnswerLlm()
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: llm
+    first_skill = seed(db_session_factory, cipher)
+    second_secret = "c4o_second_agent_key_0000000000000000000000000"
+    with db_session_factory() as session:
+        provider = session.scalar(select(LlmProvider))
+        second_skill = Skill(
+            name="Second only",
+            description="Only the second Agent may use this.",
+            system_prompt="Second Skill prompt.",
+            running=True,
+        )
+        second = Agent(
+            id=2,
+            name="Second Agent",
+            enabled=True,
+            is_default=False,
+            system_prompt="Second Agent prompt.",
+            provider_id=provider.id,
+            mode="react",
+            max_iterations=8,
+        )
+        session.add_all([second_skill, second])
+        session.flush()
+        session.add_all(
+            [
+                AgentSkill(agent_id=2, skill_id=second_skill.id, position=0),
+                AgentApiKey(
+                    agent_id=2,
+                    label="Second",
+                    key_prefix=second_secret[:12],
+                    key_hash=hashlib.sha256(second_secret.encode()).hexdigest(),
+                ),
+            ]
+        )
+        session.commit()
+        second_skill_id = second_skill.id
+
+    headers = {"Authorization": f"Bearer {second_secret}"}
+    models = await client.get("/v1/models", headers=headers)
+    response = await client.post(
+        "/v1/chat/completions",
+        json={"model": "agent-default", "messages": [{"role": "user", "content": "Hi"}]},
+        headers=headers,
+    )
+
+    assert models.status_code == 200
+    assert [item["id"] for item in models.json()["data"]] == [
+        "agent-default",
+        "agent-2",
+        f"skill-{second_skill_id}",
+    ]
+    assert f"skill-{first_skill.id}" not in models.text
+    assert response.status_code == 200
+    assert llm.calls[0]["messages"][0].content == "Second Agent prompt."
+    with db_session_factory() as session:
+        conversation = session.scalar(select(Conversation))
+        assert conversation is not None
+        assert conversation.agent_id == 2
+
+
+@pytest.mark.asyncio
+async def test_key_cannot_select_another_agent_or_unbound_skill(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_session_factory,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: FinalAnswerLlm()
+    bound = seed(db_session_factory, cipher)
+    with db_session_factory() as session:
+        unbound = Skill(name="Unbound", system_prompt="Unbound", running=True)
+        session.add(unbound)
+        session.flush()
+        unbound_id = unbound.id
+        session.commit()
+
+    wrong_agent = await client.post(
+        "/v1/chat/completions",
+        json={"model": "agent-2", "messages": [{"role": "user", "content": "Hi"}]},
+    )
+    wrong_skill = await client.post(
+        "/v1/chat/completions",
+        json={"model": f"skill-{unbound_id}", "messages": [{"role": "user", "content": "Hi"}]},
+    )
+    wrong_extension = await client.post(
+        "/v1/messages",
+        json={
+            "model": "agent-default",
+            "max_tokens": 16,
+            "chat4openapi_skill_ids": [bound.id, unbound_id],
+            "messages": [{"role": "user", "content": "Hi"}],
+        },
+    )
+
+    assert wrong_agent.status_code == 403
+    assert wrong_agent.json()["error"]["code"] == "auth.agent_scope_forbidden"
+    assert wrong_skill.status_code == 403
+    assert wrong_skill.json()["error"]["code"] == "auth.skill_scope_forbidden"
+    assert wrong_extension.status_code == 403
+    assert wrong_extension.json()["error"]["code"] == "auth.skill_scope_forbidden"
+
+
+@pytest.mark.asyncio
+async def test_matching_explicit_agent_alias_is_accepted_for_openai_and_anthropic_streams(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_session_factory,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: FinalAnswerLlm()
+    seed(db_session_factory, cipher)
+
+    openai = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "agent-1",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stream": True,
+        },
+    )
+    anthropic = await client.post(
+        "/v1/messages",
+        json={
+            "model": "agent-1",
+            "max_tokens": 16,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stream": True,
+        },
+    )
+
+    assert openai.status_code == 200
+    assert openai.headers["content-type"].startswith("text/event-stream")
+    assert anthropic.status_code == 200
+    assert "event: message_stop" in anthropic.text

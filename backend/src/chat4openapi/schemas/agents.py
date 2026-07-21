@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class AgentWrite(BaseModel):
@@ -34,3 +34,38 @@ class AgentResponse(BaseModel):
 
 class AgentSkillsWrite(BaseModel):
     skill_ids: list[int]
+
+
+class AgentApiKeyCreate(BaseModel):
+    label: str = Field(min_length=1, max_length=160)
+    expires_at: datetime | None = None
+
+
+class AgentApiKeyUpdate(BaseModel):
+    label: str | None = Field(default=None, min_length=1, max_length=160)
+    expires_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def reject_null_label(self) -> Self:
+        if "label" in self.model_fields_set and self.label is None:
+            raise ValueError("label cannot be null")
+        return self
+
+
+class AgentApiKeyResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    agent_id: int
+    label: str
+    key_prefix: str
+    enabled: bool
+    expires_at: datetime | None
+    last_used_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+    revoked_at: datetime | None
+
+
+class AgentApiKeyCreated(AgentApiKeyResponse):
+    secret: str

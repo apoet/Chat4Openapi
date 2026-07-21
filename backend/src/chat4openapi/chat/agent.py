@@ -120,6 +120,7 @@ class AgentTurnRequest:
     tool_session_id: str | None = None
     incoming_messages: list[CanonicalMessage] = dataclass_field(default_factory=list)
     candidate_scope_source: Literal["automatic", "explicit"] = "automatic"
+    agent_id: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +157,7 @@ class AgentRuntime:
             else None
         )
         try:
-            agent, provider = self._configuration()
+            agent, provider = self._configuration(request.agent_id)
         except AgentError as exc:
             if existing is not None and existing.deleted_at is None:
                 summary = (
@@ -379,9 +380,9 @@ class AgentRuntime:
 
         return None
 
-    def _configuration(self) -> tuple[AgentConfig, LlmProvider]:
-        agent = self._session.get(AgentConfig, 1)
-        if agent is None or not agent.enabled:
+    def _configuration(self, agent_id: int) -> tuple[AgentConfig, LlmProvider]:
+        agent = self._session.get(AgentConfig, agent_id)
+        if agent is None or agent.deleted_at is not None or not agent.enabled:
             raise AgentError("agent.unavailable")
         provider = (
             self._session.get(LlmProvider, agent.provider_id)
@@ -397,7 +398,11 @@ class AgentRuntime:
     ) -> tuple[Conversation, list[Skill]]:
         if request.conversation_id is not None:
             conversation = self._session.get(Conversation, request.conversation_id)
-            if conversation is None or conversation.deleted_at is not None:
+            if (
+                conversation is None
+                or conversation.deleted_at is not None
+                or conversation.agent_id != agent.id
+            ):
                 raise AgentError("agent.conversation_not_found")
             candidate_ids = list(conversation.candidate_skill_ids)
         else:
@@ -438,6 +443,7 @@ class AgentRuntime:
             return conversation, candidate_skills
         conversation = Conversation(
             id=str(uuid.uuid4()),
+            agent_id=agent.id,
             candidate_skill_ids=candidate_ids,
             loaded_skill_ids=[],
             agent_mode=agent.mode if request.interactive else "react",

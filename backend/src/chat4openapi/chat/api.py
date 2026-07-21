@@ -17,8 +17,9 @@ from chat4openapi.api.tool_sessions import (
 from chat4openapi.chat.agent import AgentError, AgentRuntime, AgentTurnRequest, AgentTurnResult
 from chat4openapi.db.session import get_db_session
 from chat4openapi.llm.client import CanonicalMessage, LlmClient, LlmProviderError
-from chat4openapi.models import AgentConfig, Conversation, Skill
+from chat4openapi.models import AgentSkill, Conversation, Skill
 from chat4openapi.schemas.chat import ChatTurnRequest, ChatTurnResponse
+from chat4openapi.security.agent_keys import AgentKeyContext, require_agent_api_key
 from chat4openapi.security.encryption import SecretCipher
 from chat4openapi.tools.executor import ToolExecutor
 
@@ -41,10 +42,28 @@ def _skill_id(model: str) -> int:
     return skill_id
 
 
-def _candidate_skill_ids(body: dict[str, Any], db: Session) -> list[int]:
+def _bound_skill_ids(db: Session, agent_id: int) -> list[int]:
+    return list(
+        db.scalars(
+            select(AgentSkill.skill_id)
+            .where(AgentSkill.agent_id == agent_id)
+            .order_by(AgentSkill.position)
+        )
+    )
+
+
+def _candidate_skill_ids(
+    body: dict[str, Any], context: AgentKeyContext
+) -> list[int]:
+    db = context.db
     model = body.get("model", "")
     extension_present = "chat4openapi_skill_ids" in body
-    if model == "agent-default":
+    agent_aliases = {"agent-default", f"agent-{context.agent.id}"}
+    if isinstance(model, str) and model.startswith("agent-") and model not in agent_aliases:
+        raise ApiError(403, "auth.agent_scope_forbidden")
+    bound_ids = _bound_skill_ids(db, context.agent.id)
+    bound_set = set(bound_ids)
+    if model in agent_aliases:
         candidate_ids = body.get("chat4openapi_skill_ids", [])
         if (
             not isinstance(candidate_ids, list)
@@ -55,13 +74,19 @@ def _candidate_skill_ids(body: dict[str, Any], db: Session) -> list[int]:
             )
         ):
             raise ApiError(422, "validation.invalid", fields=["body.chat4openapi_skill_ids"])
-        return list(dict.fromkeys(candidate_ids))
+        candidate_ids = list(dict.fromkeys(candidate_ids))
+        forbidden = [skill_id for skill_id in candidate_ids if skill_id not in bound_set]
+        if forbidden:
+            raise ApiError(403, "auth.skill_scope_forbidden", skill_ids=forbidden)
+        return candidate_ids if extension_present and candidate_ids else bound_ids
     if extension_present:
         raise ApiError(409, "chat.candidate_scope_conflict")
     skill_id = _skill_id(model)
     skill = db.get(Skill, skill_id)
     if skill is None:
         raise ApiError(404, "chat.skill_not_found")
+    if skill_id not in bound_set:
+        raise ApiError(403, "auth.skill_scope_forbidden", skill_ids=[skill_id])
     if (
         body.get("conversation_id") is None
         and (skill.deleted_at is not None or not skill.running)
@@ -231,19 +256,28 @@ async def _run(
     executor: ToolExecutor,
     chat4openapi_tool_session_header: str | None,
     legacy_tool_session_header: str | None,
+    key_context: AgentKeyContext,
     *,
     anthropic: bool,
 ):
-    candidate_skill_ids = _candidate_skill_ids(body, db)
+    candidate_skill_ids = _candidate_skill_ids(body, key_context)
     model = body.get("model", "")
     conversation_id = body.get("conversation_id")
+    if conversation_id is not None:
+        conversation = db.get(Conversation, conversation_id)
+        if (
+            conversation is not None
+            and conversation.deleted_at is None
+            and conversation.agent_id != key_context.agent.id
+        ):
+            raise ApiError(403, "auth.agent_scope_forbidden")
     _validate_compatibility_scope(
         db,
         conversation_id,
         candidate_skill_ids,
         model,
         scope_supplied=(
-            model.startswith("skill-") or "chat4openapi_skill_ids" in body
+            model.startswith("skill-") or bool(body.get("chat4openapi_skill_ids"))
         ),
     )
     result = await _run_agent(
@@ -261,9 +295,11 @@ async def _run(
             incoming_messages=_incoming_messages(body, anthropic=anthropic),
             candidate_scope_source=(
                 "explicit"
-                if model.startswith("skill-") or candidate_skill_ids
+                if model.startswith("skill-")
+                or bool(body.get("chat4openapi_skill_ids"))
                 else "automatic"
             ),
+            agent_id=key_context.agent.id,
         ),
         db,
         cipher,
@@ -331,24 +367,34 @@ async def browser_turn(
 
 
 @router.get("/v1/models")
-def models(db: Session = Depends(get_db_session)) -> dict[str, Any]:
-    skills = db.scalars(
+def models(
+    context: AgentKeyContext = Depends(require_agent_api_key),
+) -> dict[str, Any]:
+    skills = context.db.scalars(
         select(Skill)
+        .join(AgentSkill, AgentSkill.skill_id == Skill.id)
         .where(Skill.running.is_(True), Skill.deleted_at.is_(None))
-        .order_by(Skill.id)
+        .where(AgentSkill.agent_id == context.agent.id)
+        .order_by(AgentSkill.position)
     ).all()
-    agent = db.get(AgentConfig, 1)
     generic = {
         "id": "agent-default",
         "object": "model",
         "created": 0,
         "owned_by": "chat4openapi",
-        "name": agent.name if agent is not None else "Chat4Openapi Agent",
+        "name": context.agent.name,
         "description": "Built-in Agent with automatic Skill routing.",
     }
     return {
         "object": "list",
-        "data": [generic]
+        "data": [
+            generic,
+            {
+                **generic,
+                "id": f"agent-{context.agent.id}",
+                "description": "Built-in Agent selected by this API key.",
+            },
+        ]
         + [
             {
                 "id": f"skill-{skill.id}",
@@ -369,6 +415,7 @@ def models(db: Session = Depends(get_db_session)) -> dict[str, Any]:
 async def openai_chat(
     body: dict[str, Any],
     request: Request,
+    key_context: AgentKeyContext = Depends(require_agent_api_key),
     chat4openapi_tool_session_header: str | None = Header(
         default=None, alias="X-Chat4Openapi-Tool-Session"
     ),
@@ -389,6 +436,7 @@ async def openai_chat(
         executor,
         chat4openapi_tool_session_header,
         legacy_tool_session_header,
+        key_context,
         anthropic=False,
     )
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
@@ -435,6 +483,7 @@ async def openai_chat(
 async def anthropic_messages(
     body: dict[str, Any],
     request: Request,
+    key_context: AgentKeyContext = Depends(require_agent_api_key),
     chat4openapi_tool_session_header: str | None = Header(
         default=None, alias="X-Chat4Openapi-Tool-Session"
     ),
@@ -455,6 +504,7 @@ async def anthropic_messages(
         executor,
         chat4openapi_tool_session_header,
         legacy_tool_session_header,
+        key_context,
         anthropic=True,
     )
     message_id = f"msg_{uuid.uuid4().hex}"
