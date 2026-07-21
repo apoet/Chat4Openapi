@@ -105,25 +105,25 @@ function save(): void {
     </header>
 
     <div class="settings-grid agent-fields">
-      <label>{{ t('agent.name') }}<input v-model="form.name" /></label>
+      <label>{{ t('agent.name') }}<input v-model="form.name" :disabled="pending" /></label>
       <label>{{ t('agent.provider') }}
-        <select v-model="form.provider_id">
+        <select v-model="form.provider_id" :disabled="pending">
           <option :value="null">{{ t('agent.selectProvider') }}</option>
           <option v-for="provider in enabledProviders" :key="provider.id" :value="provider.id">
             {{ provider.name }} · {{ provider.default_model }}
           </option>
         </select>
       </label>
-      <label>{{ t('agent.model') }}<input v-model="form.model" :placeholder="t('agent.modelHint')" /></label>
+      <label>{{ t('agent.model') }}<input v-model="form.model" :disabled="pending" :placeholder="t('agent.modelHint')" /></label>
       <label>{{ t('agent.mode') }}
-        <select v-model="form.mode">
+        <select v-model="form.mode" :disabled="pending">
           <option value="human_in_loop">{{ t('agent.humanInLoop') }}</option>
           <option value="react">{{ t('agent.react') }}</option>
         </select>
       </label>
-      <label>{{ t('agent.maxIterations') }}<input v-model.number="form.max_iterations" type="number" min="2" max="32" /></label>
+      <label>{{ t('agent.maxIterations') }}<input v-model.number="form.max_iterations" type="number" min="2" max="32" :disabled="pending" /></label>
     </div>
-    <label class="block-label">{{ t('agent.systemPrompt') }}<textarea v-model="form.system_prompt" rows="7" /></label>
+    <label class="block-label">{{ t('agent.systemPrompt') }}<textarea v-model="form.system_prompt" rows="7" :disabled="pending" /></label>
 
     <section class="skill-binding" role="region" :aria-label="t('agent.boundSkills')">
       <div class="panel-heading compact-heading">
@@ -142,7 +142,7 @@ function save(): void {
         </li>
       </ol>
       <p v-if="boundSkills.length === 0" class="empty-inline">{{ t('agent.noBoundSkills') }}</p>
-      <label class="skill-search">{{ t('agent.searchSkills') }}<input v-model="search" :placeholder="t('agent.searchSkillsHint')" /></label>
+      <label class="skill-search">{{ t('agent.searchSkills') }}<input v-model="search" :disabled="pending" :placeholder="t('agent.searchSkillsHint')" /></label>
       <div class="available-skills">
         <button v-for="skill in availableSkills" :key="skill.id" type="button" :disabled="pending" :aria-label="t('agent.addSkill', { name: skill.name })" @click="addSkill(skill)">
           <span><strong>{{ skill.name }}</strong><small>{{ skill.description }}</small></span>

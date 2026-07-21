@@ -20,6 +20,32 @@ beforeEach(() => {
 })
 
 describe('Agents store request generations', () => {
+  it('keeps refreshed server state after Skill binding fails instead of restoring stale metadata', async () => {
+    const metadata = {
+      id: 1, name: 'Submitted name', enabled: true, is_default: true,
+      system_prompt: 'Submitted prompt', provider_id: 1, model: null,
+      mode: 'human_in_loop' as const, max_iterations: 8,
+      created_at: '2026-07-20T08:00:00Z', updated_at: '2026-07-22T08:00:00Z',
+      deleted_at: null, skill_ids: [10],
+    }
+    const refreshed = { ...metadata, name: 'Server normalized name', updated_at: '2026-07-22T08:00:01Z' }
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === '/api/admin/agents/1' && init?.method === 'PUT') return Promise.resolve(response(metadata))
+      if (input === '/api/admin/agents/1/skills' && init?.method === 'PUT') return Promise.resolve(response({ error: { code: 'agents.skill_unavailable' } }, 409))
+      if (input === '/api/admin/agents') return Promise.resolve(response([refreshed]))
+      throw new Error(`Unexpected request ${String(input)}`)
+    }))
+    const store = useAgentsStore()
+
+    await expect(store.save({
+      name: metadata.name, enabled: true, system_prompt: metadata.system_prompt,
+      provider_id: 1, model: null, mode: 'human_in_loop', max_iterations: 8,
+    }, [10], 1)).rejects.toMatchObject({ agentId: 1 })
+
+    expect(store.agents[0].name).toBe('Server normalized name')
+    expect(store.agents[0].updated_at).toBe('2026-07-22T08:00:01Z')
+  })
+
   it('does not let an older key load overwrite metadata created later', async () => {
     const pendingLoad = deferred<Response>()
     const created = {

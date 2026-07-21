@@ -63,11 +63,11 @@ export default {
     unavailableSkill: '不可用 Skill #{id}',
     addSkill: '添加 {name}', removeSkill: '移除 {name}', moveUp: '上移 {name}', moveDown: '下移 {name}',
     keys: {
-      eyebrow: '客户端访问', title: 'API 密钥', label: '密钥标签', expiry: '密钥到期时间',
+      eyebrow: '客户端访问', title: 'API 密钥', label: '密钥标签', expiry: '密钥到期时间', expiryLocal: '密钥到期时间（{timeZone}）',
       create: '创建 API 密钥', creating: '正在创建…', newKey: '新 API 密钥', oneTimeWarning: '请立即复制此密钥，之后将无法再次查看。',
       copy: '复制密钥', copying: '复制中…', copySuccess: '密钥已复制。', copyFailed: '复制失败，请手动选择并复制密钥。', close: '完成', closeSecret: '关闭密钥',
       status: '状态', lastUsed: '最近使用', never: '从未', active: '有效', expired: '已过期', revoked: '已撤销',
-      editLabel: '编辑密钥标签', editExpiry: '编辑密钥到期时间', editNamed: '编辑 {name}', save: '保存', saveNamed: '保存 {name}',
+      editLabel: '编辑密钥标签', editExpiry: '编辑密钥到期时间', editExpiryLocal: '编辑密钥到期时间（{timeZone}）', editNamed: '编辑 {name}', save: '保存', saveNamed: '保存 {name}',
       revoke: '撤销', revokeNamed: '撤销 {name}', deleteNamed: '删除 {name}', empty: '此 Agent 尚无 API 密钥。',
     },
   },

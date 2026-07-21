@@ -25,7 +25,9 @@ const updatingKey = ref(false)
 const labelInput = ref<HTMLInputElement | null>(null)
 const createButton = ref<HTMLButtonElement | null>(null)
 const copyButton = ref<HTMLButtonElement | null>(null)
+const secretDialog = ref<HTMLDialogElement | null>(null)
 const keys = computed(() => store.keysByAgent[props.agentId] ?? [])
+const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
 let mounted = true
 let contextGeneration = 0
 
@@ -35,6 +37,7 @@ watch(() => props.agentId, async (agentId) => {
   label.value = ''
   expiresAt.value = ''
   editingKeyId.value = null
+  updatingKey.value = false
   try {
     await store.loadKeys(agentId)
   } catch (error) {
@@ -50,6 +53,7 @@ onBeforeUnmount(() => {
 
 function clearSecret(restoreFocus = true): void {
   const hadSecret = Boolean(secret.value)
+  if (secretDialog.value?.open) secretDialog.value.close()
   secret.value = null
   copyFeedback.value = ''
   if (hadSecret && mounted && !creatingKey.value) emit('busy-change', false)
@@ -63,7 +67,7 @@ async function createKey(): Promise<void> {
   creatingKey.value = true
   emit('busy-change', true)
   try {
-    const created = await store.createKey(agentId, label.value.trim(), expiresAt.value ? new Date(expiresAt.value).toISOString() : null)
+    const created = await store.createKey(agentId, label.value.trim(), localInputToIso(expiresAt.value))
     if (!mounted || generation !== contextGeneration || agentId !== props.agentId) {
       await store.discardCreatedKey(agentId, created.id)
       return
@@ -74,6 +78,7 @@ async function createKey(): Promise<void> {
     copyFeedback.value = ''
     creatingKey.value = false
     await nextTick()
+    secretDialog.value?.showModal()
     copyButton.value?.focus()
   } catch (error) {
     if (mounted && generation === contextGeneration && agentId === props.agentId) emit('error', error)
@@ -101,24 +106,52 @@ function beginEdit(key: AgentApiKey): void {
   if (secret.value || creatingKey.value) return
   editingKeyId.value = key.id
   editLabel.value = key.label
-  editExpiry.value = key.expires_at ? new Date(key.expires_at).toISOString().slice(0, 16) : ''
+  editExpiry.value = key.expires_at ? localDateTimeValue(key.expires_at) : ''
 }
 
 async function saveEdit(key: AgentApiKey): Promise<void> {
   if (!editLabel.value.trim() || updatingKey.value) return
+  const agentId = props.agentId
+  const generation = contextGeneration
   updatingKey.value = true
   try {
-    await store.updateKey(props.agentId, key.id, editLabel.value.trim(), editExpiry.value ? new Date(`${editExpiry.value}:00Z`).toISOString() : null)
-    editingKeyId.value = null
-  } catch (error) { emit('error', error) } finally { updatingKey.value = false }
+    await store.updateKey(agentId, key.id, editLabel.value.trim(), localInputToIso(editExpiry.value))
+    if (isCurrent(agentId, generation)) editingKeyId.value = null
+  } catch (error) {
+    if (isCurrent(agentId, generation)) emit('error', error)
+  } finally {
+    if (isCurrent(agentId, generation)) updatingKey.value = false
+  }
 }
 
 async function revoke(key: AgentApiKey): Promise<void> {
-  try { await store.revokeKey(props.agentId, key.id) } catch (error) { emit('error', error) }
+  const agentId = props.agentId
+  const generation = contextGeneration
+  try { await store.revokeKey(agentId, key.id) } catch (error) {
+    if (isCurrent(agentId, generation)) emit('error', error)
+  }
 }
 
 async function remove(key: AgentApiKey): Promise<void> {
-  try { await store.deleteKey(props.agentId, key.id) } catch (error) { emit('error', error) }
+  const agentId = props.agentId
+  const generation = contextGeneration
+  try { await store.deleteKey(agentId, key.id) } catch (error) {
+    if (isCurrent(agentId, generation)) emit('error', error)
+  }
+}
+
+function isCurrent(agentId: number, generation: number): boolean {
+  return mounted && agentId === props.agentId && generation === contextGeneration
+}
+
+function localInputToIso(value: string): string | null {
+  return value ? new Date(value).toISOString() : null
+}
+
+function localDateTimeValue(value: string): string {
+  const valueDate = new Date(value)
+  const pad = (part: number) => String(part).padStart(2, '0')
+  return `${valueDate.getFullYear()}-${pad(valueDate.getMonth() + 1)}-${pad(valueDate.getDate())}T${pad(valueDate.getHours())}:${pad(valueDate.getMinutes())}`
 }
 
 function status(key: AgentApiKey): string {
@@ -130,7 +163,7 @@ function status(key: AgentApiKey): string {
 function date(value: string | null): string {
   if (!value) return t('agent.keys.never')
   return new Intl.DateTimeFormat(locale.value, {
-    dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC',
+    dateStyle: 'medium', timeStyle: 'short',
   }).format(new Date(value))
 }
 </script>
@@ -142,13 +175,13 @@ function date(value: string | null): string {
     </header>
     <div class="key-create-grid">
       <label>{{ t('agent.keys.label') }}<input ref="labelInput" v-model="label" :disabled="creatingKey || Boolean(secret)" /></label>
-      <label>{{ t('agent.keys.expiry') }}<input v-model="expiresAt" type="datetime-local" :disabled="creatingKey || Boolean(secret)" /></label>
+      <label>{{ t('agent.keys.expiryLocal', { timeZone: localTimeZone }) }}<input v-model="expiresAt" type="datetime-local" :disabled="creatingKey || Boolean(secret)" /></label>
       <button ref="createButton" type="button" class="primary-action" :disabled="!label.trim() || creatingKey || Boolean(secret)" @click="createKey">
         {{ creatingKey ? t('agent.keys.creating') : t('agent.keys.create') }}
       </button>
     </div>
 
-    <dialog v-if="secret" open class="secret-dialog" aria-modal="true" :aria-label="t('agent.keys.newKey')" @keydown.esc.prevent.stop="clearSecret()">
+    <dialog v-if="secret" ref="secretDialog" class="secret-dialog" :aria-label="t('agent.keys.newKey')" @cancel.prevent="clearSecret()">
       <p><strong>{{ t('agent.keys.newKey') }}</strong></p>
       <p>{{ t('agent.keys.oneTimeWarning') }}</p>
       <code>{{ secret }}</code>
@@ -164,7 +197,7 @@ function date(value: string | null): string {
         <template v-if="editingKeyId === key.id">
           <div class="key-inline-editor">
             <label>{{ t('agent.keys.editLabel') }}<input v-model="editLabel" /></label>
-            <label>{{ t('agent.keys.editExpiry') }}<input v-model="editExpiry" type="datetime-local" /></label>
+            <label>{{ t('agent.keys.editExpiryLocal', { timeZone: localTimeZone }) }}<input v-model="editExpiry" type="datetime-local" /></label>
             <div class="row-actions">
               <button type="button" class="primary-action" :disabled="!editLabel.trim() || updatingKey" :aria-label="t('agent.keys.saveNamed', { name: key.label })" @click="saveEdit(key)">{{ t('agent.keys.save') }}</button>
               <button type="button" class="secondary-action" @click="editingKeyId = null">{{ t('skills.cancel') }}</button>

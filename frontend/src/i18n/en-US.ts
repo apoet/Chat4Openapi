@@ -63,11 +63,11 @@ export default {
     unavailableSkill: 'Unavailable Skill #{id}',
     addSkill: 'Add {name}', removeSkill: 'Remove {name}', moveUp: 'Move {name} up', moveDown: 'Move {name} down',
     keys: {
-      eyebrow: 'Client access', title: 'API keys', label: 'Key label', expiry: 'Key expiry',
+      eyebrow: 'Client access', title: 'API keys', label: 'Key label', expiry: 'Key expiry', expiryLocal: 'Key expiry ({timeZone})',
       create: 'Create API key', creating: 'Creating…', newKey: 'New API key', oneTimeWarning: 'Copy this secret now. It will not be shown again.',
       copy: 'Copy secret', copying: 'Copying…', copySuccess: 'Secret copied.', copyFailed: 'Copy failed. Select and copy the secret manually.', close: 'Done', closeSecret: 'Close secret',
       status: 'Status', lastUsed: 'Last used', never: 'Never', active: 'Active', expired: 'Expired', revoked: 'Revoked',
-      editLabel: 'Edit key label', editExpiry: 'Edit key expiry', editNamed: 'Edit {name}', save: 'Save', saveNamed: 'Save {name}',
+      editLabel: 'Edit key label', editExpiry: 'Edit key expiry', editExpiryLocal: 'Edit key expiry ({timeZone})', editNamed: 'Edit {name}', save: 'Save', saveNamed: 'Save {name}',
       revoke: 'Revoke', revokeNamed: 'Revoke {name}', deleteNamed: 'Delete {name}', empty: 'No API keys for this Agent.',
     },
   },

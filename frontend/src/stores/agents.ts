@@ -67,8 +67,11 @@ export const useAgentsStore = defineStore('agents', () => {
       upsertAgent(updated)
       return updated
     } catch (error) {
-      try { await refreshAgents() } catch { /* Keep the authoritative metadata response. */ }
-      upsertAgent(agent)
+      try {
+        await refreshAgents()
+      } catch {
+        upsertAgent(agent)
+      }
       throw new AgentSavePartialError(agent.id, error)
     }
   }

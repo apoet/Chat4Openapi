@@ -64,6 +64,10 @@ const agents = [
     skill_ids: [],
   },
 ]
+const originalShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal')
+const originalDialogClose = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'close')
+let showModalSpy: ReturnType<typeof vi.fn>
+let dialogCloseSpy: ReturnType<typeof vi.fn>
 
 function adminGet(input: RequestInfo | URL): Promise<Response> {
   if (input === '/api/admin/agents') return Promise.resolve(response(agents))
@@ -83,6 +87,11 @@ function renderView(pinia = createPinia()) {
 }
 
 beforeEach(() => {
+  vi.stubEnv('TZ', 'Asia/Shanghai')
+  showModalSpy = vi.fn(function (this: HTMLDialogElement) { this.setAttribute('open', '') })
+  dialogCloseSpy = vi.fn(function (this: HTMLDialogElement) { this.removeAttribute('open') })
+  Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value: showModalSpy })
+  Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value: dialogCloseSpy })
   i18n.global.locale.value = 'en-US'
   setActivePinia(createPinia())
   const auth = useAuthStore()
@@ -93,6 +102,11 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+  if (originalShowModal) Object.defineProperty(HTMLDialogElement.prototype, 'showModal', originalShowModal)
+  else delete (HTMLDialogElement.prototype as Partial<HTMLDialogElement>).showModal
+  if (originalDialogClose) Object.defineProperty(HTMLDialogElement.prototype, 'close', originalDialogClose)
+  else delete (HTMLDialogElement.prototype as Partial<HTMLDialogElement>).close
 })
 
 describe('Agent administration', () => {
@@ -118,6 +132,7 @@ describe('Agent administration', () => {
     expect(await screen.findByRole('heading', { name: 'Agents' })).toBeTruthy()
     const selected = await screen.findByRole('button', { name: /Operations Agent/ })
     await waitFor(() => expect(selected.getAttribute('aria-current')).toBe('true'))
+    expect(selected.querySelector('.agent-avatar')?.getAttribute('aria-hidden')).toBe('true')
     expect(screen.getByText('Default')).toBeTruthy()
     expect(((await screen.findByLabelText('Provider')) as HTMLSelectElement).value).toBe('1')
 
@@ -128,16 +143,23 @@ describe('Agent administration', () => {
     expect(within(bindings).getByRole('button', { name: 'Remove Billing' })).toBeTruthy()
   })
 
-  it('keeps a missing bound Skill visible as a removable placeholder', async () => {
-    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+  it('keeps a missing bound Skill visible so removing it repairs the saved bindings', async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       if (input === '/api/admin/agents') return Promise.resolve(response([{ ...agents[0], skill_ids: [10, 99] }]))
+      if (input === '/api/admin/agents/1' && init?.method === 'PUT') return Promise.resolve(response({ ...agents[0], skill_ids: [10, 99] }))
+      if (input === '/api/admin/agents/1/skills' && init?.method === 'PUT') return Promise.resolve(response({ ...agents[0], skill_ids: [10] }))
       return adminGet(input)
-    }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
     renderView()
 
     const bindings = await screen.findByRole('region', { name: 'Bound Skills' })
     expect(within(bindings).getByText('Unavailable Skill #99')).toBeTruthy()
-    expect(within(bindings).getByRole('button', { name: 'Remove Unavailable Skill #99' })).toBeTruthy()
+    await fireEvent.click(within(bindings).getByRole('button', { name: 'Remove Unavailable Skill #99' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Save Agent' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/1/skills', expect.anything()))
+    const bindingCall = fetchMock.mock.calls.find(([url]) => url === '/api/admin/agents/1/skills')
+    expect(JSON.parse((bindingCall?.[1] as RequestInit).body as string)).toEqual({ skill_ids: [10] })
   })
 
   it('creates disabled first and then writes ordered Skill bindings with CSRF', async () => {
@@ -315,17 +337,25 @@ describe('Agent administration', () => {
     await screen.findByRole('heading', { name: 'API keys' })
 
     await fireEvent.update(screen.getByLabelText('Key label'), 'Production')
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe('Asia/Shanghai')
+    await fireEvent.update(screen.getByLabelText('Key expiry (Asia/Shanghai)'), '2027-02-02T09:30')
     await fireEvent.click(screen.getByRole('button', { name: 'Create API key' }))
 
-    expect(await screen.findByRole('dialog', { name: 'New API key' })).toHaveProperty('textContent', expect.stringContaining('c4o_secret_once'))
+    const dialog = await screen.findByRole('dialog', { name: 'New API key' })
+    expect(dialog).toHaveProperty('textContent', expect.stringContaining('c4o_secret_once'))
+    expect(showModalSpy).toHaveBeenCalledTimes(1)
+    const createCall = fetchMock.mock.calls.find(([url, init]) => url === '/api/admin/agents/1/keys' && (init as RequestInit)?.method === 'POST')
+    expect(JSON.parse((createCall?.[1] as RequestInit).body as string)).toEqual({ label: 'Production', expires_at: '2027-02-02T01:30:00.000Z' })
     expect(JSON.stringify(pinia.state.value)).not.toContain('c4o_secret_once')
     expect(setItem).not.toHaveBeenCalledWith(expect.any(String), expect.stringContaining('c4o_secret_once'))
     expect((screen.getByRole('button', { name: 'Create API key' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByLabelText('Agent name') as HTMLInputElement).disabled).toBe(true)
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Copy secret' }))
     await fireEvent.click(screen.getByRole('button', { name: 'Copy secret' }))
     expect(writeText).toHaveBeenCalledWith('c4o_secret_once')
     expect(await screen.findByText('Secret copied.')).toBeTruthy()
-    await fireEvent.keyDown(screen.getByRole('dialog', { name: 'New API key' }), { key: 'Escape' })
+    await fireEvent(screen.getByRole('dialog', { name: 'New API key' }), new Event('cancel', { cancelable: true }))
+    expect(dialogCloseSpy).toHaveBeenCalledTimes(1)
     expect(screen.queryByText('c4o_secret_once')).toBeNull()
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Key label')))
   })
@@ -351,11 +381,37 @@ describe('Agent administration', () => {
 
     expect((create as HTMLButtonElement).disabled).toBe(true)
     expect((screen.getByRole('button', { name: /Draft Agent/ }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByLabelText('Agent name') as HTMLInputElement).disabled).toBe(true)
     expect(fetchMock.mock.calls.filter(([url, init]) => url === '/api/admin/agents/1/keys' && (init as RequestInit)?.method === 'POST')).toHaveLength(1)
     view.unmount()
     pending.resolve(response(created, 201))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/1/keys/88', expect.objectContaining({ method: 'DELETE' })))
     expect(document.body.textContent).not.toContain('c4o_late_secret')
+  })
+
+  it('revokes a late created key when automatic deletion fails', async () => {
+    const pending = deferred<Response>()
+    const created = {
+      id: 89, agent_id: 1, label: 'Late fallback', key_prefix: 'c4o_late', enabled: true,
+      expires_at: null, last_used_at: null, created_at: '2026-07-22T08:00:00Z',
+      updated_at: '2026-07-22T08:00:00Z', revoked_at: null, secret: 'c4o_late_fallback_secret',
+    }
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === '/api/admin/agents/1/keys' && init?.method === 'POST') return pending.promise
+      if (input === '/api/admin/agents/1/keys/89' && init?.method === 'DELETE') return Promise.resolve(response({ error: { code: 'http.500' } }, 500))
+      if (input === '/api/admin/agents/1/keys/89/revoke' && init?.method === 'POST') return Promise.resolve(response({ ...created, secret: undefined, enabled: false, revoked_at: '2026-07-22T08:05:00Z' }))
+      return adminGet(input)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const view = renderView()
+    await screen.findByRole('heading', { name: 'API keys' })
+    await fireEvent.update(screen.getByLabelText('Key label'), 'Late fallback')
+    await fireEvent.click(screen.getByRole('button', { name: 'Create API key' }))
+    view.unmount()
+    pending.resolve(response(created, 201))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/1/keys/89/revoke', expect.objectContaining({ method: 'POST' })))
+    expect(document.body.textContent).not.toContain('c4o_late_fallback_secret')
   })
 
   it('edits key label and expiry, shows precise metadata, and supports revoke/delete', async () => {
@@ -375,19 +431,56 @@ describe('Agent administration', () => {
     renderView()
 
     expect(await screen.findByText('c4o_auto')).toBeTruthy()
-    expect(screen.getByText('Jan 1, 2027, 12:00 AM')).toBeTruthy()
-    expect(screen.getByText('Jul 22, 2026, 5:00 AM')).toBeTruthy()
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe('Asia/Shanghai')
+    expect(screen.getByText('Jan 1, 2027, 8:00 AM')).toBeTruthy()
+    expect(screen.getByText('Jul 22, 2026, 1:00 PM')).toBeTruthy()
     await fireEvent.click(screen.getByRole('button', { name: 'Edit Automation' }))
     await fireEvent.update(screen.getByLabelText('Edit key label'), 'Deployments')
-    await fireEvent.update(screen.getByLabelText('Edit key expiry'), '2027-02-02T09:30')
+    await fireEvent.update(screen.getByLabelText('Edit key expiry (Asia/Shanghai)'), '2027-02-02T09:30')
     await fireEvent.click(screen.getByRole('button', { name: 'Save Automation' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/1/keys/7', expect.objectContaining({ method: 'PATCH' })))
     const patchCall = fetchMock.mock.calls.find(([url, init]) => url === '/api/admin/agents/1/keys/7' && (init as RequestInit)?.method === 'PATCH')
-    expect(JSON.parse((patchCall?.[1] as RequestInit).body as string)).toEqual({ label: 'Deployments', expires_at: '2027-02-02T09:30:00.000Z' })
+    expect(JSON.parse((patchCall?.[1] as RequestInit).body as string)).toEqual({ label: 'Deployments', expires_at: '2027-02-02T01:30:00.000Z' })
     expect(((patchCall?.[1] as RequestInit).headers as Headers).get('X-CSRF-Token')).toBe('csrf')
     await fireEvent.click(await screen.findByRole('button', { name: 'Revoke Deployments' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/1/keys/7/revoke', expect.objectContaining({ method: 'POST' })))
     await fireEvent.click(screen.getByRole('button', { name: 'Delete Deployments' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/1/keys/7', expect.objectContaining({ method: 'DELETE' })))
+  })
+
+  it.each(['patch', 'revoke', 'delete'] as const)('ignores a late %s failure after the Agent prop switches', async (operation) => {
+    const pending = deferred<Response>()
+    const key = {
+      id: 7, agent_id: 1, label: 'Automation', key_prefix: 'c4o_auto', enabled: true,
+      expires_at: null, last_used_at: null, created_at: '2026-07-20T08:00:00Z',
+      updated_at: '2026-07-20T08:00:00Z', revoked_at: null,
+    }
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === '/api/admin/agents/1/keys' && !init?.method) return Promise.resolve(response([key]))
+      if (input === '/api/admin/agents/2/keys' && !init?.method) return Promise.resolve(response([]))
+      if (operation === 'patch' && input === '/api/admin/agents/1/keys/7' && init?.method === 'PATCH') return pending.promise
+      if (operation === 'revoke' && input === '/api/admin/agents/1/keys/7/revoke' && init?.method === 'POST') return pending.promise
+      if (operation === 'delete' && input === '/api/admin/agents/1/keys/7' && init?.method === 'DELETE') return pending.promise
+      return adminGet(input)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderView()
+    await screen.findByText('c4o_auto')
+
+    if (operation === 'patch') {
+      await fireEvent.click(screen.getByRole('button', { name: 'Edit Automation' }))
+      await fireEvent.click(screen.getByRole('button', { name: 'Save Automation' }))
+    } else if (operation === 'revoke') {
+      await fireEvent.click(screen.getByRole('button', { name: 'Revoke Automation' }))
+    } else {
+      await fireEvent.click(screen.getByRole('button', { name: 'Delete Automation' }))
+    }
+    await fireEvent.click(screen.getByRole('button', { name: /Draft Agent/ }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Draft Agent/ }).getAttribute('aria-current')).toBe('true'))
+    pending.resolve(response({ error: { code: 'agent_keys.not_found', params: {} } }, 404))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByText('c4o_auto')).toBeNull()
   })
 })

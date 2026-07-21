@@ -123,7 +123,7 @@ async function remove(): Promise<void> {
         <div class="panel-heading compact-heading"><h2>{{ t('agent.listTitle') }}</h2><span>{{ store.agents.length }}</span></div>
         <div class="agent-list">
           <button v-for="agent in store.agents" :key="agent.id" type="button" :class="['agent-list-item', { active: selectedId === agent.id && !creating }]" :disabled="interactionLocked" :aria-current="selectedId === agent.id && !creating ? 'true' : undefined" @click="select(agent)">
-            <span class="agent-avatar">{{ agent.name.slice(0, 2).toUpperCase() }}</span>
+            <span class="agent-avatar" aria-hidden="true">{{ agent.name.slice(0, 2).toUpperCase() }}</span>
             <span><strong>{{ agent.name }}</strong><small>{{ agent.enabled ? t('tools.enabled') : t('tools.disabled') }}</small></span>
             <b v-if="agent.is_default">{{ t('agent.default') }}</b>
           </button>
@@ -139,7 +139,7 @@ async function remove(): Promise<void> {
             <button v-if="!selectedAgent.is_default" type="button" class="secondary-action" :disabled="interactionLocked" @click="lifecycle('set-default')">{{ t('agent.setDefault') }}</button>
             <button v-if="!selectedAgent.is_default" type="button" class="danger-action" :disabled="interactionLocked" @click="remove">{{ t('agent.delete') }}</button>
           </div>
-          <AgentEditor :agent="creating ? null : selectedAgent" :providers="store.providers" :skills="store.skills" :pending="savePending" @save="save" @cancel="creating = false; selectedId = store.agents[0]?.id ?? null" />
+          <AgentEditor :agent="creating ? null : selectedAgent" :providers="store.providers" :skills="store.skills" :pending="interactionLocked" @save="save" @cancel="creating = false; selectedId = store.agents[0]?.id ?? null" />
           <AgentKeyPanel v-if="selectedAgent && !creating" :agent-id="selectedAgent.id" @busy-change="keyBusy = $event" @error="showError($event, 'keys_failed')" />
         </template>
         <section v-else class="empty-state">{{ t('agent.chooseAgent') }}</section>
