@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from chat4openapi.api.admin_auth import AdminContext, require_admin, require_csrf
 from chat4openapi.api.errors import ApiError
 from chat4openapi.api.tool_sessions import get_tool_secret_cipher
+from chat4openapi.db.serialized_write import serialized_write
 from chat4openapi.llm.client import CanonicalMessage, LlmClient, LlmProviderError
 from chat4openapi.models import Agent, LlmProvider
 from chat4openapi.schemas.providers import (
@@ -108,19 +109,18 @@ def update_provider(
     context: AdminContext = Depends(require_csrf),
     cipher: SecretCipher = Depends(get_tool_secret_cipher),
 ) -> ProviderResponse:
-    provider = _provider(context, provider_id)
     values = payload.model_dump(exclude_unset=True)
     api_key = values.pop("api_key", None)
-    if values.get("enabled") is False:
-        _ensure_not_agent_provider(context, provider.id)
-    for key, value in values.items():
-        setattr(provider, key, value)
-    if api_key:
-        provider.encrypted_api_key = cipher.encrypt_json({"api_key": api_key})
     try:
-        context.db.commit()
+        with serialized_write(context.db):
+            provider = _provider(context, provider_id)
+            if values.get("enabled") is False:
+                _ensure_not_agent_provider(context, provider.id)
+            for key, value in values.items():
+                setattr(provider, key, value)
+            if api_key:
+                provider.encrypted_api_key = cipher.encrypt_json({"api_key": api_key})
     except IntegrityError as exc:
-        context.db.rollback()
         raise ApiError(409, "providers.name_conflict") from exc
     return _response(provider)
 
@@ -129,8 +129,8 @@ def update_provider(
 def delete_provider(
     provider_id: int, context: AdminContext = Depends(require_csrf)
 ) -> None:
-    provider = _provider(context, provider_id)
-    _ensure_not_agent_provider(context, provider.id)
-    provider.enabled = False
-    provider.deleted_at = datetime.now(UTC).replace(tzinfo=None)
-    context.db.commit()
+    with serialized_write(context.db):
+        provider = _provider(context, provider_id)
+        _ensure_not_agent_provider(context, provider.id)
+        provider.enabled = False
+        provider.deleted_at = datetime.now(UTC).replace(tzinfo=None)

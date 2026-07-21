@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import httpx
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
@@ -126,6 +128,46 @@ async def test_enable_requires_an_available_provider(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("enabled", "deleted"),
+    [(False, False), (True, True)],
+)
+async def test_enable_rejects_disabled_or_deleted_provider(
+    client: httpx.AsyncClient,
+    db_session_factory: sessionmaker[Session],
+    enabled: bool,
+    deleted: bool,
+) -> None:
+    csrf = await login(client)
+    seed_default_agent(db_session_factory)
+    seed_disabled_agent_without_skills(db_session_factory)
+    with db_session_factory() as session:
+        provider = LlmProvider(
+            name="Unavailable",
+            provider_type="openai",
+            base_url="https://unavailable.test/v1",
+            encrypted_api_key=b"secret",
+            default_model="unavailable-model",
+            enabled=enabled,
+            deleted_at=datetime.now(UTC).replace(tzinfo=None) if deleted else None,
+        )
+        running = Skill(name="Unavailable provider", system_prompt="Run", running=True)
+        session.add_all([provider, running])
+        session.flush()
+        agent = session.get(Agent, 2)
+        agent.provider_id = provider.id
+        session.add(AgentSkill(agent_id=agent.id, skill_id=running.id, position=0))
+        session.commit()
+
+    response = await client.post(
+        "/api/admin/agents/2/enable", headers={"X-CSRF-Token": csrf}
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "agents.provider_unavailable"
+
+
+@pytest.mark.asyncio
 async def test_admin_can_create_list_get_update_and_soft_delete_agents(
     client: httpx.AsyncClient,
     db_session_factory: sessionmaker[Session],
@@ -243,6 +285,13 @@ async def test_missing_skill_cannot_be_bound(
     csrf = await login(client)
     seed_default_agent(db_session_factory)
     seed_disabled_agent_without_skills(db_session_factory)
+    with db_session_factory() as session:
+        existing = Skill(name="Existing", system_prompt="Existing", running=False)
+        session.add(existing)
+        session.flush()
+        session.add(AgentSkill(agent_id=2, skill_id=existing.id, position=0))
+        session.commit()
+        existing_id = existing.id
 
     response = await client.put(
         "/api/admin/agents/2/skills",
@@ -257,6 +306,7 @@ async def test_missing_skill_cannot_be_bound(
             "params": {"skill_id": 999},
         }
     }
+    assert (await client.get("/api/admin/agents/2")).json()["skill_ids"] == [existing_id]
 
 
 @pytest.mark.asyncio
@@ -289,3 +339,45 @@ async def test_setting_default_switches_once_and_enables_the_target(
         (1, False, False),
         (2, True, True),
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/admin/agents", "/api/admin/agents/1"])
+async def test_agent_reads_require_admin_login(
+    client: httpx.AsyncClient,
+    path: str,
+) -> None:
+    response = await client.get(path)
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "auth.required"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        ("POST", "/api/admin/agents", agent_payload(None)),
+        ("PUT", "/api/admin/agents/2", agent_payload(None)),
+        ("PUT", "/api/admin/agents/2/skills", {"skill_ids": []}),
+        ("POST", "/api/admin/agents/2/enable", None),
+        ("POST", "/api/admin/agents/2/disable", None),
+        ("POST", "/api/admin/agents/2/set-default", None),
+        ("DELETE", "/api/admin/agents/2", None),
+    ],
+)
+async def test_agent_writes_require_valid_csrf(
+    client: httpx.AsyncClient,
+    db_session_factory: sessionmaker[Session],
+    method: str,
+    path: str,
+    payload: dict[str, object] | None,
+) -> None:
+    await login(client)
+    seed_default_agent(db_session_factory)
+    seed_disabled_agent_without_skills(db_session_factory)
+
+    response = await client.request(method, path, json=payload)
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "auth.csrf_invalid"

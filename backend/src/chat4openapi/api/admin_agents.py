@@ -5,6 +5,7 @@ from sqlalchemy import delete, select, update
 
 from chat4openapi.api.admin_auth import AdminContext, require_admin, require_csrf
 from chat4openapi.api.errors import ApiError
+from chat4openapi.db.serialized_write import serialized_write
 from chat4openapi.models import Agent, AgentSkill, LlmProvider, Skill
 from chat4openapi.schemas.agents import AgentResponse, AgentSkillsWrite, AgentWrite
 
@@ -70,12 +71,6 @@ def _binding_skills(context: AdminContext, skill_ids: list[int]) -> list[Skill]:
     return skills
 
 
-def _lock_default_transition(context: AdminContext) -> None:
-    connection = context.db.connection()
-    if connection.dialect.name == "sqlite":
-        connection.exec_driver_sql("BEGIN IMMEDIATE")
-
-
 @router.get("", response_model=list[AgentResponse])
 def list_agents(context: AdminContext = Depends(require_admin)) -> list[AgentResponse]:
     agents = context.db.scalars(
@@ -88,16 +83,16 @@ def list_agents(context: AdminContext = Depends(require_admin)) -> list[AgentRes
 def create_agent(
     payload: AgentWrite, context: AdminContext = Depends(require_csrf)
 ) -> AgentResponse:
-    agent = Agent(**payload.model_dump(), is_default=False)
-    context.db.add(agent)
-    context.db.flush()
-    if agent.enabled:
-        try:
-            _validate_enable(context, agent)
-        except ApiError:
-            context.db.rollback()
-            raise
-    context.db.commit()
+    with serialized_write(context.db):
+        agent = Agent(**payload.model_dump(), is_default=False)
+        context.db.add(agent)
+        context.db.flush()
+        if agent.provider_id is not None:
+            _validate_provider(context, agent)
+        elif agent.enabled:
+            _validate_provider(context, agent)
+        if agent.enabled:
+            _validate_running_skill(context, agent)
     return _response(context, agent)
 
 
@@ -112,21 +107,19 @@ def update_agent(
     payload: AgentWrite,
     context: AdminContext = Depends(require_csrf),
 ) -> AgentResponse:
-    agent = _agent(context, agent_id)
-    if agent.is_default and not payload.enabled:
-        raise ApiError(409, "agents.default_cannot_disable")
-    was_enabled = agent.enabled
-    for field, value in payload.model_dump().items():
-        setattr(agent, field, value)
-    if agent.enabled:
-        try:
+    with serialized_write(context.db):
+        agent = _agent(context, agent_id)
+        if agent.is_default and not payload.enabled:
+            raise ApiError(409, "agents.default_cannot_disable")
+        was_enabled = agent.enabled
+        for field, value in payload.model_dump().items():
+            setattr(agent, field, value)
+        if agent.provider_id is not None:
             _validate_provider(context, agent)
-            if not was_enabled:
-                _validate_running_skill(context, agent)
-        except ApiError:
-            context.db.rollback()
-            raise
-    context.db.commit()
+        elif agent.enabled:
+            _validate_provider(context, agent)
+        if agent.enabled and not was_enabled:
+            _validate_running_skill(context, agent)
     return _response(context, agent)
 
 
@@ -136,33 +129,33 @@ def replace_agent_skills(
     payload: AgentSkillsWrite,
     context: AdminContext = Depends(require_csrf),
 ) -> AgentResponse:
-    agent = _agent(context, agent_id)
-    skills = _binding_skills(context, payload.skill_ids)
-    context.db.execute(delete(AgentSkill).where(AgentSkill.agent_id == agent.id))
-    context.db.add_all(
-        AgentSkill(agent_id=agent.id, skill_id=skill.id, position=position)
-        for position, skill in enumerate(skills)
-    )
-    context.db.commit()
+    with serialized_write(context.db):
+        agent = _agent(context, agent_id)
+        skills = _binding_skills(context, payload.skill_ids)
+        context.db.execute(delete(AgentSkill).where(AgentSkill.agent_id == agent.id))
+        context.db.add_all(
+            AgentSkill(agent_id=agent.id, skill_id=skill.id, position=position)
+            for position, skill in enumerate(skills)
+        )
     return _response(context, agent)
 
 
 @router.post("/{agent_id}/enable", response_model=AgentResponse)
 def enable_agent(agent_id: int, context: AdminContext = Depends(require_csrf)) -> AgentResponse:
-    agent = _agent(context, agent_id)
-    _validate_enable(context, agent)
-    agent.enabled = True
-    context.db.commit()
+    with serialized_write(context.db):
+        agent = _agent(context, agent_id)
+        _validate_enable(context, agent)
+        agent.enabled = True
     return _response(context, agent)
 
 
 @router.post("/{agent_id}/disable", response_model=AgentResponse)
 def disable_agent(agent_id: int, context: AdminContext = Depends(require_csrf)) -> AgentResponse:
-    agent = _agent(context, agent_id)
-    if agent.is_default:
-        raise ApiError(409, "agents.default_cannot_disable")
-    agent.enabled = False
-    context.db.commit()
+    with serialized_write(context.db):
+        agent = _agent(context, agent_id)
+        if agent.is_default:
+            raise ApiError(409, "agents.default_cannot_disable")
+        agent.enabled = False
     return _response(context, agent)
 
 
@@ -170,25 +163,20 @@ def disable_agent(agent_id: int, context: AdminContext = Depends(require_csrf)) 
 def set_default_agent(
     agent_id: int, context: AdminContext = Depends(require_csrf)
 ) -> AgentResponse:
-    _lock_default_transition(context)
-    agent = _agent(context, agent_id)
-    try:
+    with serialized_write(context.db):
+        agent = _agent(context, agent_id)
         _validate_enable(context, agent)
-    except ApiError:
-        context.db.rollback()
-        raise
-    context.db.execute(update(Agent).where(Agent.deleted_at.is_(None)).values(is_default=False))
-    agent.is_default = True
-    agent.enabled = True
-    context.db.commit()
+        context.db.execute(update(Agent).where(Agent.deleted_at.is_(None)).values(is_default=False))
+        agent.is_default = True
+        agent.enabled = True
     return _response(context, agent)
 
 
 @router.delete("/{agent_id}", status_code=204)
 def delete_agent(agent_id: int, context: AdminContext = Depends(require_csrf)) -> None:
-    agent = _agent(context, agent_id)
-    if agent.is_default:
-        raise ApiError(409, "agents.default_cannot_delete")
-    agent.enabled = False
-    agent.deleted_at = datetime.now(UTC).replace(tzinfo=None)
-    context.db.commit()
+    with serialized_write(context.db):
+        agent = _agent(context, agent_id)
+        if agent.is_default:
+            raise ApiError(409, "agents.default_cannot_delete")
+        agent.enabled = False
+        agent.deleted_at = datetime.now(UTC).replace(tzinfo=None)
