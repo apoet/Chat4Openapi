@@ -2,6 +2,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -157,13 +158,47 @@ def test_persisted_conversation_agent_is_immutable(tmp_path: Path) -> None:
         conversation = Conversation(agent_id=1)
         session.add(conversation)
         session.commit()
+        conversation_id = conversation.id
 
-        try:
+        with pytest.raises(ValueError, match="conversation agent cannot be changed"):
             conversation.agent_id = second.id
-        except ValueError as exc:
-            assert str(exc) == "conversation agent cannot be changed"
-        else:
-            raise AssertionError("persisted conversation accepted a different Agent")
+        session.rollback()
+        session.expire_all()
+
+        persisted = session.get(Conversation, conversation_id)
+        assert persisted is not None
+        assert persisted.agent_id == 1
+
+    engine.dispose()
+
+
+def test_persisted_conversation_agent_relationship_is_immutable(tmp_path: Path) -> None:
+    database_path = tmp_path / "immutable-conversation-agent-relationship.db"
+    config = migration_config(database_path)
+    command.upgrade(config, "head")
+    engine = create_engine_for_url(sqlite_url(database_path))
+
+    with Session(engine) as session:
+        default_agent = session.get(Agent, 1)
+        assert default_agent is not None
+        second = Agent(
+            name="Second Agent",
+            system_prompt="Use the second policy.",
+            provider_id=None,
+        )
+        conversation = Conversation(agent=default_agent)
+        session.add_all([second, conversation])
+        session.commit()
+        conversation_id = conversation.id
+
+        with pytest.raises(ValueError, match="conversation agent cannot be changed"):
+            conversation.agent = second
+        session.rollback()
+        session.expire_all()
+
+        persisted = session.get(Conversation, conversation_id)
+        assert persisted is not None
+        assert persisted.agent_id == 1
 
     engine.dispose()
 

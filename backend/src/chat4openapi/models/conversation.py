@@ -42,6 +42,12 @@ class Conversation(Base):
             raise ValueError("conversation agent cannot be changed")
         return value
 
+    @validates("agent")
+    def _keep_agent_relationship_immutable(self, _key: str, value: "Agent") -> "Agent":
+        if inspect(self).persistent and self.agent_id != value.id:
+            raise ValueError("conversation agent cannot be changed")
+        return value
+
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
