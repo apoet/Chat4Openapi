@@ -52,6 +52,21 @@ def _bound_skill_ids(db: Session, agent_id: int) -> list[int]:
     )
 
 
+def _eligible_bound_skill_ids(db: Session, agent_id: int) -> list[int]:
+    return list(
+        db.scalars(
+            select(AgentSkill.skill_id)
+            .join(Skill, Skill.id == AgentSkill.skill_id)
+            .where(
+                AgentSkill.agent_id == agent_id,
+                Skill.running.is_(True),
+                Skill.deleted_at.is_(None),
+            )
+            .order_by(AgentSkill.position)
+        )
+    )
+
+
 def _candidate_skill_ids(
     body: dict[str, Any], context: AgentKeyContext
 ) -> list[int]:
@@ -60,7 +75,7 @@ def _candidate_skill_ids(
     extension_present = "chat4openapi_skill_ids" in body
     agent_aliases = {"agent-default", f"agent-{context.agent.id}"}
     if isinstance(model, str) and model.startswith("agent-") and model not in agent_aliases:
-        raise ApiError(403, "auth.agent_scope_forbidden")
+        raise ApiError(403, "auth.agent_key_forbidden")
     bound_ids = _bound_skill_ids(db, context.agent.id)
     bound_set = set(bound_ids)
     if model in agent_aliases:
@@ -77,16 +92,19 @@ def _candidate_skill_ids(
         candidate_ids = list(dict.fromkeys(candidate_ids))
         forbidden = [skill_id for skill_id in candidate_ids if skill_id not in bound_set]
         if forbidden:
-            raise ApiError(403, "auth.skill_scope_forbidden", skill_ids=forbidden)
-        return candidate_ids if extension_present and candidate_ids else bound_ids
+            raise ApiError(404, "chat.skill_not_found")
+        if extension_present and candidate_ids:
+            return candidate_ids
+        eligible_ids = _eligible_bound_skill_ids(db, context.agent.id)
+        if not eligible_ids:
+            raise ApiError(409, "agent.no_eligible_skills")
+        return eligible_ids
     if extension_present:
         raise ApiError(409, "chat.candidate_scope_conflict")
     skill_id = _skill_id(model)
     skill = db.get(Skill, skill_id)
-    if skill is None:
+    if skill is None or skill_id not in bound_set:
         raise ApiError(404, "chat.skill_not_found")
-    if skill_id not in bound_set:
-        raise ApiError(403, "auth.skill_scope_forbidden", skill_ids=[skill_id])
     if (
         body.get("conversation_id") is None
         and (skill.deleted_at is not None or not skill.running)
@@ -266,11 +284,11 @@ async def _run(
     if conversation_id is not None:
         conversation = db.get(Conversation, conversation_id)
         if (
-            conversation is not None
-            and conversation.deleted_at is None
-            and conversation.agent_id != key_context.agent.id
+            conversation is None
+            or conversation.deleted_at is not None
+            or conversation.agent_id != key_context.agent.id
         ):
-            raise ApiError(403, "auth.agent_scope_forbidden")
+            raise ApiError(404, "agent.conversation_not_found")
     _validate_compatibility_scope(
         db,
         conversation_id,

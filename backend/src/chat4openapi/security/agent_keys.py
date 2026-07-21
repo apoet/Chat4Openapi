@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from fastapi import Depends, Header
-from sqlalchemy import select
+from sqlalchemy import case, select, update
 from sqlalchemy.orm import Session
 
 from chat4openapi.api.errors import ApiError
@@ -76,6 +76,18 @@ def require_agent_api_key(
     agent = db.get(Agent, api_key.agent_id)
     if agent is None or agent.deleted_at is not None or not agent.enabled:
         raise ApiError(403, "auth.agent_unavailable")
-    api_key.last_used_at = now
+    db.execute(
+        update(AgentApiKey)
+        .where(AgentApiKey.id == api_key.id)
+        .values(
+            last_used_at=case(
+                (AgentApiKey.last_used_at.is_(None), now),
+                (AgentApiKey.last_used_at < now, now),
+                else_=AgentApiKey.last_used_at,
+            )
+        )
+        .execution_options(synchronize_session=False)
+    )
     db.commit()
+    db.refresh(api_key)
     return AgentKeyContext(agent=agent, api_key=api_key, db=db)

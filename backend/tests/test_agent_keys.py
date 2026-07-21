@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from chat4openapi.models import Agent, AgentApiKey
 from chat4openapi.schemas.agents import AgentApiKeyUpdate
+import chat4openapi.security.agent_keys as agent_keys_module
 
 
 ADMIN = {"username": "admin", "password": "StrongPass!123", "locale": "en-US"}
@@ -43,6 +44,40 @@ def seed_agent(factory: sessionmaker[Session]) -> None:
 def test_key_update_rejects_an_explicit_null_label() -> None:
     with pytest.raises(ValidationError):
         AgentApiKeyUpdate.model_validate({"label": None})
+
+
+def test_last_used_timestamp_never_moves_backwards_across_sessions(
+    db_session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    secret = "c4o_monotonic_last_used_test_000000000000000000"
+    later = datetime(2026, 7, 22, 10, 0, 0)
+    earlier = later - timedelta(hours=1)
+    moments = iter([later, earlier])
+
+    class ControlledDatetime:
+        @classmethod
+        def now(cls, _tz):
+            return next(moments)
+
+    seed_agent(db_session_factory)
+    with db_session_factory() as session:
+        session.add(
+            AgentApiKey(
+                agent_id=1,
+                label="Monotonic",
+                key_prefix=secret[:12],
+                key_hash=hashlib.sha256(secret.encode()).hexdigest(),
+            )
+        )
+        session.commit()
+    monkeypatch.setattr(agent_keys_module, "datetime", ControlledDatetime)
+
+    with db_session_factory() as first, db_session_factory() as second:
+        agent_keys_module.require_agent_api_key(f"Bearer {secret}", first)
+        agent_keys_module.require_agent_api_key(f"Bearer {secret}", second)
+
+    with db_session_factory() as session:
+        assert session.scalar(select(AgentApiKey.last_used_at)) == later
 
 
 @pytest.mark.asyncio

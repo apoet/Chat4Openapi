@@ -936,11 +936,11 @@ async def test_key_cannot_select_another_agent_or_unbound_skill(
     )
 
     assert wrong_agent.status_code == 403
-    assert wrong_agent.json()["error"]["code"] == "auth.agent_scope_forbidden"
-    assert wrong_skill.status_code == 403
-    assert wrong_skill.json()["error"]["code"] == "auth.skill_scope_forbidden"
-    assert wrong_extension.status_code == 403
-    assert wrong_extension.json()["error"]["code"] == "auth.skill_scope_forbidden"
+    assert wrong_agent.json()["error"]["code"] == "auth.agent_key_forbidden"
+    assert wrong_skill.status_code == 404
+    assert wrong_skill.json()["error"]["code"] == "chat.skill_not_found"
+    assert wrong_extension.status_code == 404
+    assert wrong_extension.json()["error"]["code"] == "chat.skill_not_found"
 
 
 @pytest.mark.asyncio
@@ -976,3 +976,221 @@ async def test_matching_explicit_agent_alias_is_accepted_for_openai_and_anthropi
     assert openai.headers["content-type"].startswith("text/event-stream")
     assert anthropic.status_code == 200
     assert "event: message_stop" in anthropic.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("binding_state", ["none", "all_unavailable"])
+async def test_agent_default_rejects_when_key_agent_has_no_eligible_bound_skills(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_session_factory,
+    binding_state: str,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    llm = FinalAnswerLlm()
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: llm
+    seed(db_session_factory, cipher)
+    with db_session_factory() as session:
+        session.query(AgentSkill).delete()
+        if binding_state == "all_unavailable":
+            stopped = Skill(name="Stopped bound", system_prompt="Stopped", running=False)
+            deleted = Skill(
+                name="Deleted bound",
+                system_prompt="Deleted",
+                running=True,
+                deleted_at=datetime.now(UTC).replace(tzinfo=None),
+            )
+            session.add_all([stopped, deleted])
+            session.flush()
+            session.add_all(
+                [
+                    AgentSkill(agent_id=1, skill_id=stopped.id, position=0),
+                    AgentSkill(agent_id=1, skill_id=deleted.id, position=1),
+                ]
+            )
+        session.commit()
+
+    response = await client.post(
+        "/v1/chat/completions",
+        json={"model": "agent-default", "messages": [{"role": "user", "content": "Hi"}]},
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"error": {"code": "agent.no_eligible_skills", "params": {}}}
+    assert llm.calls == []
+    with db_session_factory() as session:
+        assert session.query(Conversation).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_agent_default_ignores_stopped_and_deleted_bindings_when_running_remain(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_session_factory,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    llm = FinalAnswerLlm()
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: llm
+    running = seed(db_session_factory, cipher)
+    with db_session_factory() as session:
+        stopped = Skill(name="Stopped extra", system_prompt="Stopped", running=False)
+        deleted = Skill(
+            name="Deleted extra",
+            system_prompt="Deleted",
+            running=True,
+            deleted_at=datetime.now(UTC).replace(tzinfo=None),
+        )
+        session.add_all([stopped, deleted])
+        session.flush()
+        session.add_all(
+            [
+                AgentSkill(agent_id=1, skill_id=stopped.id, position=1),
+                AgentSkill(agent_id=1, skill_id=deleted.id, position=2),
+            ]
+        )
+        session.commit()
+
+    response = await client.post(
+        "/v1/chat/completions",
+        json={"model": "agent-default", "messages": [{"role": "user", "content": "Hi"}]},
+    )
+
+    assert response.status_code == 200
+    with db_session_factory() as session:
+        conversation = session.query(Conversation).one()
+        assert conversation.candidate_skill_ids == [running.id]
+
+
+@pytest.mark.asyncio
+async def test_missing_and_unbound_skill_aliases_share_the_not_found_boundary(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_session_factory,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: FinalAnswerLlm()
+    seed(db_session_factory, cipher)
+    with db_session_factory() as session:
+        unbound = Skill(name="Unbound enumeration", system_prompt="Unbound", running=True)
+        session.add(unbound)
+        session.commit()
+        unbound_id = unbound.id
+
+    responses = [
+        await client.post(
+            "/v1/chat/completions",
+            json={"model": f"skill-{skill_id}", "messages": [{"role": "user", "content": "Hi"}]},
+        )
+        for skill_id in (unbound_id, 999_999)
+    ]
+
+    assert [(response.status_code, response.json()) for response in responses] == [
+        (404, {"error": {"code": "chat.skill_not_found", "params": {}}}),
+        (404, {"error": {"code": "chat.skill_not_found", "params": {}}}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_foreign_missing_and_deleted_conversations_share_not_found_boundary(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_session_factory,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: FinalAnswerLlm()
+    skill = seed(db_session_factory, cipher)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    with db_session_factory() as session:
+        session.add(
+            Agent(
+                id=2,
+                name="Foreign conversation Agent",
+                enabled=True,
+                is_default=False,
+                system_prompt="Foreign",
+                mode="react",
+                max_iterations=8,
+            )
+        )
+        session.flush()
+        session.add_all(
+            [
+                Conversation(
+                    id="foreign-conversation",
+                    agent_id=2,
+                    candidate_skill_ids=[skill.id],
+                ),
+                Conversation(
+                    id="deleted-conversation",
+                    agent_id=1,
+                    candidate_skill_ids=[skill.id],
+                    deleted_at=now,
+                ),
+            ]
+        )
+        session.commit()
+
+    responses = [
+        await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "agent-default",
+                "conversation_id": conversation_id,
+                "messages": [{"role": "user", "content": "Continue"}],
+            },
+        )
+        for conversation_id in (
+            "foreign-conversation",
+            "missing-conversation",
+            "deleted-conversation",
+        )
+    ]
+
+    expected = (404, {"error": {"code": "agent.conversation_not_found", "params": {}}})
+    assert [(response.status_code, response.json()) for response in responses] == [
+        expected,
+        expected,
+        expected,
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_id", [2, 999_999])
+async def test_other_agent_alias_always_uses_fixed_forbidden_error(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_session_factory,
+    agent_id: int,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: FinalAnswerLlm()
+    seed(db_session_factory, cipher)
+    if agent_id == 2:
+        with db_session_factory() as session:
+            session.add(
+                Agent(
+                    id=2,
+                    name="Existing other Agent",
+                    enabled=True,
+                    is_default=False,
+                    system_prompt="Other",
+                    mode="react",
+                    max_iterations=8,
+                )
+            )
+            session.commit()
+
+    response = await client.post(
+        "/v1/chat/completions",
+        json={"model": f"agent-{agent_id}", "messages": [{"role": "user", "content": "Hi"}]},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "error": {"code": "auth.agent_key_forbidden", "params": {}}
+    }
