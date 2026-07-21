@@ -9,6 +9,13 @@ import { createAppRouter } from '../router'
 import { useAuthStore } from '../stores/auth'
 import AgentView from '../views/AgentView.vue'
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((accept, decline) => { resolve = accept; reject = decline })
+  return { promise, resolve, reject }
+}
+
 function response(value: unknown, status = 200): Response {
   return new Response(status === 204 ? null : JSON.stringify(value), {
     status,
@@ -109,7 +116,8 @@ describe('Agent administration', () => {
     renderView()
 
     expect(await screen.findByRole('heading', { name: 'Agents' })).toBeTruthy()
-    expect(await screen.findByRole('button', { name: /Operations Agent/ })).toBeTruthy()
+    const selected = await screen.findByRole('button', { name: /Operations Agent/ })
+    await waitFor(() => expect(selected.getAttribute('aria-current')).toBe('true'))
     expect(screen.getByText('Default')).toBeTruthy()
     expect(((await screen.findByLabelText('Provider')) as HTMLSelectElement).value).toBe('1')
 
@@ -118,6 +126,18 @@ describe('Agent administration', () => {
     expect(within(bindings).getByText('Billing')).toBeTruthy()
     expect(within(bindings).getByText('Stopped')).toBeTruthy()
     expect(within(bindings).getByRole('button', { name: 'Remove Billing' })).toBeTruthy()
+  })
+
+  it('keeps a missing bound Skill visible as a removable placeholder', async () => {
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      if (input === '/api/admin/agents') return Promise.resolve(response([{ ...agents[0], skill_ids: [10, 99] }]))
+      return adminGet(input)
+    }))
+    renderView()
+
+    const bindings = await screen.findByRole('region', { name: 'Bound Skills' })
+    expect(within(bindings).getByText('Unavailable Skill #99')).toBeTruthy()
+    expect(within(bindings).getByRole('button', { name: 'Remove Unavailable Skill #99' })).toBeTruthy()
   })
 
   it('creates disabled first and then writes ordered Skill bindings with CSRF', async () => {
@@ -152,6 +172,42 @@ describe('Agent administration', () => {
     expect(((createCall?.[1] as RequestInit).headers as Headers).get('X-CSRF-Token')).toBe('csrf')
     const skillsCall = fetchMock.mock.calls.find(([url]) => url === '/api/admin/agents/42/skills')
     expect(JSON.parse((skillsCall?.[1] as RequestInit).body as string)).toEqual({ skill_ids: [12, 10] })
+  })
+
+  it('reconciles a partially created Agent and prevents duplicate saves', async () => {
+    const created = { ...agents[1], id: 42, name: 'Partial Agent', skill_ids: [] }
+    const binding = deferred<Response>()
+    let listCalls = 0
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === '/api/admin/agents' && init?.method === 'POST') return Promise.resolve(response(created, 201))
+      if (input === '/api/admin/agents/42/skills') return binding.promise
+      if (input === '/api/admin/agents') {
+        listCalls += 1
+        return Promise.resolve(response(listCalls === 1 ? agents : [...agents, created]))
+      }
+      return adminGet(input)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderView()
+    await screen.findByLabelText('Provider')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'New Agent' }))
+    await fireEvent.update(screen.getByLabelText('Agent name'), 'Partial Agent')
+    await fireEvent.update(screen.getByLabelText('System prompt'), 'Partial prompt.')
+    const save = screen.getByRole('button', { name: 'Save Agent' })
+    await fireEvent.click(save)
+    await fireEvent.click(save)
+    expect((save as HTMLButtonElement).disabled).toBe(true)
+    expect(fetchMock.mock.calls.filter(([url, init]) => url === '/api/admin/agents' && (init as RequestInit)?.method === 'POST')).toHaveLength(1)
+
+    binding.resolve(response({ error: { code: 'agents.skill_unavailable', params: { skill_id: 99 } } }, 409))
+    expect(await screen.findByRole('alert')).toHaveProperty(
+      'textContent',
+      'Agent details were saved, but Skill bindings were not. Review the current Agent and retry.',
+    )
+    expect(await screen.findByDisplayValue('Partial Agent')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Partial Agent/ }).getAttribute('aria-current')).toBe('true')
+    expect((screen.getByRole('button', { name: 'Save Agent' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('reorders Skills and saves every editable field', async () => {
@@ -199,9 +255,51 @@ describe('Agent administration', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/2/enable', expect.objectContaining({ method: 'POST' }))
   })
 
-  it('shows a created API key once, never persists the secret, and clears it on close', async () => {
+  it('uses set-default, disable, and soft-delete lifecycle endpoints', async () => {
+    let current = agents.map((agent) => ({ ...agent }))
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === '/api/admin/agents') return Promise.resolve(response(current))
+      if (input === '/api/admin/agents/2/set-default') {
+        current = current.map((agent) => ({ ...agent, is_default: agent.id === 2, enabled: agent.id === 2 ? true : agent.enabled }))
+        return Promise.resolve(response(current[1]))
+      }
+      if (input === '/api/admin/agents/1/disable') {
+        current = current.map((agent) => agent.id === 1 ? { ...agent, enabled: false } : agent)
+        return Promise.resolve(response(current[0]))
+      }
+      if (input === '/api/admin/agents/1' && init?.method === 'DELETE') {
+        current = current.filter((agent) => agent.id !== 1)
+        return Promise.resolve(response(null, 204))
+      }
+      return adminGet(input)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderView()
+    await screen.findByLabelText('Provider')
+
+    await fireEvent.click(screen.getByRole('button', { name: /Draft Agent/ }))
+    await fireEvent.click(await screen.findByRole('button', { name: 'Set as default' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/2/set-default', expect.anything()))
+    const operations = screen.getByRole('button', { name: /Operations Agent/ }) as HTMLButtonElement
+    await waitFor(() => expect(operations.disabled).toBe(false))
+    await fireEvent.click(operations)
+    await fireEvent.click(await screen.findByRole('button', { name: 'Disable Agent' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/1/disable', expect.anything()))
+    const remove = await screen.findByRole('button', { name: 'Delete Agent' }) as HTMLButtonElement
+    await waitFor(() => expect(remove.disabled).toBe(false))
+    await fireEvent.click(remove)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/1', expect.objectContaining({ method: 'DELETE' })))
+    for (const url of ['/api/admin/agents/2/set-default', '/api/admin/agents/1/disable', '/api/admin/agents/1']) {
+      const call = fetchMock.mock.calls.find(([called]) => called === url)
+      expect(((call?.[1] as RequestInit).headers as Headers).get('X-CSRF-Token')).toBe('csrf')
+    }
+  })
+
+  it('shows a created API key once with focus, copy feedback, and Escape cleanup', async () => {
     const pinia = createPinia()
     const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       if (input === '/api/admin/agents/1/keys' && init?.method === 'POST') {
         return Promise.resolve(response({
@@ -222,18 +320,45 @@ describe('Agent administration', () => {
     expect(await screen.findByRole('dialog', { name: 'New API key' })).toHaveProperty('textContent', expect.stringContaining('c4o_secret_once'))
     expect(JSON.stringify(pinia.state.value)).not.toContain('c4o_secret_once')
     expect(setItem).not.toHaveBeenCalledWith(expect.any(String), expect.stringContaining('c4o_secret_once'))
-    await fireEvent.click(screen.getByRole('button', { name: 'Close secret' }))
+    expect((screen.getByRole('button', { name: 'Create API key' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Copy secret' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Copy secret' }))
+    expect(writeText).toHaveBeenCalledWith('c4o_secret_once')
+    expect(await screen.findByText('Secret copied.')).toBeTruthy()
+    await fireEvent.keyDown(screen.getByRole('dialog', { name: 'New API key' }), { key: 'Escape' })
     expect(screen.queryByText('c4o_secret_once')).toBeNull()
-
-    await fireEvent.update(screen.getByLabelText('Key label'), 'Rotation')
-    await fireEvent.click(screen.getByRole('button', { name: 'Create API key' }))
-    expect(await screen.findByText('c4o_secret_once')).toBeTruthy()
-    await fireEvent.click(screen.getByRole('button', { name: /Draft Agent/ }))
-    await screen.findByRole('button', { name: 'Enable Agent' })
-    expect(screen.queryByText('c4o_secret_once')).toBeNull()
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Key label')))
   })
 
-  it('lists key metadata and calls the supported revoke and delete actions', async () => {
+  it('locks key creation and Agent selection while a secret request is pending, then discards a late unmounted key', async () => {
+    const pending = deferred<Response>()
+    const created = {
+      id: 88, agent_id: 1, label: 'Late', key_prefix: 'c4o_late', enabled: true,
+      expires_at: null, last_used_at: null, created_at: '2026-07-22T08:00:00Z',
+      updated_at: '2026-07-22T08:00:00Z', revoked_at: null, secret: 'c4o_late_secret',
+    }
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === '/api/admin/agents/1/keys' && init?.method === 'POST') return pending.promise
+      if (input === '/api/admin/agents/1/keys/88' && init?.method === 'DELETE') return Promise.resolve(response(null, 204))
+      return adminGet(input)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const view = renderView()
+    await screen.findByRole('heading', { name: 'API keys' })
+    await fireEvent.update(screen.getByLabelText('Key label'), 'Late')
+    const create = screen.getByRole('button', { name: 'Create API key' })
+    await fireEvent.click(create)
+
+    expect((create as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: /Draft Agent/ }) as HTMLButtonElement).disabled).toBe(true)
+    expect(fetchMock.mock.calls.filter(([url, init]) => url === '/api/admin/agents/1/keys' && (init as RequestInit)?.method === 'POST')).toHaveLength(1)
+    view.unmount()
+    pending.resolve(response(created, 201))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/1/keys/88', expect.objectContaining({ method: 'DELETE' })))
+    expect(document.body.textContent).not.toContain('c4o_late_secret')
+  })
+
+  it('edits key label and expiry, shows precise metadata, and supports revoke/delete', async () => {
     const key = {
       id: 7, agent_id: 1, label: 'Automation', key_prefix: 'c4o_auto', enabled: true,
       expires_at: '2027-01-01T00:00:00Z', last_used_at: '2026-07-22T05:00:00Z',
@@ -241,7 +366,8 @@ describe('Agent administration', () => {
     }
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       if (input === '/api/admin/agents/1/keys' && !init?.method) return Promise.resolve(response([key]))
-      if (input === '/api/admin/agents/1/keys/7/revoke') return Promise.resolve(response({ ...key, enabled: false, revoked_at: '2026-07-22T08:00:00Z' }))
+      if (input === '/api/admin/agents/1/keys/7' && init?.method === 'PATCH') return Promise.resolve(response({ ...key, label: 'Deployments', expires_at: '2027-02-02T09:30:00Z' }))
+      if (input === '/api/admin/agents/1/keys/7/revoke') return Promise.resolve(response({ ...key, label: 'Deployments', expires_at: '2027-02-02T09:30:00Z', enabled: false, revoked_at: '2026-07-22T08:00:00Z' }))
       if (input === '/api/admin/agents/1/keys/7' && init?.method === 'DELETE') return Promise.resolve(response(null, 204))
       return adminGet(input)
     })
@@ -249,11 +375,19 @@ describe('Agent administration', () => {
     renderView()
 
     expect(await screen.findByText('c4o_auto')).toBeTruthy()
-    expect(screen.getByText('Jan 1, 2027')).toBeTruthy()
-    expect(screen.getByText('Jul 22, 2026')).toBeTruthy()
-    await fireEvent.click(screen.getByRole('button', { name: 'Revoke Automation' }))
+    expect(screen.getByText('Jan 1, 2027, 12:00 AM')).toBeTruthy()
+    expect(screen.getByText('Jul 22, 2026, 5:00 AM')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Automation' }))
+    await fireEvent.update(screen.getByLabelText('Edit key label'), 'Deployments')
+    await fireEvent.update(screen.getByLabelText('Edit key expiry'), '2027-02-02T09:30')
+    await fireEvent.click(screen.getByRole('button', { name: 'Save Automation' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/1/keys/7', expect.objectContaining({ method: 'PATCH' })))
+    const patchCall = fetchMock.mock.calls.find(([url, init]) => url === '/api/admin/agents/1/keys/7' && (init as RequestInit)?.method === 'PATCH')
+    expect(JSON.parse((patchCall?.[1] as RequestInit).body as string)).toEqual({ label: 'Deployments', expires_at: '2027-02-02T09:30:00.000Z' })
+    expect(((patchCall?.[1] as RequestInit).headers as Headers).get('X-CSRF-Token')).toBe('csrf')
+    await fireEvent.click(await screen.findByRole('button', { name: 'Revoke Deployments' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/1/keys/7/revoke', expect.objectContaining({ method: 'POST' })))
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete Automation' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete Deployments' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/1/keys/7', expect.objectContaining({ method: 'DELETE' })))
   })
 })

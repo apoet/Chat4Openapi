@@ -8,6 +8,7 @@ const props = defineProps<{
   agent: AgentConfig | null
   providers: LlmProviderSummary[]
   skills: SkillSummary[]
+  pending?: boolean
 }>()
 const emit = defineEmits<{
   save: [payload: AgentConfigWrite, skillIds: number[]]
@@ -39,7 +40,18 @@ watch(() => props.agent, (agent) => {
 }, { immediate: true })
 
 const enabledProviders = computed(() => props.providers.filter((provider) => provider.enabled))
-const boundSkills = computed(() => boundSkillIds.value.map((id) => props.skills.find((skill) => skill.id === id)).filter((skill): skill is SkillSummary => Boolean(skill)))
+const boundSkills = computed(() => boundSkillIds.value.map((id) => {
+  const skill = props.skills.find((item) => item.id === id)
+  return skill ? { ...skill, unavailable: false } : {
+    id,
+    name: t('agent.unavailableSkill', { id }),
+    description: null,
+    system_prompt: '',
+    running: false,
+    tools: [],
+    unavailable: true,
+  }
+}))
 const availableSkills = computed(() => {
   const query = search.value.trim().toLocaleLowerCase()
   return props.skills.filter((skill) => !boundSkillIds.value.includes(skill.id)
@@ -67,7 +79,7 @@ function moveSkill(index: number, delta: -1 | 1): void {
 }
 
 function save(): void {
-  if (!canSave.value) return
+  if (!canSave.value || props.pending) return
   emit('save', {
     name: form.name.trim(),
     enabled: props.agent?.enabled ?? false,
@@ -121,18 +133,18 @@ function save(): void {
       <ol class="bound-skill-list">
         <li v-for="(skill, index) in boundSkills" :key="skill.id">
           <span class="skill-order">{{ index + 1 }}</span>
-          <div><strong>{{ skill.name }}</strong><small v-if="!skill.running" class="stopped-label">{{ t('agent.stopped') }}</small></div>
+          <div><strong>{{ skill.name }}</strong><small v-if="skill.unavailable" class="stopped-label">{{ t('agent.unavailable') }}</small><small v-else-if="!skill.running" class="stopped-label">{{ t('agent.stopped') }}</small></div>
           <div class="skill-order-actions">
-            <button type="button" :disabled="index === 0" :aria-label="t('agent.moveUp', { name: skill.name })" @click="moveSkill(index, -1)">↑</button>
-            <button type="button" :disabled="index === boundSkills.length - 1" :aria-label="t('agent.moveDown', { name: skill.name })" @click="moveSkill(index, 1)">↓</button>
-            <button type="button" class="danger-action" :aria-label="t('agent.removeSkill', { name: skill.name })" @click="removeSkill(skill.id)">×</button>
+            <button type="button" :disabled="pending || index === 0" :aria-label="t('agent.moveUp', { name: skill.name })" @click="moveSkill(index, -1)">↑</button>
+            <button type="button" :disabled="pending || index === boundSkills.length - 1" :aria-label="t('agent.moveDown', { name: skill.name })" @click="moveSkill(index, 1)">↓</button>
+            <button type="button" class="danger-action" :disabled="pending" :aria-label="t('agent.removeSkill', { name: skill.name })" @click="removeSkill(skill.id)">×</button>
           </div>
         </li>
       </ol>
       <p v-if="boundSkills.length === 0" class="empty-inline">{{ t('agent.noBoundSkills') }}</p>
       <label class="skill-search">{{ t('agent.searchSkills') }}<input v-model="search" :placeholder="t('agent.searchSkillsHint')" /></label>
       <div class="available-skills">
-        <button v-for="skill in availableSkills" :key="skill.id" type="button" :aria-label="t('agent.addSkill', { name: skill.name })" @click="addSkill(skill)">
+        <button v-for="skill in availableSkills" :key="skill.id" type="button" :disabled="pending" :aria-label="t('agent.addSkill', { name: skill.name })" @click="addSkill(skill)">
           <span><strong>{{ skill.name }}</strong><small>{{ skill.description }}</small></span>
           <span :class="['status-pill', skill.running ? 'enabled' : 'disabled']">{{ skill.running ? t('agent.running') : t('agent.stopped') }}</span>
         </button>
@@ -140,8 +152,8 @@ function save(): void {
     </section>
 
     <div class="row-actions editor-actions">
-      <button type="button" class="primary-action" :disabled="!canSave" @click="save">{{ t('agent.save') }}</button>
-      <button v-if="!agent" type="button" class="secondary-action" @click="emit('cancel')">{{ t('skills.cancel') }}</button>
+      <button type="button" class="primary-action" :disabled="!canSave || pending" @click="save">{{ pending ? t('agent.saving') : t('agent.save') }}</button>
+      <button v-if="!agent" type="button" class="secondary-action" :disabled="pending" @click="emit('cancel')">{{ t('skills.cancel') }}</button>
     </div>
   </section>
 </template>
