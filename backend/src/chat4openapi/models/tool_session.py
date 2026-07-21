@@ -1,6 +1,16 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, LargeBinary, String, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from chat4openapi.db.base import Base
@@ -68,3 +78,49 @@ class ToolSessionCredential(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     last_used_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ApiSourceOAuthConfig(Base):
+    __tablename__ = "api_source_oauth_configs"
+
+    api_source_id: Mapped[int] = mapped_column(
+        ForeignKey("api_sources.id", ondelete="CASCADE"), primary_key=True
+    )
+    encrypted_config: Mapped[bytes] = mapped_column(LargeBinary)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ToolOAuthAuthorization(Base):
+    __tablename__ = "tool_oauth_authorizations"
+    __table_args__ = (
+        CheckConstraint("flow_type IN ('device', 'pkce')", name="ck_tool_oauth_flow_type"),
+        CheckConstraint(
+            "status IN ('pending', 'ready', 'expired', 'failed')",
+            name="ck_tool_oauth_status",
+        ),
+        UniqueConstraint("tool_session_id", "api_source_id", name="uq_tool_oauth_session_source"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tool_session_id: Mapped[int] = mapped_column(
+        ForeignKey("tool_user_sessions.id", ondelete="CASCADE"), index=True
+    )
+    api_source_id: Mapped[int] = mapped_column(
+        ForeignKey("api_sources.id", ondelete="CASCADE"), index=True
+    )
+    flow_type: Mapped[str] = mapped_column(String(16))
+    state_hash: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    encrypted_flow_data: Mapped[bytes] = mapped_column(LargeBinary)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    next_poll_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )

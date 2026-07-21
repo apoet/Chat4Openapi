@@ -1,0 +1,654 @@
+import base64
+import hashlib
+from datetime import datetime, timedelta
+from urllib.parse import parse_qs, urlsplit
+
+import httpx
+import pytest
+import sqlalchemy as sa
+from alembic import command
+from alembic.config import Config
+from cryptography.fernet import Fernet
+from sqlalchemy import select
+from types import SimpleNamespace
+
+from chat4openapi.api.tool_oauth import (
+    get_oauth_network_validator,
+    get_oauth_transport,
+)
+from chat4openapi.api.tool_sessions import get_tool_secret_cipher
+from chat4openapi.models import (
+    Agent,
+    AgentApiKey,
+    AdminSession,
+    AdminUser,
+    ApiSource,
+    ApiSourceOAuthConfig,
+    ToolOAuthAuthorization,
+    ToolSessionCredential,
+    ToolUserSession,
+)
+from chat4openapi.security.agent_keys import AgentKeyContext
+from chat4openapi.security.encryption import SecretCipher
+from chat4openapi.tool_sessions.oauth import (
+    OAuthFlowError,
+    OAuthPollingTooSoon,
+    ToolOAuthService,
+)
+from chat4openapi.tool_sessions.service import ToolSessionService
+
+
+class NoopExecutor:
+    async def execute(self, *_args, **_kwargs):
+        raise AssertionError("OAuth must not execute a Tool")
+
+
+async def allow_network(*_args, **_kwargs) -> None:
+    return None
+
+
+def _seed(factory):
+    secret = "c4o_oauth_test_key_000000000000000000000"
+    with factory() as db:
+        agent = Agent(
+            name="OAuth Agent",
+            enabled=True,
+            is_default=True,
+            system_prompt="test",
+            mode="react",
+            max_iterations=8,
+        )
+        db.add(agent)
+        db.flush()
+        key = AgentApiKey(
+            agent_id=agent.id,
+            label="oauth",
+            key_prefix=secret[:12],
+            key_hash=hashlib.sha256(secret.encode()).hexdigest(),
+        )
+        source = ApiSource(
+            name="OAuth API",
+            source_type="openapi",
+            base_url="https://api.example.test",
+            allow_private_networks=False,
+        )
+        db.add_all([key, source])
+        db.commit()
+        return secret, agent.id, key.id, source.id
+
+
+def _context(db, agent_id: int, key_id: int) -> AgentKeyContext:
+    agent = db.get(Agent, agent_id)
+    key = db.get(AgentApiKey, key_id)
+    assert agent is not None and key is not None
+    return AgentKeyContext(agent=agent, api_key=key, db=db)
+
+
+def _admin_context(db):
+    admin = AdminUser(username="admin", password_hash="unused")
+    db.add(admin)
+    db.flush()
+    admin_session = AdminSession(
+        admin_id=admin.id,
+        token_hash="a" * 64,
+        csrf_hash="b" * 64,
+        idle_expires_at=datetime(2026, 7, 23),
+        absolute_expires_at=datetime(2026, 7, 24),
+    )
+    db.add(admin_session)
+    db.flush()
+    return SimpleNamespace(admin=admin, admin_session=admin_session, db=db)
+
+
+def _configure(service: ToolOAuthService, source_id: int) -> None:
+    service.configure_source(
+        source_id,
+        {
+            "client_id": "public-client",
+            "client_secret": "super-secret",
+            "authorization_url": "https://issuer.example.test/authorize",
+            "token_url": "https://issuer.example.test/token",
+            "device_authorization_url": "https://issuer.example.test/device",
+            "redirect_uri": "https://app.example.test/api/tool-sessions/oauth/pkce/callback",
+            "scopes": ["openid", "profile"],
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_device_flow_encrypts_codes_and_becomes_ready(db_session_factory) -> None:
+    _secret, agent_id, key_id, source_id = _seed(db_session_factory)
+    now = datetime(2026, 7, 22, 8, 0, 0)
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/device":
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "device-secret",
+                    "user_code": "ABCD-EFGH",
+                    "verification_uri": "https://issuer.example.test/verify",
+                    "verification_uri_complete": "https://issuer.example.test/verify?user_code=ABCD-EFGH",
+                    "expires_in": 600,
+                    "interval": 5,
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "access-secret",
+                "refresh_token": "refresh-secret",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+            },
+        )
+
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as db:
+        service = ToolOAuthService(
+            db,
+            cipher,
+            transport=httpx.MockTransport(handler),
+            network_validator=allow_network,
+            now=lambda: now,
+        )
+        _configure(service, source_id)
+        started = await service.start_device(_context(db, agent_id, key_id), source_id)
+        assert started.status == "pending"
+        assert started.user_code == "ABCD-EFGH"
+        assert started.verification_uri == "https://issuer.example.test/verify"
+        assert started.interval == 5
+        flow = db.scalar(select(ToolOAuthAuthorization))
+        config = db.get(ApiSourceOAuthConfig, source_id)
+        assert flow is not None and config is not None
+        assert b"device-secret" not in flow.encrypted_flow_data
+        assert b"super-secret" not in config.encrypted_config
+
+        now += timedelta(seconds=5)
+        completed = await service.poll_device(
+            started.tool_session_id, _context(db, agent_id, key_id)
+        )
+        assert completed.status == "ready"
+        session = db.scalar(select(ToolUserSession))
+        credential = db.scalar(select(ToolSessionCredential))
+        assert session is not None and credential is not None
+        assert (session.agent_id, session.agent_key_id) == (agent_id, key_id)
+        assert credential.api_source_id == source_id
+        assert b"access-secret" not in credential.encrypted_credentials
+        assert b"refresh-secret" not in credential.encrypted_credentials
+        assert "device-secret" in requests[-1].content.decode()
+
+
+@pytest.mark.asyncio
+async def test_device_polling_enforces_interval_and_slow_down(db_session_factory) -> None:
+    _secret, agent_id, key_id, source_id = _seed(db_session_factory)
+    now = datetime(2026, 7, 22, 8, 0, 0)
+    poll_count = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal poll_count
+        if request.url.path == "/device":
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "dev",
+                    "user_code": "CODE",
+                    "verification_uri": "https://issuer.example.test/verify",
+                    "expires_in": 60,
+                    "interval": 3,
+                },
+            )
+        poll_count += 1
+        error = "authorization_pending" if poll_count == 1 else "slow_down"
+        return httpx.Response(400, json={"error": error, "debug": "must-not-leak"})
+
+    with db_session_factory() as db:
+        service = ToolOAuthService(
+            db,
+            SecretCipher(Fernet.generate_key()),
+            transport=httpx.MockTransport(handler),
+            network_validator=allow_network,
+            now=lambda: now,
+        )
+        _configure(service, source_id)
+        started = await service.start_device(_context(db, agent_id, key_id), source_id)
+        with pytest.raises(OAuthPollingTooSoon):
+            await service.poll_device(started.tool_session_id, _context(db, agent_id, key_id))
+        now += timedelta(seconds=3)
+        pending = await service.poll_device(
+            started.tool_session_id, _context(db, agent_id, key_id)
+        )
+        assert pending.status == "pending"
+        now += timedelta(seconds=3)
+        slowed = await service.poll_device(
+            started.tool_session_id, _context(db, agent_id, key_id)
+        )
+        assert slowed.status == "pending"
+        assert slowed.interval == 8
+        assert "must-not-leak" not in str(slowed)
+        with pytest.raises(OAuthPollingTooSoon):
+            await service.poll_device(started.tool_session_id, _context(db, agent_id, key_id))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("upstream_error", "expected_status"),
+    [("access_denied", "failed"), ("expired_token", "expired")],
+)
+async def test_device_terminal_errors_are_redacted(
+    db_session_factory, upstream_error: str, expected_status: str
+) -> None:
+    _secret, agent_id, key_id, source_id = _seed(db_session_factory)
+    now = datetime(2026, 7, 22, 8, 0, 0)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/device":
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "dev",
+                    "user_code": "CODE",
+                    "verification_uri": "https://issuer.example.test/verify",
+                    "expires_in": 60,
+                    "interval": 1,
+                },
+            )
+        return httpx.Response(
+            400, json={"error": upstream_error, "error_description": "issuer secret"}
+        )
+
+    with db_session_factory() as db:
+        service = ToolOAuthService(
+            db,
+            SecretCipher(Fernet.generate_key()),
+            transport=httpx.MockTransport(handler),
+            network_validator=allow_network,
+            now=lambda: now,
+        )
+        _configure(service, source_id)
+        started = await service.start_device(_context(db, agent_id, key_id), source_id)
+        now += timedelta(seconds=1)
+        result = await service.poll_device(
+            started.tool_session_id, _context(db, agent_id, key_id)
+        )
+        assert result.status == expected_status
+        assert "issuer secret" not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_pkce_uses_s256_and_callback_state_is_one_time(db_session_factory) -> None:
+    _secret, agent_id, key_id, source_id = _seed(db_session_factory)
+    now = datetime(2026, 7, 22, 8, 0, 0)
+    token_request: list[httpx.Request] = []
+    validated_urls: list[str] = []
+
+    async def validate_url(url: httpx.URL, _allow_private: bool) -> None:
+        validated_urls.append(str(url))
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        token_request.append(request)
+        return httpx.Response(
+            200,
+            json={"access_token": "pkce-access", "token_type": "Bearer", "expires_in": 900},
+        )
+
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as db:
+        service = ToolOAuthService(
+            db,
+            cipher,
+            transport=httpx.MockTransport(handler),
+            network_validator=validate_url,
+            now=lambda: now,
+        )
+        _configure(service, source_id)
+        context = _admin_context(db)
+        started = await service.start_pkce(context, source_id, agent_id=agent_id)
+        query = parse_qs(urlsplit(started.authorization_url).query)
+        assert query["code_challenge_method"] == ["S256"]
+        assert query["state"] == [started.state]
+        assert "code_verifier" not in query
+        flow = db.scalar(select(ToolOAuthAuthorization))
+        assert flow is not None
+        flow_data = cipher.decrypt_json(flow.encrypted_flow_data)
+        expected = base64.urlsafe_b64encode(
+            hashlib.sha256(flow_data["code_verifier"].encode()).digest()
+        ).rstrip(b"=").decode()
+        assert query["code_challenge"] == [expected]
+        assert b"code_verifier" not in flow.encrypted_flow_data
+
+        completed = await service.complete_pkce(started.state, "authorization-code")
+        assert completed.status == "ready"
+        assert completed.tool_session_id
+        posted = parse_qs(token_request[0].content.decode())
+        assert posted["code_verifier"] == [flow_data["code_verifier"]]
+        assert posted["code"] == ["authorization-code"]
+        assert validated_urls == [
+            "https://issuer.example.test/authorize",
+            "https://issuer.example.test/token",
+        ]
+        with pytest.raises(OAuthFlowError) as replay:
+            await service.complete_pkce(started.state, "authorization-code")
+        assert replay.value.code == "oauth.state_invalid"
+
+
+@pytest.mark.asyncio
+async def test_pkce_rejects_mismatched_and_expired_state(db_session_factory) -> None:
+    _secret, agent_id, key_id, source_id = _seed(db_session_factory)
+    now = datetime(2026, 7, 22, 8, 0, 0)
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("invalid state must not call token endpoint")
+
+    with db_session_factory() as db:
+        service = ToolOAuthService(
+            db,
+            SecretCipher(Fernet.generate_key()),
+            transport=httpx.MockTransport(handler),
+            network_validator=allow_network,
+            now=lambda: now,
+        )
+        _configure(service, source_id)
+        started = await service.start_pkce(
+            _admin_context(db), source_id, agent_id=agent_id
+        )
+        with pytest.raises(OAuthFlowError) as mismatch:
+            await service.complete_pkce(started.state + "x", "code")
+        assert mismatch.value.code == "oauth.state_invalid"
+        now += timedelta(minutes=11)
+        with pytest.raises(OAuthFlowError) as expired:
+            await service.complete_pkce(started.state, "code")
+        assert expired.value.code == "oauth.state_expired"
+        expired_flow = db.scalar(select(ToolOAuthAuthorization))
+        assert expired_flow is not None
+        assert service._cipher.decrypt_json(expired_flow.encrypted_flow_data) == {}
+
+
+@pytest.mark.asyncio
+async def test_refresh_keeps_owner_and_source_boundary(db_session_factory) -> None:
+    _secret, agent_id, key_id, source_id = _seed(db_session_factory)
+    now = datetime(2026, 7, 22, 8, 0, 0)
+    refresh_requests = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal refresh_requests
+        if request.url.path == "/device":
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "dev",
+                    "user_code": "CODE",
+                    "verification_uri": "https://issuer.example.test/verify",
+                    "expires_in": 60,
+                    "interval": 1,
+                },
+            )
+        form = parse_qs(request.content.decode())
+        if form.get("grant_type") == ["refresh_token"]:
+            refresh_requests += 1
+            assert form["refresh_token"] == ["refresh-1"]
+            return httpx.Response(
+                200,
+                json={"access_token": "access-2", "token_type": "Bearer", "expires_in": 60},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "access-1",
+                "refresh_token": "refresh-1",
+                "token_type": "Bearer",
+                "expires_in": 1,
+            },
+        )
+
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as db:
+        service = ToolOAuthService(
+            db,
+            cipher,
+            transport=httpx.MockTransport(handler),
+            network_validator=allow_network,
+            now=lambda: now,
+        )
+        _configure(service, source_id)
+        context = _context(db, agent_id, key_id)
+        started = await service.start_device(context, source_id)
+        now += timedelta(seconds=1)
+        authorized = await service.poll_device(started.tool_session_id, context)
+        now += timedelta(seconds=2)
+        refreshed = await service.refresh(started.tool_session_id, context, source_id)
+        assert refreshed.status == "ready"
+        assert refreshed.expires_at == authorized.expires_at
+        assert refresh_requests == 1
+        with pytest.raises(OAuthFlowError):
+            await service.refresh(started.tool_session_id, context, source_id + 999)
+
+
+@pytest.mark.asyncio
+async def test_tool_resolution_refreshes_expired_oauth_without_redirect_or_wait(
+    db_session_factory,
+) -> None:
+    _secret, agent_id, key_id, source_id = _seed(db_session_factory)
+    now = datetime(2026, 7, 22, 8, 0, 0)
+    paths: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path == "/device":
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "dev",
+                    "user_code": "CODE",
+                    "verification_uri": "https://issuer.example.test/verify",
+                    "expires_in": 60,
+                    "interval": 1,
+                },
+            )
+        form = parse_qs(request.content.decode())
+        if form.get("grant_type") == ["refresh_token"]:
+            return httpx.Response(
+                200,
+                json={"access_token": "fresh", "token_type": "Bearer", "expires_in": 60},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "old",
+                "refresh_token": "refresh",
+                "token_type": "Bearer",
+                "expires_in": 1,
+            },
+        )
+
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as db:
+        oauth = ToolOAuthService(
+            db,
+            cipher,
+            transport=httpx.MockTransport(handler),
+            network_validator=allow_network,
+            now=lambda: now,
+        )
+        _configure(oauth, source_id)
+        context = _context(db, agent_id, key_id)
+        started = await oauth.start_device(context, source_id)
+        now += timedelta(seconds=1)
+        await oauth.poll_device(started.tool_session_id, context)
+        now += timedelta(seconds=2)
+
+        sessions = ToolSessionService(
+            db,
+            cipher,
+            NoopExecutor(),
+            now=lambda: now,
+            oauth_refresher=oauth.refresh_bound,
+        )
+        resolved = await sessions.resolve(
+            started.tool_session_id, agent_id, key_id, source_id
+        )
+
+        assert resolved.auth.headers == {"Authorization": "Bearer fresh"}
+        assert paths == ["/device", "/token", "/token"]
+
+
+def test_oauth_config_rejects_request_controlled_or_unsafe_urls(db_session_factory) -> None:
+    _secret, _agent_id, _key_id, source_id = _seed(db_session_factory)
+    with db_session_factory() as db:
+        service = ToolOAuthService(db, SecretCipher(Fernet.generate_key()))
+        with pytest.raises(OAuthFlowError) as embedded_credentials:
+            service.configure_source(
+                source_id,
+                {
+                    "client_id": "client",
+                    "token_url": "https://user:pass@issuer.example/token",
+                    "device_authorization_url": "https://issuer.example/device",
+                },
+            )
+        assert embedded_credentials.value.code == "oauth.config_invalid"
+
+
+def test_oauth_migration_roundtrip(tmp_path) -> None:
+    database = tmp_path / "oauth.db"
+    config = Config("backend/alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database.as_posix()}")
+    command.upgrade(config, "0009_tool_sessions")
+    command.upgrade(config, "0010_tool_oauth")
+    engine = sa.create_engine(f"sqlite:///{database.as_posix()}")
+    tables = set(sa.inspect(engine).get_table_names())
+    assert {"api_source_oauth_configs", "tool_oauth_authorizations"} <= tables
+    command.downgrade(config, "0009_tool_sessions")
+    tables = set(sa.inspect(engine).get_table_names())
+    assert "api_source_oauth_configs" not in tables
+    assert "tool_oauth_authorizations" not in tables
+    command.upgrade(config, "0010_tool_oauth")
+    assert "tool_oauth_authorizations" in sa.inspect(engine).get_table_names()
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_device_api_uses_agent_key_and_never_accepts_endpoint_urls(
+    client: httpx.AsyncClient, app, db_session_factory
+) -> None:
+    secret, _agent_id, _key_id, source_id = _seed(db_session_factory)
+    cipher = SecretCipher(Fernet.generate_key())
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == "https://issuer.example.test/device"
+        return httpx.Response(
+            200,
+            json={
+                "device_code": "api-device-secret",
+                "user_code": "API-CODE",
+                "verification_uri": "https://issuer.example.test/verify",
+                "expires_in": 600,
+                "interval": 5,
+            },
+        )
+
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_oauth_transport] = lambda: httpx.MockTransport(handler)
+    app.dependency_overrides[get_oauth_network_validator] = lambda: allow_network
+    with db_session_factory() as db:
+        _configure(ToolOAuthService(db, cipher), source_id)
+
+    response = await client.post(
+        "/api/tool-sessions/oauth/device/start",
+        headers={"Authorization": f"Bearer {secret}"},
+        json={
+            "api_source_id": source_id,
+            "token_url": "https://attacker.invalid/token",
+        },
+    )
+
+    assert response.status_code == 422
+    clean = await client.post(
+        "/api/tool-sessions/oauth/device/start",
+        headers={"Authorization": f"Bearer {secret}"},
+        json={"api_source_id": source_id},
+    )
+    assert clean.status_code == 201
+    assert clean.json()["status"] == "pending"
+    assert clean.json()["user_code"] == "API-CODE"
+    assert "api-device-secret" not in clean.text
+
+
+@pytest.mark.asyncio
+async def test_admin_oauth_config_and_pkce_callback_are_secret_free_and_csrf_safe(
+    client: httpx.AsyncClient, app, db_session_factory
+) -> None:
+    _secret, agent_id, _key_id, source_id = _seed(db_session_factory)
+    setup = await client.post(
+        "/api/setup",
+        json={"username": "admin", "password": "admin123", "locale": "en-US"},
+    )
+    assert setup.status_code == 201
+    login = await client.post(
+        "/api/admin/auth/login", json={"username": "admin", "password": "admin123"}
+    )
+    csrf = login.json()["csrf_token"]
+    cipher = SecretCipher(Fernet.generate_key())
+    posted: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        posted.append(request)
+        return httpx.Response(
+            200,
+            json={"access_token": "callback-secret", "token_type": "Bearer", "expires_in": 600},
+        )
+
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_oauth_transport] = lambda: httpx.MockTransport(handler)
+    app.dependency_overrides[get_oauth_network_validator] = lambda: allow_network
+    config_payload = {
+        "enabled": True,
+        "client_id": "web-client",
+        "client_secret": "client-secret-never-return",
+        "authorization_url": "https://issuer.example.test/authorize",
+        "token_url": "https://issuer.example.test/token",
+        "device_authorization_url": "https://issuer.example.test/device",
+        "redirect_uri": "https://app.example.test/api/tool-sessions/oauth/pkce/callback",
+        "scopes": ["openid"],
+    }
+    missing_csrf = await client.put(
+        f"/api/admin/sources/{source_id}/oauth", json=config_payload
+    )
+    configured = await client.put(
+        f"/api/admin/sources/{source_id}/oauth",
+        headers={"X-CSRF-Token": csrf},
+        json=config_payload,
+    )
+    assert missing_csrf.status_code == 403
+    assert configured.status_code == 200
+    assert configured.json()["has_client_secret"] is True
+    assert "client-secret-never-return" not in configured.text
+
+    missing_start_csrf = await client.post(
+        "/api/tool-sessions/oauth/pkce/start",
+        json={"api_source_id": source_id, "agent_id": agent_id},
+    )
+    started = await client.post(
+        "/api/tool-sessions/oauth/pkce/start",
+        headers={"X-CSRF-Token": csrf},
+        json={"api_source_id": source_id, "agent_id": agent_id},
+    )
+    assert missing_start_csrf.status_code == 403
+    assert started.status_code == 201
+    state = parse_qs(urlsplit(started.json()["authorization_url"]).query)["state"][0]
+    callback = await client.get(
+        "/api/tool-sessions/oauth/pkce/callback",
+        params={"state": state, "code": "api-code"},
+    )
+    assert callback.status_code == 200
+    assert callback.json()["status"] == "ready"
+    assert "callback-secret" not in callback.text
+    assert "chat4openapi_tool_session=" in callback.headers["set-cookie"]
+    replay = await client.get(
+        "/api/tool-sessions/oauth/pkce/callback",
+        params={"state": state, "code": "api-code"},
+    )
+    assert replay.status_code == 400
+    assert replay.json()["error"]["code"] == "oauth.state_invalid"
+    assert len(posted) == 1

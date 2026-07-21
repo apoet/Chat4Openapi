@@ -1,0 +1,286 @@
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+
+import httpx
+from fastapi import APIRouter, Depends, Query, Response
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.orm import Session
+
+from chat4openapi.api.admin_auth import AdminContext, require_admin, require_csrf
+from chat4openapi.api.errors import ApiError
+from chat4openapi.api.tool_sessions import (
+    TOOL_SESSION_COOKIE,
+    _creation_agent_id,
+    get_tool_secret_cipher,
+    get_tool_session_mutation_owner,
+)
+from chat4openapi.config import Settings, get_settings
+from chat4openapi.db.session import get_db_session
+from chat4openapi.security.agent_keys import AgentKeyContext, require_agent_api_key
+from chat4openapi.security.encryption import SecretCipher, SecretDecryptionError
+from chat4openapi.tool_sessions.oauth import (
+    OAuthFlowError,
+    OAuthPollingTooSoon,
+    OAuthStatus,
+    ToolOAuthService,
+)
+from chat4openapi.tools.network_policy import UnsafeNetworkTarget, validate_network_target
+
+router = APIRouter(tags=["tool-oauth"])
+
+
+class OAuthConfigRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    client_id: str = Field(min_length=1, max_length=512)
+    client_secret: str | None = Field(default=None, max_length=2048)
+    authorization_url: str | None = Field(default=None, max_length=2048)
+    token_url: str = Field(min_length=1, max_length=2048)
+    device_authorization_url: str | None = Field(default=None, max_length=2048)
+    redirect_uri: str | None = Field(default=None, max_length=2048)
+    scopes: list[str] = Field(default_factory=list, max_length=100)
+
+
+class OAuthConfigSummary(BaseModel):
+    api_source_id: int
+    enabled: bool
+    client_id: str
+    has_client_secret: bool
+    authorization_url: str | None
+    token_url: str
+    device_authorization_url: str | None
+    redirect_uri: str | None
+    scopes: list[str]
+
+
+class OAuthStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    api_source_id: int = Field(gt=0)
+    agent_id: int | None = Field(default=None, gt=0)
+
+
+class OAuthRefreshRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool_session_id: str = Field(min_length=1, max_length=512)
+    api_source_id: int = Field(gt=0)
+
+
+class DeviceFlowResponse(BaseModel):
+    tool_session_id: str
+    status: str
+    api_source_id: int
+    expires_at: datetime
+    interval: int | None = None
+    user_code: str | None = None
+    verification_uri: str | None = None
+    verification_uri_complete: str | None = None
+
+
+class PKCEStartResponse(BaseModel):
+    authorization_url: str
+    expires_at: datetime
+
+
+class OAuthReadyResponse(BaseModel):
+    status: str
+    api_source_id: int
+    expires_at: datetime
+
+
+def get_oauth_transport() -> httpx.AsyncBaseTransport | None:
+    return None
+
+
+def get_oauth_network_validator() -> Callable[[httpx.URL, bool], Awaitable[None]]:
+    return validate_network_target
+
+
+def get_tool_oauth_service(
+    db: Session = Depends(get_db_session),
+    cipher: SecretCipher = Depends(get_tool_secret_cipher),
+    transport: httpx.AsyncBaseTransport | None = Depends(get_oauth_transport),
+    network_validator: Callable[[httpx.URL, bool], Awaitable[None]] = Depends(
+        get_oauth_network_validator
+    ),
+) -> ToolOAuthService:
+    return ToolOAuthService(
+        db,
+        cipher,
+        transport=transport,
+        network_validator=network_validator,
+    )
+
+
+def _oauth_error(exc: Exception) -> ApiError:
+    if isinstance(exc, OAuthPollingTooSoon):
+        return ApiError(429, exc.code, retry_after=exc.retry_after)
+    if isinstance(exc, OAuthFlowError):
+        status = 404 if exc.code in {"oauth.source_not_found", "oauth.session_not_found"} else 400
+        if exc.code in {"oauth.not_configured", "oauth.device_not_configured", "oauth.pkce_not_configured"}:
+            status = 409
+        return ApiError(status, exc.code)
+    if isinstance(exc, (SecretDecryptionError, UnsafeNetworkTarget)):
+        return ApiError(400, "oauth.upstream_failed")
+    return ApiError(500, "oauth.failed")
+
+
+def _device_response(status: OAuthStatus) -> DeviceFlowResponse:
+    return DeviceFlowResponse(
+        tool_session_id=status.tool_session_id,
+        status=status.status,
+        api_source_id=status.api_source_id,
+        expires_at=status.expires_at,
+        interval=status.interval,
+        user_code=status.user_code,
+        verification_uri=status.verification_uri,
+        verification_uri_complete=status.verification_uri_complete,
+    )
+
+
+@router.put(
+    "/api/admin/sources/{source_id}/oauth", response_model=OAuthConfigSummary
+)
+def configure_oauth(
+    source_id: int,
+    payload: OAuthConfigRequest,
+    context: AdminContext = Depends(require_csrf),
+    cipher: SecretCipher = Depends(get_tool_secret_cipher),
+) -> OAuthConfigSummary:
+    service = ToolOAuthService(context.db, cipher)
+    try:
+        service.configure_source(source_id, payload.model_dump())
+        return OAuthConfigSummary.model_validate(service.config_summary(source_id))
+    except Exception as exc:
+        raise _oauth_error(exc) from exc
+
+
+@router.get(
+    "/api/admin/sources/{source_id}/oauth", response_model=OAuthConfigSummary
+)
+def oauth_config(
+    source_id: int,
+    context: AdminContext = Depends(require_admin),
+    cipher: SecretCipher = Depends(get_tool_secret_cipher),
+) -> OAuthConfigSummary:
+    try:
+        return OAuthConfigSummary.model_validate(
+            ToolOAuthService(context.db, cipher).config_summary(source_id)
+        )
+    except Exception as exc:
+        raise _oauth_error(exc) from exc
+
+
+@router.post(
+    "/api/tool-sessions/oauth/device/start",
+    response_model=DeviceFlowResponse,
+    status_code=201,
+)
+async def start_device(
+    payload: OAuthStartRequest,
+    owner: AgentKeyContext = Depends(require_agent_api_key),
+    service: ToolOAuthService = Depends(get_tool_oauth_service),
+) -> DeviceFlowResponse:
+    if payload.agent_id is not None and payload.agent_id != owner.agent.id:
+        raise ApiError(403, "auth.agent_key_forbidden")
+    try:
+        return _device_response(await service.start_device(owner, payload.api_source_id))
+    except Exception as exc:
+        raise _oauth_error(exc) from exc
+
+
+@router.get(
+    "/api/tool-sessions/{tool_session_id}/status",
+    response_model=DeviceFlowResponse,
+)
+async def poll_device(
+    tool_session_id: str,
+    owner: AgentKeyContext = Depends(require_agent_api_key),
+    service: ToolOAuthService = Depends(get_tool_oauth_service),
+) -> DeviceFlowResponse:
+    try:
+        return _device_response(await service.poll_device(tool_session_id, owner))
+    except Exception as exc:
+        raise _oauth_error(exc) from exc
+
+
+@router.post(
+    "/api/tool-sessions/oauth/pkce/start",
+    response_model=PKCEStartResponse,
+    status_code=201,
+)
+async def start_pkce(
+    payload: OAuthStartRequest,
+    owner: AdminContext = Depends(require_csrf),
+    service: ToolOAuthService = Depends(get_tool_oauth_service),
+) -> PKCEStartResponse:
+    try:
+        agent_id = _creation_agent_id(owner.db, owner, payload.agent_id)
+        started = await service.start_pkce(
+            owner, payload.api_source_id, agent_id=agent_id
+        )
+        return PKCEStartResponse(
+            authorization_url=started.authorization_url,
+            expires_at=started.expires_at,
+        )
+    except Exception as exc:
+        raise _oauth_error(exc) from exc
+
+
+@router.get(
+    "/api/tool-sessions/oauth/pkce/callback", response_model=OAuthReadyResponse
+)
+async def pkce_callback(
+    response: Response,
+    state: str = Query(min_length=1, max_length=512),
+    code: str = Query(min_length=1, max_length=4096),
+    service: ToolOAuthService = Depends(get_tool_oauth_service),
+    settings: Settings = Depends(get_settings),
+) -> OAuthReadyResponse:
+    try:
+        completed = await service.complete_pkce(state, code)
+    except Exception as exc:
+        raise _oauth_error(exc) from exc
+    response.set_cookie(
+        TOOL_SESSION_COOKIE,
+        completed.tool_session_id,
+        httponly=True,
+        secure=settings.secure_cookies,
+        samesite="lax",
+        path="/",
+        max_age=max(
+            1,
+            int(
+                (
+                    completed.expires_at
+                    - datetime.now(UTC).replace(tzinfo=None)
+                ).total_seconds()
+            ),
+        ),
+    )
+    return OAuthReadyResponse(
+        status=completed.status,
+        api_source_id=completed.api_source_id,
+        expires_at=completed.expires_at,
+    )
+
+
+@router.post("/api/tool-sessions/oauth/refresh", response_model=OAuthReadyResponse)
+async def refresh_oauth(
+    payload: OAuthRefreshRequest,
+    owner: AgentKeyContext | AdminContext = Depends(get_tool_session_mutation_owner),
+    service: ToolOAuthService = Depends(get_tool_oauth_service),
+) -> OAuthReadyResponse:
+    try:
+        refreshed = await service.refresh(
+            payload.tool_session_id, owner, payload.api_source_id
+        )
+        return OAuthReadyResponse(
+            status=refreshed.status,
+            api_source_id=refreshed.api_source_id,
+            expires_at=refreshed.expires_at,
+        )
+    except Exception as exc:
+        raise _oauth_error(exc) from exc

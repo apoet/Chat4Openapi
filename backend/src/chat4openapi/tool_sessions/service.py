@@ -1,4 +1,4 @@
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
@@ -97,11 +97,16 @@ class ToolSessionService:
         executor: Executor,
         *,
         now: Callable[[], datetime] = utc_now,
+        oauth_refresher: Callable[
+            [ToolUserSession, ToolSessionCredential], Awaitable[None]
+        ]
+        | None = None,
     ) -> None:
         self._session = session
         self._cipher = cipher
         self._executor = executor
         self._now = now
+        self._oauth_refresher = oauth_refresher
 
     def _config(self) -> GlobalToolAuthConfig:
         config = self._session.get(GlobalToolAuthConfig, 1)
@@ -420,6 +425,18 @@ class ToolSessionService:
             credential.encrypted_credentials = self._cipher.encrypt_json({})
         self._session.commit()
 
+    async def _refresh_oauth(
+        self, row: ToolUserSession, credential: ToolSessionCredential
+    ) -> None:
+        refresher = self._oauth_refresher
+        if refresher is None:
+            from chat4openapi.tool_sessions.oauth import ToolOAuthService
+
+            refresher = ToolOAuthService(
+                self._session, self._cipher, now=self._now
+            ).refresh_bound
+        await refresher(row, credential)
+
     async def resolve(
         self,
         token: str,
@@ -451,16 +468,28 @@ class ToolSessionService:
         )
         if credential is None:
             raise ToolSessionNotFound("Tool Session was not found")
-        if (
+        credentials_expired = (
             (row.auth_expires_at is not None and row.auth_expires_at <= now)
             or (credential.expires_at is not None and credential.expires_at <= now)
-        ):
-            if row.encrypted_login_data is None:
-                self._expire(row)
-                raise ToolSessionExpired("Tool Session credentials have expired")
+        )
+        if credentials_expired:
             force_refresh = True
         if force_refresh:
-            await self._refresh(row, self._config())
+            if row.encrypted_login_data is not None:
+                await self._refresh(row, self._config())
+            else:
+                try:
+                    await self._refresh_oauth(row, credential)
+                except Exception as exc:
+                    from chat4openapi.tool_sessions.oauth import OAuthFlowError
+
+                    if not isinstance(exc, OAuthFlowError):
+                        raise
+                    self._expire(row)
+                    raise ToolSessionExpired(
+                        "Tool Session credentials have expired"
+                    ) from exc
+            self._session.refresh(row)
             self._session.refresh(credential)
         if credential.status != "ready":
             raise ToolSessionReauthorizationRequired("Tool Session requires reauthorization")
@@ -529,12 +558,6 @@ class ToolSessionService:
         except ToolExecutionError as exc:
             if exc.status_code not in {401, 403}:
                 raise
-        row = self._session.get(ToolUserSession, resolved.id)
-        if row is None or row.encrypted_login_data is None:
-            if row is not None:
-                row.status = "failed"
-                self._session.commit()
-            raise ToolSessionReauthorizationRequired("Tool Session requires reauthorization")
         refreshed = await self.resolve(
             token,
             agent_id,

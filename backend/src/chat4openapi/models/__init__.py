@@ -10,7 +10,12 @@ from chat4openapi.models.tool import Tool
 from chat4openapi.models.tool_auth import GlobalToolAuthConfig
 from chat4openapi.models.tool_invocation import ToolInvocation
 from chat4openapi.models.tool_parameter import ToolParameterOverride
-from chat4openapi.models.tool_session import ToolSessionCredential, ToolUserSession
+from chat4openapi.models.tool_session import (
+    ApiSourceOAuthConfig,
+    ToolOAuthAuthorization,
+    ToolSessionCredential,
+    ToolUserSession,
+)
 
 __all__ = [
     "AdminSession",
@@ -19,6 +24,7 @@ __all__ = [
     "AgentApiKey",
     "AgentSkill",
     "ApiSource",
+    "ApiSourceOAuthConfig",
     "AppSetting",
     "ChatMessage",
     "Conversation",
@@ -28,6 +34,7 @@ __all__ = [
     "SkillTool",
     "Tool",
     "ToolInvocation",
+    "ToolOAuthAuthorization",
     "ToolParameterOverride",
     "ToolSessionCredential",
     "ToolUserSession",
