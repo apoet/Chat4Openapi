@@ -1,4 +1,5 @@
 from functools import lru_cache
+import os
 from pathlib import Path
 
 from pydantic import Field
@@ -13,10 +14,12 @@ _LEGACY_ENCRYPTION_KEY_FILE = Path("data") / f".{_LEGACY_PRODUCT_STEM}.key"
 
 
 def migrate_legacy_file(source: Path, destination: Path) -> None:
-    if destination.exists() or not source.exists():
-        return
     destination.parent.mkdir(parents=True, exist_ok=True)
-    source.replace(destination)
+    try:
+        os.link(source, destination)
+    except (FileExistsError, FileNotFoundError):
+        return
+    source.unlink(missing_ok=True)
 
 
 class Settings(BaseSettings):

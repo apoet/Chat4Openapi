@@ -15,7 +15,7 @@ This change extends the existing Agent runtime with:
 - business-identity Tool Sessions supporting OAuth and legacy authentication;
 - bulk enable, disable, and soft-delete operations for Tools;
 - a larger, denser, searchable Tool panel in the Skill editor; and
-- a complete product and package rename from Chat4Openapi to Chat4Openapi.
+- a complete product and package rename to Chat4Openapi.
 
 The existing SQLite data, imported APIs, Tools, Skills, conversations, and history must survive the migration.
 
@@ -25,7 +25,7 @@ The canonical product name is `Chat4Openapi`. The old name is not retained as a 
 
 Rename all product-owned identifiers:
 
-- Python import package: `chat4openapi` to `chat4openapi`;
+- Python import package becomes `chat4openapi`;
 - Python distribution and executable/module examples;
 - frontend package metadata, document title, visible branding, and default Agent name;
 - environment variables to `CHAT4OPENAPI_*`;

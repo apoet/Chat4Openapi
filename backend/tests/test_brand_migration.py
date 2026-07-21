@@ -30,6 +30,27 @@ def test_existing_new_file_is_never_overwritten(tmp_path: Path) -> None:
     assert legacy.read_bytes() == b"old"
 
 
+def test_destination_created_during_migration_is_never_overwritten(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    legacy = tmp_path / "legacy.db"
+    current = tmp_path / "chat4openapi.db"
+    legacy.write_bytes(b"old")
+    original_mkdir = Path.mkdir
+
+    def mkdir_then_create_destination(path: Path, *args, **kwargs) -> None:
+        original_mkdir(path, *args, **kwargs)
+        if path == current.parent:
+            current.write_bytes(b"new")
+
+    monkeypatch.setattr(Path, "mkdir", mkdir_then_create_destination)
+
+    migrate_legacy_file(legacy, current)
+
+    assert current.read_bytes() == b"new"
+    assert legacy.read_bytes() == b"old"
+
+
 def test_legacy_default_database_and_key_are_migrated(
     tmp_path: Path, monkeypatch,
 ) -> None:

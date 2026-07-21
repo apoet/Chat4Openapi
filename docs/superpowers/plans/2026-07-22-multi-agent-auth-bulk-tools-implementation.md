@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Node.js is managed with nvm; run `nvm use 20.19.4` and invoke `npm` from PATH.
-- Python is managed with Conda; use the `chat4openapi` Conda environment during the rename task, then document the new `chat4openapi` environment name.
+- Python is managed with Conda; use the active pre-rename environment during the rename task, then document the new `chat4openapi` environment name.
 - The canonical visible and package name is `Chat4Openapi` / `chat4openapi`; no old-name compatibility aliases remain.
 - Existing SQLite data, imported APIs, Tools, Skills, conversations, and history must survive migration.
 - Browser HIL clarifies business parameters only; Tool calls never require approval and OAuth never runs inside a chat turn.
@@ -43,7 +43,7 @@
 ### Task 1: Rename the Product and Packages
 
 **Files:**
-- Move: `backend/src/chat4openapi/` → `backend/src/chat4openapi/`
+- Move the existing backend Python package to `backend/src/chat4openapi/`.
 - Modify: `backend/pyproject.toml`
 - Modify: `backend/alembic.ini`
 - Modify: `backend/migrations/env.py`
@@ -88,11 +88,16 @@ Expected: import failure for `chat4openapi` or missing migration helper.
 - [ ] **Step 3: Move the package and replace owned identifiers**
 
 ```python
+import os
+
+
 def migrate_legacy_file(source: Path, destination: Path) -> None:
-    if destination.exists() or not source.exists():
-        return
     destination.parent.mkdir(parents=True, exist_ok=True)
-    source.replace(destination)
+    try:
+        os.link(source, destination)
+    except (FileExistsError, FileNotFoundError):
+        return
+    source.unlink(missing_ok=True)
 ```
 
 Use `git mv` for the Python package, then mechanically replace product-owned identifiers. Do not rename generic SQLite tables.
@@ -105,7 +110,10 @@ Run:
 conda run -n chat4openapi pytest backend/tests/test_brand_migration.py backend/tests/test_database.py -q
 npm test -- --run src/__tests__/locale-coverage.spec.ts
 npm run typecheck
-git grep -in -E "chat4openapi|Chat4Openapi|CHAT4OPENAPI" -- .
+$legacyLower = "chat" + "api"
+$legacyTitle = "Chat" + "API"
+$legacyUpper = "CHAT" + "API"
+git grep -in -E "$legacyLower|$legacyTitle|$legacyUpper" -- .
 ```
 
 Expected: tests pass, typecheck passes, and the final scan is empty after updating all historical tracked plans/specifications and the Conda command examples to the new name.
