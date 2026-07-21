@@ -11,6 +11,7 @@ class CanonicalMessage:
     content: Any
     tool_call_id: str | None = None
     name: str | None = None
+    tool_calls: list["CanonicalToolCall"] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +146,18 @@ class LlmClient:
             result["tool_call_id"] = message.tool_call_id
         if message.name:
             result["name"] = message.name
+        if message.tool_calls:
+            result["tool_calls"] = [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": call.name,
+                        "arguments": json.dumps(call.arguments, separators=(",", ":")),
+                    },
+                }
+                for call in message.tool_calls
+            ]
         return result
 
     async def _complete_anthropic(
@@ -162,11 +175,7 @@ class LlmClient:
         )
         payload: dict[str, Any] = {
             "model": model,
-            "messages": [
-                {"role": message.role, "content": message.content}
-                for message in messages
-                if message.role != "system"
-            ],
+            "messages": self._anthropic_messages(messages),
             "max_tokens": max_tokens,
         }
         if system:
@@ -204,3 +213,41 @@ class LlmClient:
             input_tokens=usage.get("input_tokens", 0),
             output_tokens=usage.get("output_tokens", 0),
         )
+
+    @staticmethod
+    def _anthropic_messages(messages: list[CanonicalMessage]) -> list[dict[str, Any]]:
+        converted: list[dict[str, Any]] = []
+        for message in messages:
+            if message.role == "system":
+                continue
+            if message.role == "tool":
+                converted.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": message.tool_call_id,
+                                "content": json.dumps(message.content, ensure_ascii=False),
+                            }
+                        ],
+                    }
+                )
+                continue
+            if message.role == "assistant" and message.tool_calls:
+                blocks: list[dict[str, Any]] = []
+                if message.content:
+                    blocks.append({"type": "text", "text": str(message.content)})
+                blocks.extend(
+                    {
+                        "type": "tool_use",
+                        "id": call.id,
+                        "name": call.name,
+                        "input": call.arguments,
+                    }
+                    for call in message.tool_calls
+                )
+                converted.append({"role": "assistant", "content": blocks})
+                continue
+            converted.append({"role": message.role, "content": message.content})
+        return converted

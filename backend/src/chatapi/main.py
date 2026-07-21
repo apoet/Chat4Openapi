@@ -15,6 +15,7 @@ from chatapi.api.health import router as health_router
 from chatapi.api.setup import router as setup_router
 from chatapi.api.tool_sessions import router as tool_sessions_router
 from chatapi.config import get_settings
+from chatapi.chat.api import router as chat_router
 from chatapi.db.session import SessionLocal
 from chatapi.mcp.runtime import create_mcp_server
 from chatapi.security.encryption import load_secret_cipher
@@ -43,6 +44,7 @@ def create_app(frontend_dist: Path | None = None) -> FastAPI:
     app.include_router(admin_providers_router)
     app.include_router(admin_skills_router)
     app.include_router(tool_sessions_router)
+    app.include_router(chat_router)
     app.mount("/mcp", mcp_http_app, name="mcp")
 
     dist = frontend_dist or Path(__file__).resolve().parents[3] / "frontend" / "dist"
