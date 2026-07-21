@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from chatapi.db.session import create_engine_for_url
-from chatapi.models import LlmProvider, Skill, SkillTool, Tool
+from chatapi.models import Skill, SkillTool, Tool
 
 
 def sqlite_url(path: Path) -> str:
@@ -32,8 +32,10 @@ def test_skills_migration_upgrade_downgrade_upgrade(tmp_path: Path) -> None:
     provider_columns = {column["name"] for column in inspector.get_columns("llm_providers")}
     assert "encrypted_api_key" in provider_columns
     assert "api_key" not in provider_columns
+    skill_columns = {column["name"] for column in inspector.get_columns("skills")}
+    assert {"provider_id", "model"}.isdisjoint(skill_columns)
     skill_foreign_keys = inspector.get_foreign_keys("skills")
-    assert any(key["referred_table"] == "llm_providers" for key in skill_foreign_keys)
+    assert all(key["referred_table"] != "llm_providers" for key in skill_foreign_keys)
     message_foreign_keys = inspector.get_foreign_keys("chat_messages")
     assert any(
         key["referred_table"] == "conversations"
@@ -57,16 +59,7 @@ def test_skill_tool_and_position_are_unique_within_skill(
 ) -> None:
     _, engine = migrated_engine(tmp_path)
     with Session(engine) as session:
-        provider = LlmProvider(
-            name="Primary",
-            provider_type="openai",
-            base_url="https://llm.test/v1",
-            encrypted_api_key=b"encrypted",
-            default_model="test-model",
-        )
-        session.add(provider)
-        session.flush()
-        skill = Skill(name="Pet helper", system_prompt="Help", provider_id=provider.id)
+        skill = Skill(name="Pet helper", system_prompt="Help")
         source_id = _create_source(session)
         first = _create_tool(session, source_id, "first", "GET /first")
         second = _create_tool(session, source_id, "second", "GET /second")

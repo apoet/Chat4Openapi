@@ -2,12 +2,17 @@
 
 Chat with your APIs through managed MCP Tools and Skills.
 
-The current implementation contains the platform foundation, Tool Runtime, and the core Skills/chat
+The current implementation contains the platform foundation, Tool Runtime, and built-in Agent
 runtime: SQLite migrations, first-run single-administrator setup, secure administrator sessions,
 English/Chinese localization, Swagger 2.0 and OpenAPI 3.x import, managed Tool lifecycle, encrypted
 original-API Tool Sessions, safe request-scoped execution, a dynamic FastMCP endpoint, encrypted
-OpenAI/Anthropic-compatible provider configuration, startable Skills, compatible chat APIs, and Vue
+OpenAI/Anthropic-compatible provider configuration, reusable Skills, compatible chat APIs, and Vue
 administration/chat surfaces.
+
+Every conversation runs through the one built-in Agent. The Agent owns the LLM provider, optional
+model override, general prompt, operating mode, and iteration limit. Skills are provider-independent
+instruction and Tool allow-list packages that the Agent can load dynamically; they do not own a
+provider or model.
 
 ## Requirements
 
@@ -40,7 +45,7 @@ Run backend verification:
 
 ```powershell
 conda run -n chatapi python -m pytest backend/tests -q
-conda run -n chatapi ruff check backend
+conda run -n chatapi ruff check backend/src backend/tests
 ```
 
 ## Frontend development
@@ -48,18 +53,19 @@ conda run -n chatapi ruff check backend
 ```powershell
 nvm use 20.19.4
 Set-Location frontend
-npm install
-npm run dev
+& 'D:\nvm\nodejs\npm.cmd' install
+& 'D:\nvm\nodejs\npm.cmd' run dev
 ```
 
-Vite proxies `/api` and `/health` to `http://127.0.0.1:8000`.
+Vite starts at `http://127.0.0.1:5173` and proxies `/api`, `/v1`, and `/health` to
+`http://127.0.0.1:8000`.
 
 Run frontend verification:
 
 ```powershell
-npm test
-npm run typecheck
-npm run build
+& 'D:\nvm\nodejs\npm.cmd' test
+& 'D:\nvm\nodejs\npm.cmd' run typecheck
+& 'D:\nvm\nodejs\npm.cmd' run build
 ```
 
 After `npm run build`, FastAPI serves `frontend/dist` and provides SPA fallback for browser routes.
@@ -79,14 +85,56 @@ Unknown `/api/*`, `/v1/*`, and `/anthropic/*` paths always remain JSON 404 respo
 ## Skills and chat
 
 1. Add and test an OpenAI-compatible or Anthropic-compatible provider under **Providers**.
-2. Under **Skills**, select a provider and click enabled Tools in the quick-reference tray. Login,
-   disabled, deleted, or source-disabled Tools are never offered for Skill binding.
-3. Start the Skill and open **Chat**. The running Skill selector is below the message input.
-4. If original-API login is enabled, sign in once on the chat gate. Its encrypted Tool Session is
+2. Open **Agent**, select the provider, and configure the optional model override, system prompt,
+   mode, and iteration limit. **Restore defaults** resets Agent runtime settings while preserving the
+   selected valid provider; it never changes Skills or Tools.
+3. Under **Skills**, bind enabled Tools from the quick-reference tray. Login, disabled, deleted, or
+   source-disabled Tools are never offered. A Skill has no provider or model of its own.
+4. Start one or more Skills and open **Chat**. The candidate Skill multi-select is below the message
+   input. An empty selection means **Agent auto-select** across all running Skills; selecting several
+   Skills restricts the catalog while still allowing the Agent to load one or more of them. The
+   candidate set is fixed after the first turn of a conversation.
+5. If original-API login is enabled, sign in once on the chat gate. Its encrypted Tool Session is
    reused for every Tool call in that browser session.
 
+The Agent runs Tools automatically; there is no Tool approval prompt. In `human_in_loop` mode,
+browser Chat may pause only to clarify missing or ambiguous business input, then resumes the same
+server conversation when the user answers. `react` mode never pauses. OpenAI- and
+Anthropic-compatible endpoints always use non-interactive ReAct behavior regardless of the browser
+mode.
+
+Assistant output is Markdown. Browser Chat safely renders common Markdown and GFM tables, disables
+raw HTML, sanitizes generated HTML and unsafe URLs, and stores the original Markdown plus candidate
+and loaded Skill IDs in browser-local conversation history. Reloading the page restores that history
+and its rendered tables.
+
 OpenAI clients can use `/v1/models` and `/v1/chat/completions`; Anthropic clients can use
-`/v1/messages`. Both protocols accept `skill-<id>` as the model and support streaming responses.
+`/v1/messages`. `agent-default` allows automatic routing across all running Skills. Existing
+`skill-<id>` aliases remain supported and restrict the Agent to that one candidate Skill. Requests
+using `agent-default` may instead supply the optional `chatapi_skill_ids` extension to restrict the
+candidate catalog. These identifiers select Agent routing scope, not a Skill-owned provider, and
+compatibility responses never contain interactive `needs_input` state.
+
+## Tool parameter guidance
+
+The **Tools** page allows administrators to override an imported parameter's description and example
+value. Parameter name, JSON type, required status, request location, and execution mapping remain
+read-only and continue to come from Swagger/OpenAPI. The effective schema merges the overrides at
+display and Agent runtime time. Refreshing an API Source preserves overrides for stable argument
+names and removes overrides only when their imported argument disappears.
+
+## Database migration
+
+Run migrations before starting a new checkout or after updating an existing installation:
+
+```powershell
+conda run -n chatapi alembic -c backend/alembic.ini upgrade head
+```
+
+The Agent runtime migration creates the singleton Agent configuration, moves provider/model
+ownership away from Skills, and chooses the lowest-ID enabled, non-deleted provider for an existing
+installation. Existing Skill prompts and Tool bindings are retained; legacy Skill provider/model
+values are intentionally discarded.
 
 ## First run
 
