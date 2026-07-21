@@ -233,6 +233,53 @@ describe('Tool administration views', () => {
     expect(screen.getByText('Parameter guidance saved.')).toBeTruthy()
   })
 
+  it.each([
+    ['numeric-looking string', '123', '"123"'],
+    ['boolean-looking string', 'true', '"true"'],
+    ['null-looking string', 'null', '"null"'],
+    ['object-looking string', '{"key":"value"}', '"{\\"key\\":\\"value\\"}"'],
+    ['number', 123, '123'],
+    ['boolean', true, 'true'],
+    ['object', { key: 'value' }, '{"key":"value"}'],
+    ['array', [1, true], '[1,true]'],
+  ])('preserves an unchanged Swagger %s example', async (_label, example, expectedDraft) => {
+    const tool = {
+      id: 8,
+      api_source_id: 1,
+      operation_key: 'GET /genes',
+      name: 'getGene',
+      description: 'Get a gene',
+      input_schema: {
+        type: 'object',
+        properties: {
+          exampleValue: { type: 'string', example },
+        },
+      },
+      execution_schema: {},
+      tags: ['Genes'],
+      enabled: true,
+    }
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/sources')) return Promise.resolve(jsonResponse([]))
+      if (init?.method === 'PUT') return Promise.resolve(jsonResponse(tool))
+      return Promise.resolve(jsonResponse([tool]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    await fireEvent.click(await screen.findByRole('button', { name: 'Edit parameter' }))
+    const exampleInput = screen.getByLabelText('Example (JSON or text)') as HTMLTextAreaElement
+    expect(exampleInput.value).toBe(expectedDraft)
+    await fireEvent.click(screen.getByRole('button', { name: 'Save parameter' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    const overrideCall = fetchMock.mock.calls.find(([input]) => String(input).includes('/parameters/'))
+    expect(JSON.parse((overrideCall?.[1] as RequestInit).body as string)).toEqual({
+      description: null,
+      example,
+    })
+  })
+
   it('clears overrides to restore Swagger guidance', async () => {
     const tool = {
       id: 8,
