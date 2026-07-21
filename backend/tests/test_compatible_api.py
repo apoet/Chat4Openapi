@@ -15,7 +15,6 @@ from chat4openapi.llm.client import CanonicalResponse, CanonicalToolCall, LlmPro
 from chat4openapi.models import (
     Agent,
     AgentApiKey,
-    AgentConfig,
     AgentSkill,
     ChatMessage,
     Conversation,
@@ -61,7 +60,7 @@ def seed(factory, cipher: SecretCipher) -> Skill:
         session.add(provider)
         session.flush()
         session.add(
-            AgentConfig(
+            Agent(
                 id=1,
                 name="Chat4Openapi Agent",
                 enabled=True,
@@ -141,9 +140,7 @@ async def test_openai_models_completion_and_sse_are_compatible(
     assert streamed.headers["content-type"].startswith("text/event-stream")
     assert streamed.text.rstrip().endswith("data: [DONE]")
     chunks = [
-        json.loads(line[6:])
-        for line in streamed.text.splitlines()
-        if line.startswith("data: {")
+        json.loads(line[6:]) for line in streamed.text.splitlines() if line.startswith("data: {")
     ]
     assert chunks[0]["choices"][0]["delta"]["content"] == "Hello from the Agent."
     with db_session_factory() as session:
@@ -187,7 +184,7 @@ async def test_anthropic_messages_and_event_stream_are_compatible(
     assert response.json()["type"] == "message"
     assert response.json()["content"] == [{"type": "text", "text": "Hello from the Agent."}]
     assert "event: content_block_delta" in streamed.text
-    assert streamed.text.rstrip().endswith("event: message_stop\ndata: {\"type\":\"message_stop\"}")
+    assert streamed.text.rstrip().endswith('event: message_stop\ndata: {"type":"message_stop"}')
 
 
 @pytest.mark.asyncio
@@ -227,9 +224,12 @@ async def test_openai_new_conversation_persists_and_uses_full_transcript(
     ]
     with db_session_factory() as session:
         conversation_id = response.json()["chat4openapi_conversation_id"]
-        stored = session.query(ChatMessage).filter_by(
-            conversation_id=conversation_id
-        ).order_by(ChatMessage.sequence).all()
+        stored = (
+            session.query(ChatMessage)
+            .filter_by(conversation_id=conversation_id)
+            .order_by(ChatMessage.sequence)
+            .all()
+        )
         assert [(item.role, item.content["text"]) for item in stored] == [
             ("system", "Client policy"),
             ("user", "First question"),
@@ -305,9 +305,12 @@ async def test_compatibility_continuation_appends_only_new_transcript_suffix(
 
     assert second.status_code == 200
     with db_session_factory() as session:
-        stored = session.query(ChatMessage).filter_by(
-            conversation_id=conversation_id
-        ).order_by(ChatMessage.sequence).all()
+        stored = (
+            session.query(ChatMessage)
+            .filter_by(conversation_id=conversation_id)
+            .order_by(ChatMessage.sequence)
+            .all()
+        )
         assert [(item.role, item.content["text"]) for item in stored] == [
             ("user", "First question"),
             ("assistant", "Hello from the Agent."),
@@ -1191,6 +1194,4 @@ async def test_other_agent_alias_always_uses_fixed_forbidden_error(
     )
 
     assert response.status_code == 403
-    assert response.json() == {
-        "error": {"code": "auth.agent_key_forbidden", "params": {}}
-    }
+    assert response.json() == {"error": {"code": "auth.agent_key_forbidden", "params": {}}}

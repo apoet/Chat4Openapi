@@ -4,10 +4,15 @@ import pytest
 from cryptography.fernet import Fernet
 from sqlalchemy import select
 
-from chat4openapi.chat.agent import AgentError, AgentRuntime, AgentTurnRequest
+from chat4openapi.chat.agent import (
+    AgentError,
+    AgentRuntime,
+    AgentTurnRequest as RuntimeTurnRequest,
+)
 from chat4openapi.llm.client import CanonicalResponse, CanonicalToolCall, LlmProviderError
 from chat4openapi.models import (
-    AgentConfig,
+    Agent,
+    AgentSkill,
     ApiSource,
     ChatMessage,
     Conversation,
@@ -24,6 +29,8 @@ from chat4openapi.skills.defaults import (
 )
 from chat4openapi.tools.executor import ToolExecutionResult
 from chat4openapi.tools.errors import ToolExecutionError
+
+TEST_AGENT_ID = 1
 
 
 class SequencedLlm:
@@ -59,6 +66,23 @@ class FailingExecutor:
         raise ToolExecutionError("upstream_error", "Upstream API returned HTTP 403")
 
 
+def turn(
+    user_content: str,
+    candidate_skill_ids: list[int],
+    interactive: bool,
+    *,
+    agent_id: int = TEST_AGENT_ID,
+    **kwargs,
+) -> RuntimeTurnRequest:
+    return RuntimeTurnRequest(
+        agent_id=agent_id,
+        user_content=user_content,
+        candidate_skill_ids=candidate_skill_ids,
+        interactive=interactive,
+        **kwargs,
+    )
+
+
 def seed_runtime(session, cipher: SecretCipher) -> tuple[Skill, Tool]:
     provider = LlmProvider(
         name="Primary",
@@ -71,7 +95,7 @@ def seed_runtime(session, cipher: SecretCipher) -> tuple[Skill, Tool]:
     session.add_all([provider, source])
     session.flush()
     session.add(
-        AgentConfig(
+        Agent(
             id=1,
             name="Chat4Openapi Agent",
             enabled=True,
@@ -102,7 +126,12 @@ def seed_runtime(session, cipher: SecretCipher) -> tuple[Skill, Tool]:
     )
     session.add_all([tool, skill])
     session.flush()
-    session.add(SkillTool(skill_id=skill.id, tool_id=tool.id, position=0))
+    session.add_all(
+        [
+            AgentSkill(agent_id=1, skill_id=skill.id, position=0),
+            SkillTool(skill_id=skill.id, tool_id=tool.id, position=0),
+        ]
+    )
     session.commit()
     return skill, tool
 
@@ -134,7 +163,22 @@ def add_compound_skill(session) -> tuple[Skill, Tool]:
     )
     session.add_all([tool, skill])
     session.flush()
-    session.add(SkillTool(skill_id=skill.id, tool_id=tool.id, position=0))
+    position = session.scalar(
+        select(AgentSkill.position)
+        .where(AgentSkill.agent_id == 1)
+        .order_by(AgentSkill.position.desc())
+        .limit(1)
+    )
+    session.add_all(
+        [
+            AgentSkill(
+                agent_id=1,
+                skill_id=skill.id,
+                position=(position if position is not None else -1) + 1,
+            ),
+            SkillTool(skill_id=skill.id, tool_id=tool.id, position=0),
+        ]
+    )
     session.commit()
     return skill, tool
 
@@ -148,9 +192,99 @@ def add_skill_sharing_tool(session, tool: Tool) -> Skill:
     )
     session.add(skill)
     session.flush()
-    session.add(SkillTool(skill_id=skill.id, tool_id=tool.id, position=0))
+    position = session.scalar(
+        select(AgentSkill.position)
+        .where(AgentSkill.agent_id == 1)
+        .order_by(AgentSkill.position.desc())
+        .limit(1)
+    )
+    session.add_all(
+        [
+            AgentSkill(
+                agent_id=1,
+                skill_id=skill.id,
+                position=(position if position is not None else -1) + 1,
+            ),
+            SkillTool(skill_id=skill.id, tool_id=tool.id, position=0),
+        ]
+    )
     session.commit()
     return skill
+
+
+@pytest.mark.asyncio
+async def test_agent_catalog_is_ordered_and_cannot_load_another_agents_skill(
+    db_session_factory,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as session:
+        first, _first_tool = seed_runtime(session, cipher)
+        second, _second_tool = add_compound_skill(session)
+        provider = session.scalar(select(LlmProvider))
+        foreign = Skill(
+            name="Foreign Skill",
+            description="Only another Agent may load this.",
+            system_prompt="Foreign prompt.",
+            running=True,
+        )
+        stopped = Skill(
+            name="Stopped Skill",
+            system_prompt="Stopped prompt.",
+            running=False,
+        )
+        agent = Agent(
+            id=2,
+            name="Other Agent",
+            enabled=True,
+            system_prompt="Other Agent prompt.",
+            provider_id=provider.id,
+            mode="react",
+            max_iterations=8,
+        )
+        session.add_all([foreign, stopped, agent])
+        session.flush()
+        session.query(AgentSkill).filter_by(agent_id=1, skill_id=first.id).delete()
+        session.query(AgentSkill).filter_by(agent_id=1, skill_id=second.id).delete()
+        session.add_all(
+            [
+                AgentSkill(agent_id=1, skill_id=second.id, position=0),
+                AgentSkill(agent_id=1, skill_id=first.id, position=1),
+                AgentSkill(agent_id=1, skill_id=stopped.id, position=2),
+                AgentSkill(agent_id=2, skill_id=foreign.id, position=0),
+            ]
+        )
+        session.commit()
+        llm = SequencedLlm(
+            [
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[
+                        CanonicalToolCall(
+                            "foreign-load",
+                            "load_skills",
+                            {"skill_ids": [foreign.id]},
+                        )
+                    ],
+                ),
+                CanonicalResponse(content="Foreign Skill was rejected."),
+            ]
+        )
+        executor = RecordingExecutor()
+
+        result = await AgentRuntime(session, cipher, llm, executor).run(
+            turn("use foreign skill", [], False, agent_id=1)
+        )
+
+        assert result.loaded_skill_ids == []
+        assert executor.calls == []
+        catalog = json.loads(llm.calls[0]["messages"][1].content)
+        assert [item["id"] for item in catalog["skills"]] == [second.id, first.id]
+        observation = llm.calls[1]["messages"][-1].content
+        assert observation == {
+            "error": "invalid_skill_ids",
+            "requested_skill_ids": [foreign.id],
+            "candidate_skill_ids": [second.id, first.id],
+        }
 
 
 @pytest.mark.asyncio
@@ -197,7 +331,7 @@ async def test_routes_loads_skill_and_executes_only_bound_tools(db_session_facto
         executor = RecordingExecutor()
 
         result = await AgentRuntime(session, cipher, llm, executor).run(
-            AgentTurnRequest(
+            turn(
                 user_content="查询 ABCA4 位点",
                 candidate_skill_ids=[skill.id],
                 interactive=False,
@@ -227,13 +361,9 @@ async def test_routes_loads_skill_and_executes_only_bound_tools(db_session_facto
         )
         assert [tool.name for tool in llm.calls[1]["tools"]] == ["get_gene"]
         loaded_system_prompts = [
-            message.content
-            for message in llm.calls[1]["messages"]
-            if message.role == "system"
+            message.content for message in llm.calls[1]["messages"] if message.role == "system"
         ]
-        assert any(
-            VARCARDS2_GENE_TABLE_RULE in prompt for prompt in loaded_system_prompts
-        )
+        assert any(VARCARDS2_GENE_TABLE_RULE in prompt for prompt in loaded_system_prompts)
         assert executor.calls[0][0:2] == ("get_gene", {"symbol": "ABCA4"})
     assert llm.calls[0]["api_key"] == "provider-secret"
 
@@ -279,7 +409,7 @@ async def test_human_in_loop_pauses_and_resumes_without_tool_approval(
         runtime = AgentRuntime(session, cipher, llm, executor)
 
         paused = await runtime.run(
-            AgentTurnRequest(
+            turn(
                 user_content="查询 ABCA4 位点",
                 candidate_skill_ids=[skill.id],
                 interactive=True,
@@ -298,7 +428,7 @@ async def test_human_in_loop_pauses_and_resumes_without_tool_approval(
         assert executor.calls == []
 
         resumed = await runtime.run(
-            AgentTurnRequest(
+            turn(
                 conversation_id=paused.conversation_id,
                 user_content="GRCh38",
                 candidate_skill_ids=[],
@@ -370,7 +500,7 @@ async def test_mixed_clarification_and_business_call_persists_only_clarification
         executor = RecordingExecutor()
         runtime = AgentRuntime(session, cipher, llm, executor)
 
-        paused = await runtime.run(AgentTurnRequest("lookup", [skill.id], True))
+        paused = await runtime.run(turn("lookup", [skill.id], True))
 
         assert paused.status == "needs_input"
         assert executor.calls == []
@@ -392,7 +522,7 @@ async def test_mixed_clarification_and_business_call_persists_only_clarification
         ]
 
         resumed = await runtime.run(
-            AgentTurnRequest("GRCh38", [], True, conversation_id=paused.conversation_id)
+            turn("GRCh38", [], True, conversation_id=paused.conversation_id)
         )
 
         assert resumed.status == "completed"
@@ -453,7 +583,7 @@ async def test_multiple_clarifications_persist_and_resume_only_the_first(
         )
         runtime = AgentRuntime(session, cipher, llm, RecordingExecutor())
 
-        paused = await runtime.run(AgentTurnRequest("lookup", [skill.id], True))
+        paused = await runtime.run(turn("lookup", [skill.id], True))
 
         assert paused.status == "needs_input"
         assert paused.pending is not None
@@ -463,19 +593,17 @@ async def test_multiple_clarifications_persist_and_resume_only_the_first(
             .where(ChatMessage.conversation_id == paused.conversation_id)
             .order_by(ChatMessage.sequence)
         ).all()
-        assert [
-            call["id"] for call in stored_before_resume[-1].content["tool_calls"]
-        ] == ["clarify_reference"]
+        assert [call["id"] for call in stored_before_resume[-1].content["tool_calls"]] == [
+            "clarify_reference"
+        ]
 
         resumed = await runtime.run(
-            AgentTurnRequest("GRCh38", [], True, conversation_id=paused.conversation_id)
+            turn("GRCh38", [], True, conversation_id=paused.conversation_id)
         )
 
         assert resumed.status == "completed"
         resume_history = llm.calls[2]["messages"]
-        assert [call.id for call in resume_history[-2].tool_calls] == [
-            "clarify_reference"
-        ]
+        assert [call.id for call in resume_history[-2].tool_calls] == ["clarify_reference"]
         assert resume_history[-1].tool_call_id == "clarify_reference"
 
 
@@ -509,7 +637,7 @@ async def test_shared_tool_is_exposed_once_across_loaded_skills(
         )
 
         result = await AgentRuntime(session, cipher, llm, RecordingExecutor()).run(
-            AgentTurnRequest(
+            turn(
                 "lookup",
                 [gene_skill.id, shared_skill.id],
                 False,
@@ -536,9 +664,7 @@ async def test_distinct_tools_with_the_same_name_are_rejected(db_session_factory
                         CanonicalToolCall(
                             id="load_conflict",
                             name="load_skills",
-                            arguments={
-                                "skill_ids": [gene_skill.id, collision_skill.id]
-                            },
+                            arguments={"skill_ids": [gene_skill.id, collision_skill.id]},
                         )
                     ],
                 )
@@ -547,9 +673,7 @@ async def test_distinct_tools_with_the_same_name_are_rejected(db_session_factory
 
         with pytest.raises(AgentError) as error:
             await AgentRuntime(session, cipher, llm, RecordingExecutor()).run(
-                AgentTurnRequest(
-                    "lookup", [gene_skill.id, collision_skill.id], False
-                )
+                turn("lookup", [gene_skill.id, collision_skill.id], False)
             )
 
         assert error.value.code == "agent.tool_name_conflict"
@@ -591,7 +715,7 @@ async def test_invalid_business_tool_arguments_are_observed_without_execution(
         executor = StrictRecordingExecutor()
 
         result = await AgentRuntime(session, cipher, llm, executor).run(
-            AgentTurnRequest("lookup", [skill.id], False)
+            turn("lookup", [skill.id], False)
         )
 
         assert result.status == "completed"
@@ -616,14 +740,14 @@ async def test_business_tool_enum_is_validated_before_execution(db_session_facto
         llm = SequencedLlm(
             [
                 CanonicalResponse(
-                    tool_calls=[CanonicalToolCall("load", "load_skills", {"skill_ids": [skill.id]})],
+                    tool_calls=[
+                        CanonicalToolCall("load", "load_skills", {"skill_ids": [skill.id]})
+                    ],
                     content="",
                 ),
                 CanonicalResponse(
                     tool_calls=[
-                        CanonicalToolCall(
-                            "bad", "get_gene", {"symbol": "ABCA4", "build": "hg19"}
-                        )
+                        CanonicalToolCall("bad", "get_gene", {"symbol": "ABCA4", "build": "hg19"})
                     ],
                     content="",
                 ),
@@ -632,14 +756,10 @@ async def test_business_tool_enum_is_validated_before_execution(db_session_facto
         )
         executor = RecordingExecutor()
 
-        await AgentRuntime(session, cipher, llm, executor).run(
-            AgentTurnRequest("lookup", [skill.id], False)
-        )
+        await AgentRuntime(session, cipher, llm, executor).run(turn("lookup", [skill.id], False))
 
         assert executor.calls == []
-        assert llm.calls[2]["messages"][-1].content["validation_errors"][0][
-            "validator"
-        ] == "enum"
+        assert llm.calls[2]["messages"][-1].content["validation_errors"][0]["validator"] == "enum"
 
 
 @pytest.mark.asyncio
@@ -651,7 +771,9 @@ async def test_malformed_ask_user_is_observed_instead_of_pausing(db_session_fact
             [
                 CanonicalResponse(
                     content="",
-                    tool_calls=[CanonicalToolCall("load", "load_skills", {"skill_ids": [skill.id]})],
+                    tool_calls=[
+                        CanonicalToolCall("load", "load_skills", {"skill_ids": [skill.id]})
+                    ],
                 ),
                 CanonicalResponse(
                     content="",
@@ -668,7 +790,7 @@ async def test_malformed_ask_user_is_observed_instead_of_pausing(db_session_fact
         )
 
         result = await AgentRuntime(session, cipher, llm, RecordingExecutor()).run(
-            AgentTurnRequest("lookup", [skill.id], True)
+            turn("lookup", [skill.id], True)
         )
 
         assert result.status == "completed"
@@ -687,19 +809,13 @@ async def test_existing_conversation_filters_unavailable_candidates_and_continue
         second, _second_tool = add_compound_skill(session)
         first_llm = SequencedLlm([CanonicalResponse(content="First answer.")])
         runtime = AgentRuntime(session, cipher, first_llm, RecordingExecutor())
-        created = await runtime.run(
-            AgentTurnRequest("start", [first.id, second.id], False)
-        )
+        created = await runtime.run(turn("start", [first.id, second.id], False))
         first.running = False
         session.commit()
         next_llm = SequencedLlm([CanonicalResponse(content="Continued.")])
 
-        continued = await AgentRuntime(
-            session, cipher, next_llm, RecordingExecutor()
-        ).run(
-            AgentTurnRequest(
-                "continue", [], False, conversation_id=created.conversation_id
-            )
+        continued = await AgentRuntime(session, cipher, next_llm, RecordingExecutor()).run(
+            turn("continue", [], False, conversation_id=created.conversation_id)
         )
 
         assert continued.content == "Continued."
@@ -723,16 +839,14 @@ async def test_existing_conversation_drops_loaded_skill_when_it_becomes_unavaila
                     CanonicalResponse(
                         content="",
                         tool_calls=[
-                            CanonicalToolCall(
-                                "load", "load_skills", {"skill_ids": [first.id]}
-                            )
+                            CanonicalToolCall("load", "load_skills", {"skill_ids": [first.id]})
                         ],
                     ),
                     CanonicalResponse(content="First."),
                 ]
             ),
             RecordingExecutor(),
-        ).run(AgentTurnRequest("start", [first.id, second.id], False))
+        ).run(turn("start", [first.id, second.id], False))
         first.running = False
         session.commit()
         next_llm = SequencedLlm(
@@ -740,21 +854,15 @@ async def test_existing_conversation_drops_loaded_skill_when_it_becomes_unavaila
                 CanonicalResponse(
                     content="",
                     tool_calls=[
-                        CanonicalToolCall(
-                            "load-second", "load_skills", {"skill_ids": [second.id]}
-                        )
+                        CanonicalToolCall("load-second", "load_skills", {"skill_ids": [second.id]})
                     ],
                 ),
                 CanonicalResponse(content="Continued."),
             ]
         )
 
-        result = await AgentRuntime(
-            session, cipher, next_llm, RecordingExecutor()
-        ).run(
-            AgentTurnRequest(
-                "continue", [], False, conversation_id=created.conversation_id
-            )
+        result = await AgentRuntime(session, cipher, next_llm, RecordingExecutor()).run(
+            turn("continue", [], False, conversation_id=created.conversation_id)
         )
 
         assert result.content == "Continued."
@@ -771,18 +879,17 @@ async def test_existing_conversation_fails_only_when_no_candidates_remain(
     with db_session_factory() as session:
         skill, _tool = seed_runtime(session, cipher)
         runtime = AgentRuntime(
-            session, cipher, SequencedLlm([CanonicalResponse(content="First.")]), RecordingExecutor()
+            session,
+            cipher,
+            SequencedLlm([CanonicalResponse(content="First.")]),
+            RecordingExecutor(),
         )
-        created = await runtime.run(AgentTurnRequest("start", [skill.id], False))
+        created = await runtime.run(turn("start", [skill.id], False))
         skill.running = False
         session.commit()
 
         with pytest.raises(AgentError) as error:
-            await runtime.run(
-                AgentTurnRequest(
-                    "continue", [], False, conversation_id=created.conversation_id
-                )
-            )
+            await runtime.run(turn("continue", [], False, conversation_id=created.conversation_id))
 
         assert error.value.code == "agent.no_eligible_skills"
 
@@ -832,7 +939,7 @@ async def test_loads_multiple_skills_for_a_compound_task(db_session_factory) -> 
         executor = RecordingExecutor()
 
         result = await AgentRuntime(session, cipher, llm, executor).run(
-            AgentTurnRequest(
+            turn(
                 user_content="Combine ABCA4 locus and disease data",
                 candidate_skill_ids=[],
                 interactive=False,
@@ -880,7 +987,7 @@ async def test_invalid_load_is_observed_and_can_be_corrected(db_session_factory)
         )
 
         result = await AgentRuntime(session, cipher, llm, RecordingExecutor()).run(
-            AgentTurnRequest("route", [skill.id], False)
+            turn("route", [skill.id], False)
         )
 
         assert result.status == "completed"
@@ -902,26 +1009,22 @@ async def test_load_skills_schema_rejects_wrong_argument_type(db_session_factory
                 CanonicalResponse(
                     content="",
                     tool_calls=[
-                        CanonicalToolCall(
-                            "bad-load", "load_skills", {"skill_ids": str(skill.id)}
-                        )
+                        CanonicalToolCall("bad-load", "load_skills", {"skill_ids": str(skill.id)})
                     ],
                 ),
                 CanonicalResponse(
                     content="",
                     tool_calls=[
-                        CanonicalToolCall(
-                            "good-load", "load_skills", {"skill_ids": [skill.id]}
-                        )
+                        CanonicalToolCall("good-load", "load_skills", {"skill_ids": [skill.id]})
                     ],
                 ),
                 CanonicalResponse(content="Recovered."),
             ]
         )
 
-        result = await AgentRuntime(
-            session, cipher, llm, RecordingExecutor()
-        ).run(AgentTurnRequest("route", [skill.id], False))
+        result = await AgentRuntime(session, cipher, llm, RecordingExecutor()).run(
+            turn("route", [skill.id], False)
+        )
 
         assert result.content == "Recovered."
         observation = llm.calls[1]["messages"][-1].content
@@ -940,7 +1043,7 @@ async def test_rejects_stopped_explicit_candidate(db_session_factory) -> None:
 
         with pytest.raises(AgentError) as error:
             await AgentRuntime(session, cipher, SequencedLlm([]), RecordingExecutor()).run(
-                AgentTurnRequest("route", [skill.id], False)
+                turn("route", [skill.id], False)
             )
 
         assert error.value.code == "agent.skill_unavailable"
@@ -981,7 +1084,7 @@ async def test_tool_failure_becomes_observation_and_model_can_recover(
         )
 
         result = await AgentRuntime(session, cipher, llm, FailingExecutor()).run(
-            AgentTurnRequest("lookup", [skill.id], False)
+            turn("lookup", [skill.id], False)
         )
 
         assert result.status == "completed"
@@ -1019,7 +1122,7 @@ async def test_iteration_exhaustion_is_a_structured_agent_error(
         )
 
         with pytest.raises(AgentError) as error:
-            await runtime.run(AgentTurnRequest("loop", [skill.id], False))
+            await runtime.run(turn("loop", [skill.id], False))
 
         assert error.value.code == "agent.iteration_limit"
         assert error.value.params == {"max_iterations": 2}
@@ -1035,13 +1138,13 @@ async def test_unavailable_agent_configuration_is_structured(db_session_factory)
     cipher = SecretCipher(Fernet.generate_key())
     with db_session_factory() as session:
         seed_runtime(session, cipher)
-        agent = session.get(AgentConfig, 1)
+        agent = session.get(Agent, 1)
         agent.enabled = False
         session.commit()
 
         with pytest.raises(AgentError) as error:
             await AgentRuntime(session, cipher, SequencedLlm([]), RecordingExecutor()).run(
-                AgentTurnRequest("hello", [], False)
+                turn("hello", [], False)
             )
 
         assert error.value.code == "agent.unavailable"
@@ -1055,6 +1158,7 @@ async def test_existing_conversation_records_provider_configuration_failure(
     with db_session_factory() as session:
         skill, _tool = seed_runtime(session, cipher)
         conversation = Conversation(
+            agent_id=1,
             candidate_skill_ids=[skill.id],
             candidate_scope_source="explicit",
             loaded_skill_ids=[],
@@ -1067,12 +1171,8 @@ async def test_existing_conversation_records_provider_configuration_failure(
         session.commit()
 
         with pytest.raises(AgentError) as error:
-            await AgentRuntime(
-                session, cipher, SequencedLlm([]), RecordingExecutor()
-            ).run(
-                AgentTurnRequest(
-                    "continue", [], False, conversation_id=conversation.id
-                )
+            await AgentRuntime(session, cipher, SequencedLlm([]), RecordingExecutor()).run(
+                turn("continue", [], False, conversation_id=conversation.id)
             )
 
         assert error.value.code == "agent.provider_unavailable"
@@ -1104,7 +1204,7 @@ async def test_loaded_prompt_only_skill_does_not_reenter_routing(db_session_fact
         )
 
         result = await AgentRuntime(session, cipher, llm, RecordingExecutor()).run(
-            AgentTurnRequest("Explain the Skill", [skill.id], False)
+            turn("Explain the Skill", [skill.id], False)
         )
 
         assert result.status == "completed"
@@ -1118,9 +1218,7 @@ async def test_invalid_tool_session_becomes_a_recoverable_observation(
     cipher = SecretCipher(Fernet.generate_key())
     with db_session_factory() as session:
         skill, tool = seed_runtime(session, cipher)
-        session.add(
-            GlobalToolAuthConfig(id=1, enabled=True, login_tool_id=tool.id)
-        )
+        session.add(GlobalToolAuthConfig(id=1, enabled=True, login_tool_id=tool.id))
         session.commit()
         llm = SequencedLlm(
             [
@@ -1149,7 +1247,7 @@ async def test_invalid_tool_session_becomes_a_recoverable_observation(
         )
 
         result = await AgentRuntime(session, cipher, llm, RecordingExecutor()).run(
-            AgentTurnRequest(
+            turn(
                 "lookup",
                 [skill.id],
                 False,
@@ -1171,18 +1269,16 @@ async def test_provider_failure_marks_conversation_failed_with_redacted_summary(
 ) -> None:
     class ProviderFailureLlm:
         async def complete(self, **_kwargs):
-            raise LlmProviderError(
-                502, {"body": "upstream secret token sk-do-not-store"}
-            )
+            raise LlmProviderError(502, {"body": "upstream secret token sk-do-not-store"})
 
     cipher = SecretCipher(Fernet.generate_key())
     with db_session_factory() as session:
         skill, _tool = seed_runtime(session, cipher)
 
         with pytest.raises(AgentError) as error:
-            await AgentRuntime(
-                session, cipher, ProviderFailureLlm(), RecordingExecutor()
-            ).run(AgentTurnRequest("lookup", [skill.id], False))
+            await AgentRuntime(session, cipher, ProviderFailureLlm(), RecordingExecutor()).run(
+                turn("lookup", [skill.id], False)
+            )
 
         assert error.value.code == "agent.provider_failed"
         conversation = session.scalar(select(Conversation))
@@ -1205,9 +1301,9 @@ async def test_unexpected_runtime_failure_is_structured_and_redacted(
         skill, _tool = seed_runtime(session, cipher)
 
         with pytest.raises(AgentError) as error:
-            await AgentRuntime(
-                session, cipher, MalformedLlm(), RecordingExecutor()
-            ).run(AgentTurnRequest("lookup", [skill.id], False))
+            await AgentRuntime(session, cipher, MalformedLlm(), RecordingExecutor()).run(
+                turn("lookup", [skill.id], False)
+            )
 
         assert error.value.code == "agent.runtime_failed"
         conversation = session.scalar(select(Conversation))
@@ -1227,9 +1323,9 @@ async def test_provider_credential_decryption_failure_is_structured_and_redacted
         session.commit()
 
         with pytest.raises(AgentError) as error:
-            await AgentRuntime(
-                session, cipher, SequencedLlm([]), RecordingExecutor()
-            ).run(AgentTurnRequest("lookup", [skill.id], False))
+            await AgentRuntime(session, cipher, SequencedLlm([]), RecordingExecutor()).run(
+                turn("lookup", [skill.id], False)
+            )
 
         assert error.value.code == "agent.runtime_failed"
         assert error.value.params == {"reason": "Agent runtime failed."}
@@ -1247,6 +1343,7 @@ async def test_new_turn_clears_previous_failure_before_llm_and_on_completion(
     with db_session_factory() as session:
         skill, _tool = seed_runtime(session, cipher)
         conversation = Conversation(
+            agent_id=1,
             candidate_skill_ids=[skill.id],
             candidate_scope_source="explicit",
             loaded_skill_ids=[],
@@ -1264,12 +1361,8 @@ async def test_new_turn_clears_previous_failure_before_llm_and_on_completion(
                 assert conversation.latest_failure_summary is None
                 return CanonicalResponse(content="Recovered.")
 
-        result = await AgentRuntime(
-            session, cipher, StateInspectingLlm(), RecordingExecutor()
-        ).run(
-            AgentTurnRequest(
-                "retry", [], False, conversation_id=conversation.id
-            )
+        result = await AgentRuntime(session, cipher, StateInspectingLlm(), RecordingExecutor()).run(
+            turn("retry", [], False, conversation_id=conversation.id)
         )
 
         assert result.content == "Recovered."

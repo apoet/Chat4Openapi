@@ -15,9 +15,7 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    agent_id: Mapped[int] = mapped_column(
-        ForeignKey("agents.id", ondelete="RESTRICT"), default=1, index=True
-    )
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="RESTRICT"), index=True)
     agent: Mapped["Agent"] = relationship()
     skill_id: Mapped[int | None] = mapped_column(
         ForeignKey("skills.id", ondelete="SET NULL"), nullable=True, index=True

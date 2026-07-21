@@ -67,9 +67,7 @@ def _eligible_bound_skill_ids(db: Session, agent_id: int) -> list[int]:
     )
 
 
-def _candidate_skill_ids(
-    body: dict[str, Any], context: AgentKeyContext
-) -> list[int]:
+def _candidate_skill_ids(body: dict[str, Any], context: AgentKeyContext) -> list[int]:
     db = context.db
     model = body.get("model", "")
     extension_present = "chat4openapi_skill_ids" in body
@@ -105,10 +103,7 @@ def _candidate_skill_ids(
     skill = db.get(Skill, skill_id)
     if skill is None or skill_id not in bound_set:
         raise ApiError(404, "chat.skill_not_found")
-    if (
-        body.get("conversation_id") is None
-        and (skill.deleted_at is not None or not skill.running)
-    ):
+    if body.get("conversation_id") is None and (skill.deleted_at is not None or not skill.running):
         raise ApiError(409, "agent.skill_unavailable", skill_ids=[skill_id])
     return [skill_id]
 
@@ -156,9 +151,7 @@ def _latest_user_content(body: dict[str, Any]) -> str:
     return _content_text(user_message.get("content", ""))
 
 
-def _incoming_messages(
-    body: dict[str, Any], *, anthropic: bool
-) -> list[CanonicalMessage]:
+def _incoming_messages(body: dict[str, Any], *, anthropic: bool) -> list[CanonicalMessage]:
     raw_messages = body.get("messages")
     if not isinstance(raw_messages, list):
         raise ApiError(422, "validation.invalid", fields=["body.messages"])
@@ -173,9 +166,7 @@ def _incoming_messages(
             "user",
             "assistant",
         }:
-            raise ApiError(
-                422, "validation.invalid", fields=[f"body.messages.{index}"]
-            )
+            raise ApiError(422, "validation.invalid", fields=[f"body.messages.{index}"])
         messages.append(
             CanonicalMessage(
                 role=str(item["role"]),
@@ -190,18 +181,6 @@ def _incoming_messages(
 def _agent_error(exc: AgentError) -> ApiError:
     status_code = 404 if exc.code == "agent.conversation_not_found" else 409
     return ApiError(status_code, exc.code, **exc.params)
-
-
-def _resolved_candidate_ids(db: Session, candidate_skill_ids: list[int]) -> list[int]:
-    if candidate_skill_ids:
-        return list(dict.fromkeys(candidate_skill_ids))
-    return list(
-        db.scalars(
-            select(Skill.id)
-            .where(Skill.running.is_(True), Skill.deleted_at.is_(None))
-            .order_by(Skill.id)
-        )
-    )
 
 
 def _validate_conversation_scope(
@@ -220,9 +199,7 @@ def _validate_conversation_scope(
     requested = list(dict.fromkeys(candidate_skill_ids))
     if conversation.candidate_scope_source != requested_source:
         raise ApiError(409, "chat.candidate_scope_locked")
-    if requested_source == "explicit" and set(requested) != set(
-        conversation.candidate_skill_ids
-    ):
+    if requested_source == "explicit" and set(requested) != set(conversation.candidate_skill_ids):
         raise ApiError(409, "chat.candidate_scope_locked")
 
 
@@ -248,6 +225,19 @@ def _validate_compatibility_scope(
         candidate_skill_ids,
         scope_supplied=scope_supplied,
     )
+
+
+def _browser_agent_id(db: Session, payload: ChatTurnRequest) -> int:
+    if payload.conversation_id is None:
+        if payload.agent_id is None:
+            raise ApiError(422, "validation.invalid", fields=["body.agent_id"])
+        return payload.agent_id
+    conversation = db.get(Conversation, payload.conversation_id)
+    if conversation is None or conversation.deleted_at is not None:
+        raise ApiError(404, "agent.conversation_not_found")
+    if payload.agent_id is not None and payload.agent_id != conversation.agent_id:
+        raise ApiError(409, "chat.agent_locked")
+    return conversation.agent_id
 
 
 async def _run_agent(
@@ -294,9 +284,7 @@ async def _run(
         conversation_id,
         candidate_skill_ids,
         model,
-        scope_supplied=(
-            model.startswith("skill-") or bool(body.get("chat4openapi_skill_ids"))
-        ),
+        scope_supplied=(model.startswith("skill-") or bool(body.get("chat4openapi_skill_ids"))),
     )
     result = await _run_agent(
         AgentTurnRequest(
@@ -313,8 +301,7 @@ async def _run(
             incoming_messages=_incoming_messages(body, anthropic=anthropic),
             candidate_scope_source=(
                 "explicit"
-                if model.startswith("skill-")
-                or bool(body.get("chat4openapi_skill_ids"))
+                if model.startswith("skill-") or bool(body.get("chat4openapi_skill_ids"))
                 else "automatic"
             ),
             agent_id=key_context.agent.id,
@@ -327,9 +314,7 @@ async def _run(
     if conversation_id is None:
         conversation = db.get(Conversation, result.conversation_id)
         if conversation is not None:
-            conversation.skill_id = (
-                candidate_skill_ids[0] if model.startswith("skill-") else None
-            )
+            conversation.skill_id = candidate_skill_ids[0] if model.startswith("skill-") else None
             db.commit()
     return result
 
@@ -341,24 +326,18 @@ async def browser_turn(
     chat4openapi_tool_session_header: str | None = Header(
         default=None, alias="X-Chat4Openapi-Tool-Session"
     ),
-    legacy_tool_session_header: str | None = Header(
-        default=None, alias="X-Tool-Session-ID"
-    ),
+    legacy_tool_session_header: str | None = Header(default=None, alias="X-Tool-Session-ID"),
     db: Session = Depends(get_db_session),
     cipher: SecretCipher = Depends(get_tool_secret_cipher),
     llm: LlmClient = Depends(get_llm_client),
     executor: ToolExecutor = Depends(get_tool_executor),
 ) -> ChatTurnResponse:
-    _validate_conversation_scope(
-        db,
-        payload.conversation_id,
-        payload.candidate_skill_ids,
-        scope_supplied="candidate_skill_ids" in payload.model_fields_set,
-    )
+    agent_id = _browser_agent_id(db, payload)
     result = await _run_agent(
         AgentTurnRequest(
+            agent_id=agent_id,
             user_content=payload.message,
-            candidate_skill_ids=payload.candidate_skill_ids,
+            candidate_skill_ids=[],
             interactive=True,
             conversation_id=payload.conversation_id,
             tool_session_id=(
@@ -366,9 +345,7 @@ async def browser_turn(
                 or legacy_tool_session_header
                 or request.cookies.get(TOOL_SESSION_COOKIE)
             ),
-            candidate_scope_source=(
-                "explicit" if payload.candidate_skill_ids else "automatic"
-            ),
+            candidate_scope_source="automatic",
         ),
         db,
         cipher,
@@ -420,9 +397,7 @@ def models(
                 "created": int(skill.created_at.timestamp()) if skill.created_at else 0,
                 "owned_by": "chat4openapi",
                 "name": skill.name,
-                "description": (
-                    f"Built-in Agent restricted to candidate Skill {skill.name}."
-                ),
+                "description": (f"Built-in Agent restricted to candidate Skill {skill.name}."),
             }
             for skill in skills
         ],
@@ -437,9 +412,7 @@ async def openai_chat(
     chat4openapi_tool_session_header: str | None = Header(
         default=None, alias="X-Chat4Openapi-Tool-Session"
     ),
-    legacy_tool_session_header: str | None = Header(
-        default=None, alias="X-Tool-Session-ID"
-    ),
+    legacy_tool_session_header: str | None = Header(default=None, alias="X-Tool-Session-ID"),
     db: Session = Depends(get_db_session),
     cipher: SecretCipher = Depends(get_tool_secret_cipher),
     llm: LlmClient = Depends(get_llm_client),
@@ -505,9 +478,7 @@ async def anthropic_messages(
     chat4openapi_tool_session_header: str | None = Header(
         default=None, alias="X-Chat4Openapi-Tool-Session"
     ),
-    legacy_tool_session_header: str | None = Header(
-        default=None, alias="X-Tool-Session-ID"
-    ),
+    legacy_tool_session_header: str | None = Header(default=None, alias="X-Tool-Session-ID"),
     db: Session = Depends(get_db_session),
     cipher: SecretCipher = Depends(get_tool_secret_cipher),
     llm: LlmClient = Depends(get_llm_client),

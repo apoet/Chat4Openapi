@@ -39,6 +39,7 @@ async def test_compatibility_orchestrator_delegates_to_agent_runtime(monkeypatch
     orchestrator = ChatOrchestrator(*dependencies, max_iterations=4)
 
     result = await orchestrator.run(
+        agent_id=3,
         skill_id=7,
         messages=[
             {"role": "system", "content": "Compatibility client context"},
@@ -54,6 +55,7 @@ async def test_compatibility_orchestrator_delegates_to_agent_runtime(monkeypatch
     assert constructor_calls == [(*dependencies, 4)]
     assert runtime.requests == [
         AgentTurnRequest(
+            agent_id=3,
             conversation_id="conversation-1",
             user_content="Find Milo",
             candidate_skill_ids=[7],
@@ -72,9 +74,7 @@ async def test_compatibility_orchestrator_delegates_to_agent_runtime(monkeypatch
 
 @pytest.mark.asyncio
 async def test_compatibility_orchestrator_requires_a_user_message(monkeypatch) -> None:
-    runtime = RecordingRuntime(
-        AgentTurnResult("unused", "completed", "", [], None, 0, 0)
-    )
+    runtime = RecordingRuntime(AgentTurnResult("unused", "completed", "", [], None, 0, 0))
     monkeypatch.setattr(
         orchestrator_module,
         "AgentRuntime",
@@ -84,6 +84,7 @@ async def test_compatibility_orchestrator_requires_a_user_message(monkeypatch) -
 
     with pytest.raises(ValueError, match="user message"):
         await ChatOrchestrator(object(), object(), object(), object()).run(
+            agent_id=1,
             skill_id=1,
             messages=[{"role": "system", "content": "context only"}],
         )

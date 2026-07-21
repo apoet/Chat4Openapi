@@ -40,6 +40,7 @@ class ChatOrchestrator:
     async def run(
         self,
         *,
+        agent_id: int,
         skill_id: int,
         messages: list[dict[str, Any]],
         tool_session_id: str | None = None,
@@ -66,6 +67,7 @@ class ChatOrchestrator:
         ]
         return await self._runtime.run(
             AgentTurnRequest(
+                agent_id=agent_id,
                 conversation_id=conversation_id,
                 user_content=content if isinstance(content, str) else str(content),
                 candidate_skill_ids=[skill_id],

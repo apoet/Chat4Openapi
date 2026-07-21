@@ -2,13 +2,14 @@ import httpx
 import pytest
 from cryptography.fernet import Fernet
 from fastapi import FastAPI
+from sqlalchemy import select
 
 import chat4openapi.chat.api as chat_api_module
 from chat4openapi.api.tool_sessions import get_tool_secret_cipher
 from chat4openapi.chat.agent import AgentTurnRequest, AgentTurnResult
 from chat4openapi.chat.api import get_llm_client
 from chat4openapi.llm.client import CanonicalResponse, CanonicalToolCall
-from chat4openapi.models import AgentConfig, Conversation, LlmProvider, Skill
+from chat4openapi.models import Agent, AgentSkill, Conversation, LlmProvider, Skill
 from chat4openapi.security.encryption import SecretCipher
 
 
@@ -32,7 +33,7 @@ def seed_agent(factory, cipher: SecretCipher) -> tuple[Skill, Skill]:
         session.add(provider)
         session.flush()
         session.add(
-            AgentConfig(
+            Agent(
                 id=1,
                 name="Chat4Openapi Agent",
                 enabled=True,
@@ -55,6 +56,13 @@ def seed_agent(factory, cipher: SecretCipher) -> tuple[Skill, Skill]:
             running=True,
         )
         session.add_all([first, second])
+        session.flush()
+        session.add_all(
+            [
+                AgentSkill(agent_id=1, skill_id=second.id, position=0),
+                AgentSkill(agent_id=1, skill_id=first.id, position=1),
+            ]
+        )
         session.commit()
         return first, second
 
@@ -101,9 +109,9 @@ async def test_browser_turn_pauses_and_resumes_with_structured_contract(
     paused = await client.post(
         "/api/chat/turns",
         json={
+            "agent_id": 1,
             "message": "查询一个基因",
             "conversation_id": None,
-            "candidate_skill_ids": [first.id, second.id],
         },
     )
 
@@ -142,80 +150,86 @@ async def test_browser_turn_pauses_and_resumes_with_structured_contract(
 
 
 @pytest.mark.asyncio
-async def test_browser_turn_rejects_candidate_changes_for_existing_conversation(
+async def test_browser_conversation_rejects_explicit_agent_change(
     client: httpx.AsyncClient, app: FastAPI, db_session_factory
 ) -> None:
     cipher = SecretCipher(Fernet.generate_key())
-    first, second = seed_agent(db_session_factory, cipher)
+    _first, second = seed_agent(db_session_factory, cipher)
+    with db_session_factory() as session:
+        provider = session.scalar(select(LlmProvider))
+        session.add(
+            Agent(
+                id=2,
+                name="Second Agent",
+                enabled=True,
+                system_prompt="Second prompt.",
+                provider_id=provider.id,
+                mode="react",
+                max_iterations=8,
+            )
+        )
+        session.flush()
+        session.add(AgentSkill(agent_id=2, skill_id=second.id, position=0))
+        session.commit()
     app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
     app.dependency_overrides[get_llm_client] = lambda: SequencedLlm(
-        [CanonicalResponse(content="First answer.")]
+        [
+            CanonicalResponse(content="First answer."),
+            CanonicalResponse(content="Changed answer."),
+        ]
     )
     created = await client.post(
         "/api/chat/turns",
-        json={"message": "Hello", "candidate_skill_ids": [first.id]},
+        json={"agent_id": 1, "message": "Hello"},
     )
 
     response = await client.post(
         "/api/chat/turns",
         json={
-            "message": "Switch Skills",
+            "agent_id": 2,
+            "message": "Switch Agent",
             "conversation_id": created.json()["conversation_id"],
-            "candidate_skill_ids": [second.id],
         },
     )
 
     assert response.status_code == 409
     assert response.json() == {
         "error": {
-            "code": "chat.candidate_scope_locked",
+            "code": "chat.agent_locked",
             "params": {},
         }
     }
 
 
 @pytest.mark.asyncio
-async def test_browser_explicit_scope_rejects_explicit_empty_candidate_list(
+async def test_browser_new_conversation_requires_agent_id(
     client: httpx.AsyncClient, app: FastAPI, db_session_factory
 ) -> None:
     cipher = SecretCipher(Fernet.generate_key())
-    first, _second = seed_agent(db_session_factory, cipher)
+    seed_agent(db_session_factory, cipher)
     app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
     app.dependency_overrides[get_llm_client] = lambda: SequencedLlm(
         [CanonicalResponse(content="First.")]
     )
-    created = await client.post(
-        "/api/chat/turns",
-        json={"message": "Hello", "candidate_skill_ids": [first.id]},
-    )
+    response = await client.post("/api/chat/turns", json={"message": "Hello"})
 
-    continued = await client.post(
-        "/api/chat/turns",
-        json={
-            "message": "Continue",
-            "conversation_id": created.json()["conversation_id"],
-            "candidate_skill_ids": [],
-        },
-    )
-
-    assert continued.status_code == 409
-    assert continued.json()["error"]["code"] == "chat.candidate_scope_locked"
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation.invalid"
+    assert "body.agent_id" in response.json()["error"]["params"]["fields"]
 
 
 @pytest.mark.asyncio
-async def test_browser_explicit_scope_can_be_omitted_on_continuation(
+async def test_browser_agent_id_can_be_omitted_on_continuation(
     client: httpx.AsyncClient, app: FastAPI, db_session_factory
 ) -> None:
     cipher = SecretCipher(Fernet.generate_key())
-    first, _second = seed_agent(db_session_factory, cipher)
+    seed_agent(db_session_factory, cipher)
     app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
-    llm = SequencedLlm(
-        [CanonicalResponse(content="First."), CanonicalResponse(content="Second.")]
-    )
+    llm = SequencedLlm([CanonicalResponse(content="First."), CanonicalResponse(content="Second.")])
     app.dependency_overrides[get_llm_client] = lambda: llm
     created = await client.post(
         "/api/chat/turns",
-        json={"message": "Hello", "candidate_skill_ids": [first.id]},
+        json={"agent_id": 1, "message": "Hello"},
     )
 
     continued = await client.post(
@@ -231,29 +245,26 @@ async def test_browser_explicit_scope_can_be_omitted_on_continuation(
 
 
 @pytest.mark.asyncio
-async def test_browser_auto_scope_continuation_does_not_recompute_changed_catalog(
+async def test_browser_automatic_scope_does_not_add_later_agent_bindings(
     client: httpx.AsyncClient, app: FastAPI, db_session_factory
 ) -> None:
     cipher = SecretCipher(Fernet.generate_key())
-    first, _second = seed_agent(db_session_factory, cipher)
+    first, second = seed_agent(db_session_factory, cipher)
     app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
-    llm = SequencedLlm(
-        [CanonicalResponse(content="First."), CanonicalResponse(content="Second.")]
-    )
+    llm = SequencedLlm([CanonicalResponse(content="First."), CanonicalResponse(content="Second.")])
     app.dependency_overrides[get_llm_client] = lambda: llm
-    created = await client.post(
-        "/api/chat/turns", json={"message": "Hello", "candidate_skill_ids": []}
-    )
+    created = await client.post("/api/chat/turns", json={"agent_id": 1, "message": "Hello"})
     conversation_id = created.json()["conversation_id"]
     with db_session_factory() as session:
-        session.add(
-            Skill(
-                name="Added later",
-                description="Later.",
-                system_prompt="Later prompt.",
-                running=True,
-            )
+        added = Skill(
+            name="Added later",
+            description="Later.",
+            system_prompt="Later prompt.",
+            running=True,
         )
+        session.add(added)
+        session.flush()
+        session.add(AgentSkill(agent_id=1, skill_id=added.id, position=2))
         session.commit()
 
     continued = await client.post(
@@ -261,7 +272,6 @@ async def test_browser_auto_scope_continuation_does_not_recompute_changed_catalo
         json={
             "message": "Continue",
             "conversation_id": conversation_id,
-            "candidate_skill_ids": [],
         },
     )
 
@@ -269,7 +279,7 @@ async def test_browser_auto_scope_continuation_does_not_recompute_changed_catalo
     with db_session_factory() as session:
         conversation = session.get(Conversation, conversation_id)
         assert conversation.candidate_scope_source == "automatic"
-        assert conversation.candidate_skill_ids == [first.id, _second.id]
+        assert conversation.candidate_skill_ids == [second.id, first.id]
 
 
 @pytest.mark.asyncio
@@ -300,38 +310,54 @@ async def test_browser_turn_forwards_tool_session_and_maps_agent_result(
     client.cookies.set("chat4openapi_tool_session", "cookie-session")
     response = await client.post(
         "/api/chat/turns",
-        json={"message": "Run", "candidate_skill_ids": [7]},
+        json={"agent_id": 3, "message": "Run"},
         headers={"X-Chat4Openapi-Tool-Session": "header-session"},
     )
 
     assert response.status_code == 200
     assert requests == [
         AgentTurnRequest(
+            agent_id=3,
             user_content="Run",
-            candidate_skill_ids=[7],
-                interactive=True,
-                tool_session_id="header-session",
-                candidate_scope_source="explicit",
-            )
+            candidate_skill_ids=[],
+            interactive=True,
+            tool_session_id="header-session",
+            candidate_scope_source="automatic",
+        )
     ]
     assert response.json()["message"] == "Done."
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("invalid_skill_id", [True, "1", 0, -1])
-async def test_browser_turn_rejects_non_strict_positive_candidate_skill_ids(
+@pytest.mark.parametrize("invalid_agent_id", [True, "1", 0, -1])
+async def test_browser_turn_rejects_non_strict_positive_agent_ids(
     client: httpx.AsyncClient,
     app: FastAPI,
-    invalid_skill_id,
+    invalid_agent_id,
 ) -> None:
-    app.dependency_overrides[get_tool_secret_cipher] = lambda: SecretCipher(
-        Fernet.generate_key()
-    )
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: SecretCipher(Fernet.generate_key())
     response = await client.post(
         "/api/chat/turns",
-        json={"message": "Run", "candidate_skill_ids": [invalid_skill_id]},
+        json={"message": "Run", "agent_id": invalid_agent_id},
     )
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation.invalid"
-    assert "body.candidate_skill_ids.0" in response.json()["error"]["params"]["fields"]
+    assert "body.agent_id" in response.json()["error"]["params"]["fields"]
+
+
+@pytest.mark.asyncio
+async def test_browser_turn_rejects_direct_candidate_skill_ids(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+) -> None:
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: SecretCipher(Fernet.generate_key())
+
+    response = await client.post(
+        "/api/chat/turns",
+        json={"message": "Run", "agent_id": 1, "candidate_skill_ids": [7]},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation.invalid"
+    assert "body.candidate_skill_ids" in response.json()["error"]["params"]["fields"]

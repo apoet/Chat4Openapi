@@ -94,8 +94,3 @@ class AgentApiKey(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     agent: Mapped[Agent] = relationship(back_populates="api_keys")
-
-
-# Internal compatibility for runtime code that still resolves Agent ID 1.
-# M5 removes the fixed-ID selection and this alias.
-AgentConfig = Agent

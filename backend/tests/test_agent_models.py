@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from chat4openapi.db.session import create_engine_for_url
 from chat4openapi.chat.agent import DEFAULT_AGENT_PROMPT
 from chat4openapi.models import (
-    AgentConfig,
+    Agent,
     ApiSource,
     Conversation,
     LlmProvider,
@@ -76,7 +76,7 @@ def test_migration_preserves_existing_installation_as_agent_configuration(
     engine = create_engine_for_url(sqlite_url(database_path))
     with Session(engine) as session:
         provider = session.get(LlmProvider, 2)
-        agent = session.get(AgentConfig, 1)
+        agent = session.get(Agent, 1)
         skill = session.get(Skill, 1)
 
         assert provider is not None
@@ -91,7 +91,7 @@ def test_migration_preserves_existing_installation_as_agent_configuration(
         assert not hasattr(skill, "provider_id")
         assert not hasattr(skill, "model")
 
-        conversation = Conversation()
+        conversation = Conversation(agent_id=agent.id)
         session.add(conversation)
         session.flush()
         assert conversation.candidate_skill_ids == []

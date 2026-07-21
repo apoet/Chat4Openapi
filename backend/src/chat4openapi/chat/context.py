@@ -5,12 +5,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from chat4openapi.llm.client import CanonicalMessage, CanonicalToolCall
-from chat4openapi.models import AgentConfig, ChatMessage, Conversation, Skill
+from chat4openapi.models import Agent, ChatMessage, Conversation, Skill
 
 
 def build_agent_context(
     session: Session,
-    agent: AgentConfig,
+    agent: Agent,
     conversation: Conversation,
     candidate_skills: list[Skill],
 ) -> list[CanonicalMessage]:

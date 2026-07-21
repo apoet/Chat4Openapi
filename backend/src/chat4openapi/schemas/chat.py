@@ -1,14 +1,16 @@
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-CandidateSkillId = Annotated[int, Field(strict=True, gt=0)]
+AgentId = Annotated[int, Field(strict=True, gt=0)]
 
 
 class ChatTurnRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     message: str = Field(min_length=1, max_length=100_000)
     conversation_id: str | None = None
-    candidate_skill_ids: list[CandidateSkillId] = Field(default_factory=list, max_length=32)
+    agent_id: AgentId | None = None
 
 
 class ChatTurnResponse(BaseModel):

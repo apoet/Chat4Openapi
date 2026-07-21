@@ -18,7 +18,8 @@ from chat4openapi.llm.client import (
     LlmProviderError,
 )
 from chat4openapi.models import (
-    AgentConfig,
+    Agent,
+    AgentSkill,
     ApiSource,
     ChatMessage,
     Conversation,
@@ -113,6 +114,7 @@ class AgentError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class AgentTurnRequest:
+    agent_id: int
     user_content: str
     candidate_skill_ids: list[int]
     interactive: bool
@@ -120,7 +122,6 @@ class AgentTurnRequest:
     tool_session_id: str | None = None
     incoming_messages: list[CanonicalMessage] = dataclass_field(default_factory=list)
     candidate_scope_source: Literal["automatic", "explicit"] = "automatic"
-    agent_id: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,7 +207,7 @@ class AgentRuntime:
 
         try:
             for _iteration in range(max_iterations):
-                tool_map = self._bound_tools(conversation.loaded_skill_ids)
+                tool_map = self._bound_tools(agent.id, conversation.loaded_skill_ids)
                 if conversation.loaded_skill_ids:
                     tools = list(tool_map.canonical.values())
                     if can_ask_user:
@@ -216,9 +217,7 @@ class AgentRuntime:
                 response = await self._llm.complete(
                     provider_type=provider.provider_type,
                     base_url=provider.base_url,
-                    api_key=self._cipher.decrypt_json(provider.encrypted_api_key)[
-                        "api_key"
-                    ],
+                    api_key=self._cipher.decrypt_json(provider.encrypted_api_key)["api_key"],
                     model=agent.model or provider.default_model,
                     messages=build_agent_context(
                         self._session, agent, conversation, candidate_skills
@@ -261,9 +260,7 @@ class AgentRuntime:
             ) from exc
         except Exception as exc:
             self._fail(conversation, "Agent runtime failed.")
-            raise AgentError(
-                "agent.runtime_failed", {"reason": "Agent runtime failed."}
-            ) from exc
+            raise AgentError("agent.runtime_failed", {"reason": "Agent runtime failed."}) from exc
 
         summary = f"Agent stopped after reaching the {max_iterations}-iteration limit."
         self._fail(conversation, summary)
@@ -299,9 +296,7 @@ class AgentRuntime:
                 for call in response.tool_calls
                 if call.name == ASK_USER_TOOL.name
                 and can_ask_user
-                and not self._validation_errors(
-                    ASK_USER_TOOL.input_schema, call.arguments
-                )
+                and not self._validation_errors(ASK_USER_TOOL.input_schema, call.arguments)
             ),
             None,
         )
@@ -330,20 +325,14 @@ class AgentRuntime:
             )
         for call in response.tool_calls:
             if call.name == LOAD_SKILLS_TOOL.name:
-                errors = self._validation_errors(
-                    LOAD_SKILLS_TOOL.input_schema, call.arguments
-                )
+                errors = self._validation_errors(LOAD_SKILLS_TOOL.input_schema, call.arguments)
                 observation = (
                     self._invalid_arguments(call.name, errors, control=True)
                     if errors
-                    else self._load_skills(
-                        conversation, candidate_skills, call.arguments
-                    )
+                    else self._load_skills(conversation, candidate_skills, call.arguments)
                 )
             elif call.name == ASK_USER_TOOL.name:
-                errors = self._validation_errors(
-                    ASK_USER_TOOL.input_schema, call.arguments
-                )
+                errors = self._validation_errors(ASK_USER_TOOL.input_schema, call.arguments)
                 observation = self._invalid_arguments(
                     call.name,
                     errors
@@ -361,16 +350,12 @@ class AgentRuntime:
                 if tool is None:
                     observation = {"error": "tool_unavailable", "tool": call.name}
                 else:
-                    schema = self._strict_tool_schema(
-                        effective_input_schema(self._session, tool)
-                    )
+                    schema = self._strict_tool_schema(effective_input_schema(self._session, tool))
                     errors = self._validation_errors(schema, call.arguments)
                     observation = (
                         self._invalid_arguments(call.name, errors, control=False)
                         if errors
-                        else await self._execute_tool(
-                            tool, call.arguments, request.tool_session_id
-                        )
+                        else await self._execute_tool(tool, call.arguments, request.tool_session_id)
                     )
             self._persist_message(
                 conversation.id,
@@ -380,8 +365,8 @@ class AgentRuntime:
 
         return None
 
-    def _configuration(self, agent_id: int) -> tuple[AgentConfig, LlmProvider]:
-        agent = self._session.get(AgentConfig, agent_id)
+    def _configuration(self, agent_id: int) -> tuple[Agent, LlmProvider]:
+        agent = self._session.get(Agent, agent_id)
         if agent is None or agent.deleted_at is not None or not agent.enabled:
             raise AgentError("agent.unavailable")
         provider = (
@@ -394,7 +379,7 @@ class AgentRuntime:
         return agent, provider
 
     def _conversation(
-        self, request: AgentTurnRequest, agent: AgentConfig
+        self, request: AgentTurnRequest, agent: Agent
     ) -> tuple[Conversation, list[Skill]]:
         if request.conversation_id is not None:
             conversation = self._session.get(Conversation, request.conversation_id)
@@ -408,22 +393,26 @@ class AgentRuntime:
         else:
             candidate_ids = list(dict.fromkeys(request.candidate_skill_ids))
 
-        query = select(Skill).where(Skill.running.is_(True), Skill.deleted_at.is_(None))
+        query = (
+            select(Skill)
+            .join(AgentSkill, AgentSkill.skill_id == Skill.id)
+            .where(
+                AgentSkill.agent_id == agent.id,
+                Skill.running.is_(True),
+                Skill.deleted_at.is_(None),
+            )
+        )
         if candidate_ids:
             query = query.where(Skill.id.in_(candidate_ids))
-        available = list(self._session.scalars(query.order_by(Skill.id)))
+        available = list(self._session.scalars(query.order_by(AgentSkill.position, Skill.id)))
         available_by_id = {skill.id: skill for skill in available}
         if candidate_ids and request.conversation_id is None:
             invalid = [skill_id for skill_id in candidate_ids if skill_id not in available_by_id]
             if invalid:
                 raise AgentError("agent.skill_unavailable", {"skill_ids": invalid})
-            candidate_skills = [available_by_id[skill_id] for skill_id in candidate_ids]
+            candidate_skills = available
         elif candidate_ids:
-            candidate_skills = [
-                available_by_id[skill_id]
-                for skill_id in candidate_ids
-                if skill_id in available_by_id
-            ]
+            candidate_skills = available
         else:
             candidate_skills = available
             candidate_ids = [skill.id for skill in available]
@@ -433,9 +422,7 @@ class AgentRuntime:
         if request.conversation_id is not None:
             remaining_ids = {skill.id for skill in candidate_skills}
             filtered_loaded = [
-                skill_id
-                for skill_id in conversation.loaded_skill_ids
-                if skill_id in remaining_ids
+                skill_id for skill_id in conversation.loaded_skill_ids if skill_id in remaining_ids
             ]
             if filtered_loaded != conversation.loaded_skill_ids:
                 conversation.loaded_skill_ids = filtered_loaded
@@ -484,15 +471,22 @@ class AgentRuntime:
         canonical: dict[str, CanonicalTool]
         models: dict[str, Tool]
 
-    def _bound_tools(self, loaded_skill_ids: list[int]) -> _BoundTools:
+    def _bound_tools(self, agent_id: int, loaded_skill_ids: list[int]) -> _BoundTools:
         if not loaded_skill_ids:
             return self._BoundTools({}, {})
         rows = self._session.execute(
             select(SkillTool.skill_id, Tool)
+            .join(Skill, Skill.id == SkillTool.skill_id)
+            .join(
+                AgentSkill,
+                (AgentSkill.skill_id == SkillTool.skill_id) & (AgentSkill.agent_id == agent_id),
+            )
             .join(Tool, Tool.id == SkillTool.tool_id)
             .join(ApiSource, ApiSource.id == Tool.api_source_id)
             .where(
                 SkillTool.skill_id.in_(loaded_skill_ids),
+                Skill.running.is_(True),
+                Skill.deleted_at.is_(None),
                 Tool.enabled.is_(True),
                 Tool.deleted_at.is_(None),
                 ApiSource.enabled.is_(True),
@@ -558,9 +552,7 @@ class AgentRuntime:
                 "tool": tool.name,
             }
 
-    def _persist_message(
-        self, conversation_id: str, role: str, content: dict[str, Any]
-    ) -> None:
+    def _persist_message(self, conversation_id: str, role: str, content: dict[str, Any]) -> None:
         current = self._session.scalar(
             select(func.max(ChatMessage.sequence)).where(
                 ChatMessage.conversation_id == conversation_id
@@ -595,9 +587,7 @@ class AgentRuntime:
             if message_from_record.role in {"system", "user", "assistant"}
             and not message_from_record.content.get("tool_calls")
         ]
-        stored_pairs = [
-            (message.role, message.content.get("text", "")) for message in external
-        ]
+        stored_pairs = [(message.role, message.content.get("text", "")) for message in external]
         incoming_pairs = [(message.role, message.content) for message in incoming]
         overlap = 0
         for size in range(min(len(stored_pairs), len(incoming_pairs)), 0, -1):
@@ -611,9 +601,7 @@ class AgentRuntime:
             if message.name is not None:
                 content["name"] = message.name
             if message.tool_calls:
-                content["tool_calls"] = [
-                    self._stored_call(call) for call in message.tool_calls
-                ]
+                content["tool_calls"] = [self._stored_call(call) for call in message.tool_calls]
             self._persist_message(conversation.id, message.role, content)
 
     @staticmethod
@@ -624,9 +612,7 @@ class AgentRuntime:
         return strict
 
     @staticmethod
-    def _validation_errors(
-        schema: dict[str, Any], arguments: Any
-    ) -> list[dict[str, str]]:
+    def _validation_errors(schema: dict[str, Any], arguments: Any) -> list[dict[str, str]]:
         validator = Draft202012Validator(schema)
         return [
             {
@@ -645,9 +631,7 @@ class AgentRuntime:
         control: bool,
     ) -> dict[str, Any]:
         return {
-            "error": (
-                "invalid_control_arguments" if control else "invalid_tool_arguments"
-            ),
+            "error": ("invalid_control_arguments" if control else "invalid_tool_arguments"),
             "tool": tool_name,
             "validation_errors": errors,
         }
