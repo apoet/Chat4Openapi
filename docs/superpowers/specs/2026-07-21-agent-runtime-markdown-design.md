@@ -12,6 +12,7 @@ This design also adds browser-local conversation history, safe Markdown renderin
 ## Decisions
 
 - The system has one independently configured built-in Agent.
+- LLM provider and model belong to the Agent. Skills do not bind providers or models.
 - All browser, OpenAI-compatible, and Anthropic-compatible conversations pass through that Agent.
 - Agent mode is configured independently of Skills. The default is `human_in_loop`.
 - Human-in-loop never approves Tool calls. It only pauses for missing, ambiguous, or choice-dependent user input.
@@ -31,6 +32,8 @@ Add a singleton Agent configuration record and an `Agent` administration menu. T
 - display name;
 - enabled state;
 - general system prompt;
+- LLM provider;
+- optional model override, falling back to the provider default model;
 - mode: `human_in_loop` or `react`;
 - maximum Agent iterations;
 - timestamps.
@@ -47,6 +50,12 @@ The application creates the singleton with built-in defaults when no record exis
 - explain exhausted retries, unavailable Skills, and Tool failures.
 
 Restoring defaults replaces only the configurable Agent prompt and runtime settings. It does not modify Skills or Tools.
+
+Agent execution is unavailable until its provider is enabled and usable. During migration, the singleton selects the first enabled provider by ID so an existing installation remains operable. Administrators can change it from the Agent page.
+
+### Skill model
+
+A Skill contains only its name, description, system prompt, running state, and ordered Tool bindings. Remove `provider_id` and `model` from the Skill database model, API contracts, and administration form. Existing values are discarded during migration because all routing, clarification, Tool reasoning, and final response generation use the Agent provider and model.
 
 ### Agent runtime
 
@@ -75,6 +84,8 @@ Browser Chat sends `candidate_skill_ids` with each new conversation:
 The Agent receives only Skill catalog metadata during routing. It receives full Skill prompts and Tool schemas after `load_skills`. Compound requests may load multiple Skills. A browser-selected candidate is a scope restriction, not a forced eager load.
 
 The compatibility APIs accept optional `chatapi_skill_ids` as an extension. Existing `skill-<id>` model identifiers remain compatible and are treated as a one-Skill candidate set. A generic built-in Agent model identifier exposes automatic routing across all running Skills.
+
+`GET /v1/models` exposes the generic Agent identifier and retains `skill-<id>` aliases for candidate scoping. These identifiers select Agent routing scope; they never select a Skill-owned provider.
 
 ## Human-in-loop behavior
 
@@ -213,6 +224,7 @@ Agent configuration changes apply to new turns. Updating the mode does not rewri
 Backend tests cover:
 
 - singleton Agent configuration defaults and administration;
+- migration and API removal of Skill-owned provider/model settings;
 - Agent routing across all Skills and a restricted multi-Skill candidate set;
 - `load_skills` validation and Tool allow-list isolation;
 - loading more than one Skill for a compound request;
