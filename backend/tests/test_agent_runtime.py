@@ -18,6 +18,10 @@ from chatapi.models import (
     Tool,
 )
 from chatapi.security.encryption import SecretCipher
+from chatapi.skills.defaults import (
+    VARCARDS2_GENE_SYSTEM_PROMPT,
+    VARCARDS2_GENE_TABLE_RULE,
+)
 from chatapi.tools.executor import ToolExecutionResult
 from chatapi.tools.errors import ToolExecutionError
 
@@ -86,9 +90,9 @@ def seed_runtime(session, cipher: SecretCipher) -> tuple[Skill, Tool]:
         enabled=True,
     )
     skill = Skill(
-        name="Gene lookup",
+        name="Varcards2-Gene",
         description="Look up gene loci.",
-        system_prompt="Return gene loci as Markdown tables.",
+        system_prompt=VARCARDS2_GENE_SYSTEM_PROMPT,
         running=True,
     )
     session.add_all([tool, skill])
@@ -172,7 +176,15 @@ async def test_routes_loads_skill_and_executes_only_bound_tools(db_session_facto
                     ],
                 ),
                 CanonicalResponse(
-                    content="| Field | Result |\n|---|---|\n| Gene | ABCA4 |",
+                    content=(
+                        "| Field | Result |\n"
+                        "|---|---|\n"
+                        "| Gene | ABCA4 |\n"
+                        "| Chromosome | 1 |\n"
+                        "| Cytogenetic location | 1p22.1 |\n"
+                        "| Reference build | Not provided by the API |\n\n"
+                        "Source: Varcards2 API."
+                    ),
                     stop_reason="stop",
                 ),
             ]
@@ -190,24 +202,32 @@ async def test_routes_loads_skill_and_executes_only_bound_tools(db_session_facto
         assert result.status == "completed"
         assert result.loaded_skill_ids == [skill.id]
         assert "| Gene | ABCA4 |" in result.content
+        assert "| Chromosome | 1 |" in result.content
+        assert "| Cytogenetic location | 1p22.1 |" in result.content
+        assert "| Reference build | Not provided by the API |" in result.content
+        assert "Source:" in result.content
         assert [tool.name for tool in llm.calls[0]["tools"]] == ["load_skills"]
         catalog = json.loads(llm.calls[0]["messages"][1].content)
         assert catalog == {
             "skills": [
                 {
                     "id": skill.id,
-                    "name": "Gene lookup",
+                    "name": "Varcards2-Gene",
                     "description": "Look up gene loci.",
                 }
             ]
         }
-        assert "Return gene loci" not in "\n".join(
+        assert VARCARDS2_GENE_TABLE_RULE not in "\n".join(
             str(message.content) for message in llm.calls[0]["messages"]
         )
         assert [tool.name for tool in llm.calls[1]["tools"]] == ["get_gene"]
-        assert any(
-            message.role == "system" and "Return gene loci" in message.content
+        loaded_system_prompts = [
+            message.content
             for message in llm.calls[1]["messages"]
+            if message.role == "system"
+        ]
+        assert any(
+            VARCARDS2_GENE_TABLE_RULE in prompt for prompt in loaded_system_prompts
         )
         assert executor.calls[0][0:2] == ("get_gene", {"symbol": "ABCA4"})
     assert llm.calls[0]["api_key"] == "provider-secret"

@@ -17,6 +17,10 @@ from chatapi.models import (
     Tool,
     ToolParameterOverride,
 )
+from chatapi.skills.defaults import (
+    VARCARDS2_GENE_LEGACY_SYSTEM_PROMPT,
+    VARCARDS2_GENE_SYSTEM_PROMPT,
+)
 
 
 def sqlite_url(path: Path) -> str:
@@ -140,3 +144,64 @@ def test_tool_parameter_override_is_unique_and_cascades_with_tool(
         assert session.get(ToolParameterOverride, override_id) is None
 
     engine.dispose()
+
+
+def test_markdown_prompt_migration_updates_the_varcards_legacy_default(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "varcards-default.db"
+    config = migration_config(database_path)
+    command.upgrade(config, "0005_agent_runtime")
+    engine = create_engine_for_url(sqlite_url(database_path))
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO skills (name, description, system_prompt, running)
+                VALUES ('Varcards2-Gene', 'Gene lookup', :prompt, true)
+                """
+            ),
+            {"prompt": VARCARDS2_GENE_LEGACY_SYSTEM_PROMPT},
+        )
+    engine.dispose()
+
+    command.upgrade(config, "head")
+
+    engine = create_engine_for_url(sqlite_url(database_path))
+    with engine.connect() as connection:
+        prompt = connection.execute(
+            text("SELECT system_prompt FROM skills WHERE name = 'Varcards2-Gene'")
+        ).scalar_one()
+    engine.dispose()
+    assert prompt == VARCARDS2_GENE_SYSTEM_PROMPT
+
+
+def test_markdown_prompt_migration_preserves_a_customized_varcards_prompt(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "varcards-custom.db"
+    config = migration_config(database_path)
+    command.upgrade(config, "0005_agent_runtime")
+    custom_prompt = "Use my organization's reviewed gene response format."
+    engine = create_engine_for_url(sqlite_url(database_path))
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO skills (name, description, system_prompt, running)
+                VALUES ('Varcards2-Gene', 'Gene lookup', :prompt, true)
+                """
+            ),
+            {"prompt": custom_prompt},
+        )
+    engine.dispose()
+
+    command.upgrade(config, "head")
+
+    engine = create_engine_for_url(sqlite_url(database_path))
+    with engine.connect() as connection:
+        prompt = connection.execute(
+            text("SELECT system_prompt FROM skills WHERE name = 'Varcards2-Gene'")
+        ).scalar_one()
+    engine.dispose()
+    assert prompt == custom_prompt

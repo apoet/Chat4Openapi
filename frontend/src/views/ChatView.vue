@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 
 import { ApiError, request } from '../api/client'
 import type { ChatTurnRequest, ChatTurnResponse, SkillSummary } from '../api/contracts'
+import MarkdownMessage from '../components/MarkdownMessage.vue'
 import SkillMultiSelect from '../components/SkillMultiSelect.vue'
 
 type ChatMessage = {
@@ -338,7 +339,8 @@ async function send(): Promise<void> {
             :class="['message', message.role, { clarification: message.kind === 'clarification' }]"
           >
             <strong v-if="message.kind === 'clarification'" class="clarification-label">{{ t('chat.clarification') }}</strong>
-            <span>{{ message.content }}</span>
+            <span v-if="message.role === 'user'">{{ message.content }}</span>
+            <MarkdownMessage v-else :content="message.content" />
             <small v-if="message.role === 'assistant' && index === messages.length - 1 && loadedSkillIds.length" class="loaded-skills">
               {{ t('chat.loadedSkills', { names: skillNames(loadedSkillIds) }) }}
             </small>
