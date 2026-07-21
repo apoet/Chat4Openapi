@@ -6,6 +6,7 @@ export default {
     description: '此账号仅管理供应商、工具和技能，与原 API 业务用户完全独立。',
     username: '用户名',
     password: '密码',
+    passwordHint: '至少 6 位，并同时包含字母和数字。',
     confirmPassword: '确认密码',
     locale: '界面语言',
     submit: '创建管理员',

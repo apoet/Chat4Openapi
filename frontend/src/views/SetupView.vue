@@ -24,7 +24,9 @@ const passwordsDiffer = computed(
 const canSubmit = computed(
   () =>
     username.value.length >= 3 &&
-    password.value.length >= 12 &&
+    password.value.length >= 6 &&
+    /[A-Za-z]/.test(password.value) &&
+    /[0-9]/.test(password.value) &&
     confirmation.value === password.value &&
     !submitting.value,
 )
@@ -84,7 +86,10 @@ async function submit(): Promise<void> {
           v-model="password"
           type="password"
           autocomplete="new-password"
+          minlength="6"
+          pattern="(?=.*[A-Za-z])(?=.*[0-9]).{6,}"
         />
+        <p class="field-hint">{{ t('setup.passwordHint') }}</p>
 
         <label for="setup-confirmation">{{ t('setup.confirmPassword') }}</label>
         <input

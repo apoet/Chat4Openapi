@@ -7,6 +7,23 @@ import SetupView from '../views/SetupView.vue'
 import { i18n } from '../i18n'
 
 describe('setup view', () => {
+  it('allows a six-character password containing letters and numbers', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/setup', component: SetupView }],
+    })
+    await router.push('/setup')
+    await router.isReady()
+    render(SetupView, { global: { plugins: [createPinia(), i18n, router] } })
+
+    await fireEvent.update(screen.getByLabelText('Username'), 'admin')
+    await fireEvent.update(screen.getByLabelText('Password'), 'abc123')
+    await fireEvent.update(screen.getByLabelText('Confirm password'), 'abc123')
+
+    const submit = screen.getByRole('button', { name: 'Create administrator' })
+    expect((submit as HTMLButtonElement).disabled).toBe(false)
+  })
+
   it('blocks submission when password confirmation differs', async () => {
     const router = createRouter({
       history: createMemoryHistory(),

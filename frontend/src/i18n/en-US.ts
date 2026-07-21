@@ -6,6 +6,7 @@ export default {
     description: 'This account manages providers, tools, and skills. It is separate from API users.',
     username: 'Username',
     password: 'Password',
+    passwordHint: 'Use at least 6 characters with both letters and numbers.',
     confirmPassword: 'Confirm password',
     locale: 'Interface language',
     submit: 'Create administrator',

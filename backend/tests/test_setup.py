@@ -40,6 +40,32 @@ async def test_setup_rejects_weak_password(client: httpx.AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_setup_accepts_six_character_letter_number_password(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.post(
+        "/api/setup",
+        json={"username": "admin", "password": "abc123", "locale": "en-US"},
+    )
+
+    assert response.status_code == 201
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("password", ["abcdef", "123456"])
+async def test_setup_requires_both_letters_and_numbers(
+    client: httpx.AsyncClient, password: str
+) -> None:
+    response = await client.post(
+        "/api/setup",
+        json={"username": "admin", "password": password, "locale": "en-US"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation.invalid"
+
+
+@pytest.mark.asyncio
 async def test_setup_hashes_the_admin_password(
     client: httpx.AsyncClient, db_session_factory: sessionmaker[Session]
 ) -> None:
