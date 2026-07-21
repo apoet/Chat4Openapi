@@ -58,16 +58,47 @@ export const useToolsStore = defineStore('tools', () => {
     )
   }
 
-  async function importFile(name: string, file: File, baseUrl?: string): Promise<void> {
+  async function importFile(
+    name: string,
+    file: File,
+    baseUrl?: string,
+    allowPrivateNetworks = false,
+  ): Promise<void> {
     const form = new FormData()
     form.set('name', name)
     form.set('document', file)
     if (baseUrl) form.set('base_url', baseUrl)
+    form.set('allow_private_networks', String(allowPrivateNetworks))
     const auth = useAuthStore()
     await perform(() =>
       request<SourceImportResponse>(
         '/api/admin/sources/import-file',
         { method: 'POST', body: form },
+        auth.csrfToken,
+      ),
+    )
+    await loadSources()
+  }
+
+  async function importUrl(
+    name: string,
+    url: string,
+    baseUrl?: string,
+    allowPrivateNetworks = false,
+  ): Promise<void> {
+    const auth = useAuthStore()
+    await perform(() =>
+      request<SourceImportResponse>(
+        '/api/admin/sources/import-url',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            name,
+            url,
+            base_url: baseUrl || null,
+            allow_private_networks: allowPrivateNetworks,
+          }),
+        },
         auth.csrfToken,
       ),
     )
@@ -153,6 +184,7 @@ export const useToolsStore = defineStore('tools', () => {
     loadTools,
     loadAuthConfig,
     importFile,
+    importUrl,
     updateSource,
     setSourceEnabled,
     deleteSource,

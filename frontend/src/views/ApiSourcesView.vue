@@ -9,7 +9,10 @@ const store = useToolsStore()
 const { t } = useI18n()
 const name = ref('')
 const baseUrl = ref('')
+const importMode = ref<'file' | 'url'>('file')
+const sourceUrl = ref('')
 const file = ref<File | null>(null)
+const allowPrivateNetworks = ref(false)
 const submitting = ref(false)
 const editingId = ref<number | null>(null)
 const editName = ref('')
@@ -23,13 +26,31 @@ function selectFile(event: Event): void {
 }
 
 async function submit(): Promise<void> {
-  if (!file.value || !name.value) return
+  if (!name.value) return
+  if (importMode.value === 'file' && !file.value) return
+  if (importMode.value === 'url' && !sourceUrl.value) return
   submitting.value = true
   try {
-    await store.importFile(name.value, file.value, baseUrl.value || undefined)
+    if (importMode.value === 'url') {
+      await store.importUrl(
+        name.value,
+        sourceUrl.value,
+        baseUrl.value || undefined,
+        allowPrivateNetworks.value,
+      )
+    } else if (file.value) {
+      await store.importFile(
+        name.value,
+        file.value,
+        baseUrl.value || undefined,
+        allowPrivateNetworks.value,
+      )
+    }
     name.value = ''
     baseUrl.value = ''
+    sourceUrl.value = ''
     file.value = null
+    allowPrivateNetworks.value = false
   } finally {
     submitting.value = false
   }
@@ -62,12 +83,18 @@ async function saveEdit(source: ApiSourceSummary): Promise<void> {
       <div><p class="eyebrow">{{ t('sources.eyebrow') }}</p><h1>{{ t('sources.title') }}</h1><p class="muted">{{ t('sources.subtitle') }}</p></div>
     </header>
     <section class="import-panel">
+      <div class="segmented import-mode">
+        <button type="button" :class="{ active: importMode === 'file' }" @click="importMode = 'file'">{{ t('sources.fileMode') }}</button>
+        <button type="button" :class="{ active: importMode === 'url' }" @click="importMode = 'url'">{{ t('sources.urlMode') }}</button>
+      </div>
       <div class="form-grid">
         <label>{{ t('sources.name') }}<input v-model="name" /></label>
         <label>{{ t('sources.baseUrl') }}<input v-model="baseUrl" placeholder="https://api.example.com" /></label>
-        <label class="file-field">{{ t('sources.document') }}<input type="file" accept=".json,.yaml,.yml,application/json,application/yaml" @change="selectFile" /></label>
+        <label v-if="importMode === 'file'" class="file-field">{{ t('sources.document') }}<input type="file" accept=".json,.yaml,.yml,application/json,application/yaml" @change="selectFile" /></label>
+        <label v-else>{{ t('sources.url') }}<input v-model="sourceUrl" type="url" placeholder="https://api.example.com/openapi.json" /></label>
       </div>
-      <button class="primary-action" :disabled="!name || !file || submitting" @click="submit">{{ submitting ? t('sources.importing') : t('sources.import') }}</button>
+      <label class="checkbox-label import-private"><input v-model="allowPrivateNetworks" type="checkbox" />{{ t('sources.allowPrivate') }}</label>
+      <button class="primary-action" :disabled="!name || (importMode === 'file' ? !file : !sourceUrl) || submitting" @click="submit">{{ submitting ? t('sources.importing') : importMode === 'url' ? t('sources.importUrl') : t('sources.import') }}</button>
     </section>
     <section class="resource-list">
       <div v-if="!store.loading && store.sources.length === 0" class="empty-state">{{ t('sources.empty') }}</div>

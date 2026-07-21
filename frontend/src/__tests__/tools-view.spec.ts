@@ -152,4 +152,44 @@ describe('Tool administration views', () => {
     const request = fetchMock.mock.calls[1][1] as RequestInit
     expect(request.body).toBeInstanceOf(FormData)
   })
+
+  it('imports an OpenAPI document from a URL', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          source: {
+            id: 2,
+            name: 'Remote API',
+            source_type: 'openapi',
+            base_url: 'https://api.test',
+            allow_private_networks: true,
+            enabled: true,
+            created_at: '2026-07-21T00:00:00',
+          },
+          tools: [],
+        }, 201),
+      )
+      .mockResolvedValueOnce(jsonResponse([]))
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ApiSourcesView, { global: { plugins: [i18n] } })
+    await screen.findByText('No API sources imported yet.')
+    await fireEvent.click(screen.getByRole('button', { name: 'URL import' }))
+    await fireEvent.update(screen.getByLabelText('Source name'), 'Remote API')
+    await fireEvent.update(screen.getByLabelText('OpenAPI URL'), 'https://api.test/openapi.json')
+    await fireEvent.click(screen.getByLabelText('Allow private network targets'))
+    await fireEvent.click(screen.getByRole('button', { name: 'Import from URL' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/sources/import-url')
+    const request = fetchMock.mock.calls[1][1] as RequestInit
+    expect(JSON.parse(request.body as string)).toEqual({
+      name: 'Remote API',
+      url: 'https://api.test/openapi.json',
+      base_url: null,
+      allow_private_networks: true,
+    })
+  })
 })
