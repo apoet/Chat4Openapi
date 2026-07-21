@@ -117,6 +117,9 @@ blockquote { margin: 0; padding-left: 20px; border-left: 2px solid #6558e8; font
 .import-private { margin: 16px 0; }
 .source-filter-banner { margin: -12px 0 20px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid #dcd7ff; border-radius: 11px; color: #4f46a5; background: #f2f0ff; font-size: 13px; font-weight: 700; }
 .tool-source-group { margin-top: 28px; }
+.tool-search { margin-top: 22px; display: grid; gap: 7px; color: #343b49; font-size: 12px; font-weight: 700; }
+.tool-search input { width: min(560px, 100%); height: 44px; padding: 0 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); font: inherit; font-weight: 500; }
+.tool-search input:focus { border-color: #6558e8; outline: 3px solid #eeecff; }
 .tool-source-heading { padding-bottom: 10px; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
 .tool-source-heading::before { content: '▸'; color: #6558e8; font-size: 13px; }
 .tool-source-group[open] > .tool-source-heading::before { content: '▾'; }

@@ -88,6 +88,29 @@ describe('Tool administration views', () => {
     expect(screen.getByRole('heading', { name: 'Orders API' })).toBeTruthy()
   })
 
+  it('searches Tools by interface name or description', async () => {
+    const tools = [
+      { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: 'Browse the pet catalog', input_schema: {}, execution_schema: {}, tags: ['Pets'], enabled: false },
+      { id: 2, api_source_id: 1, operation_key: 'GET /orders', name: 'listOrders', description: 'Find customer purchases', input_schema: {}, execution_schema: {}, tags: ['Orders'], enabled: false },
+    ]
+    const sources = [
+      { id: 1, name: 'Commerce API', source_type: 'openapi', base_url: 'https://api.test', document_url: null, allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+    ]
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => Promise.resolve(
+      jsonResponse(String(input).endsWith('/sources') ? sources : tools),
+    )))
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    const search = await screen.findByLabelText('Search Tools')
+    await fireEvent.update(search, 'CUSTOMER')
+    expect(await screen.findByText('listOrders')).toBeTruthy()
+    expect(screen.queryByText('listPets')).toBeNull()
+
+    await fireEvent.update(search, 'listpets')
+    expect(await screen.findByText('listPets')).toBeTruthy()
+    expect(screen.queryByText('listOrders')).toBeNull()
+  })
+
   it('preserves Swagger tag groups inside each API source', async () => {
     const tools = [
       { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: ['Pet operations', 'Public'], enabled: false },

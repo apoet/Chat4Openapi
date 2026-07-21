@@ -83,6 +83,7 @@ const { t } = useI18n()
 const route = inject(routeLocationKey, null)
 const router = inject(routerKey, null)
 const filter = ref<'all' | 'enabled' | 'disabled'>('all')
+const searchQuery = ref('')
 const editingDescriptionId = ref<number | null>(null)
 const descriptionDraft = ref('')
 const sourceId = computed(() => {
@@ -95,9 +96,13 @@ const sourceName = computed(() => {
   return typeof value === 'string' ? value : `#${sourceId.value}`
 })
 const visibleTools = computed(() => store.tools.filter((tool) => {
+  const query = searchQuery.value.trim().toLocaleLowerCase()
   const matchesStatus = filter.value === 'all' || tool.enabled === (filter.value === 'enabled')
   const matchesSource = sourceId.value === null || tool.api_source_id === sourceId.value
-  return matchesStatus && matchesSource
+  const matchesSearch = !query
+    || tool.name.toLocaleLowerCase().includes(query)
+    || (tool.description || '').toLocaleLowerCase().includes(query)
+  return matchesStatus && matchesSource && matchesSearch
 }))
 const groupedTools = computed(() => {
   const groups = new Map<number, {
@@ -163,6 +168,7 @@ onMounted(() => void Promise.all([store.loadTools(), store.loadSources()]))
     <header class="page-heading with-actions"><div><p class="eyebrow">{{ t('tools.eyebrow') }}</p><h1>{{ t('tools.title') }}</h1><p class="muted">{{ t('tools.subtitle') }}</p></div>
       <div class="segmented"><button v-for="value in (['all','enabled','disabled'] as const)" :key="value" :class="{ active: filter === value }" @click="filter = value">{{ t(`tools.filter.${value}`) }}</button></div>
     </header>
+    <label class="tool-search"><span>{{ t('tools.searchLabel') }}</span><input v-model="searchQuery" type="search" :placeholder="t('tools.searchPlaceholder')" /></label>
     <div v-if="sourceId !== null" class="source-filter-banner"><span>{{ t('tools.sourceFilter', { name: sourceName }) }}</span><button class="secondary-action" @click="clearSourceFilter">{{ t('tools.showAllSources') }}</button></div>
     <div v-if="!store.loading && visibleTools.length === 0" class="empty-state">{{ t('tools.empty') }}</div>
     <details v-for="group in groupedTools" :key="group.id" class="tool-source-group" open>
