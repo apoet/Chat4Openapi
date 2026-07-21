@@ -33,12 +33,15 @@ def _skill_id(model: str) -> int:
     if not model.startswith("skill-"):
         raise ApiError(404, "chat.skill_not_found")
     try:
-        return int(model.removeprefix("skill-"))
+        skill_id = int(model.removeprefix("skill-"))
     except ValueError as exc:
         raise ApiError(404, "chat.skill_not_found") from exc
+    if skill_id < 1:
+        raise ApiError(404, "chat.skill_not_found")
+    return skill_id
 
 
-def _candidate_skill_ids(body: dict[str, Any]) -> list[int]:
+def _candidate_skill_ids(body: dict[str, Any], db: Session) -> list[int]:
     model = body.get("model", "")
     extension_present = "chatapi_skill_ids" in body
     if model == "agent-default":
@@ -55,7 +58,13 @@ def _candidate_skill_ids(body: dict[str, Any]) -> list[int]:
         return list(dict.fromkeys(candidate_ids))
     if extension_present:
         raise ApiError(409, "chat.candidate_scope_conflict")
-    return [_skill_id(model)]
+    skill_id = _skill_id(model)
+    skill = db.get(Skill, skill_id)
+    if skill is None:
+        raise ApiError(404, "chat.skill_not_found")
+    if skill.deleted_at is not None or not skill.running:
+        raise ApiError(409, "agent.skill_unavailable", skill_ids=[skill_id])
+    return [skill_id]
 
 
 def _session_id(
@@ -135,6 +144,28 @@ def _validate_conversation_scope(
         raise ApiError(409, "chat.candidate_scope_locked")
 
 
+def _validate_compatibility_scope(
+    db: Session,
+    conversation_id: str | None,
+    candidate_skill_ids: list[int],
+    model: str,
+) -> None:
+    if conversation_id is None:
+        return
+    conversation = db.get(Conversation, conversation_id)
+    if conversation is None or conversation.deleted_at is not None:
+        return
+    selected_skill_id = candidate_skill_ids[0] if model.startswith("skill-") else None
+    if conversation.skill_id != selected_skill_id:
+        raise ApiError(409, "chat.candidate_scope_locked")
+    _validate_conversation_scope(
+        db,
+        conversation_id,
+        candidate_skill_ids,
+        scope_supplied=True,
+    )
+
+
 async def _run_agent(
     turn: AgentTurnRequest,
     db: Session,
@@ -160,15 +191,16 @@ async def _run(
     chatapi_tool_session_header: str | None,
     legacy_tool_session_header: str | None,
 ):
-    candidate_skill_ids = _candidate_skill_ids(body)
+    candidate_skill_ids = _candidate_skill_ids(body, db)
+    model = body.get("model", "")
     conversation_id = body.get("conversation_id")
-    _validate_conversation_scope(
+    _validate_compatibility_scope(
         db,
         conversation_id,
         candidate_skill_ids,
-        scope_supplied="chatapi_skill_ids" in body or body.get("model") != "agent-default",
+        model,
     )
-    return await _run_agent(
+    result = await _run_agent(
         AgentTurnRequest(
             user_content=_latest_user_content(body),
             candidate_skill_ids=candidate_skill_ids,
@@ -186,6 +218,14 @@ async def _run(
         llm,
         executor,
     )
+    if conversation_id is None:
+        conversation = db.get(Conversation, result.conversation_id)
+        if conversation is not None:
+            conversation.skill_id = (
+                candidate_skill_ids[0] if model.startswith("skill-") else None
+            )
+            db.commit()
+    return result
 
 
 @router.post("/api/chat/turns", response_model=ChatTurnResponse)

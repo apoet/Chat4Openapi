@@ -216,3 +216,23 @@ async def test_browser_turn_forwards_tool_session_and_maps_agent_result(
         )
     ]
     assert response.json()["message"] == "Done."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_skill_id", [True, "1", 0, -1])
+async def test_browser_turn_rejects_non_strict_positive_candidate_skill_ids(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    invalid_skill_id,
+) -> None:
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: SecretCipher(
+        Fernet.generate_key()
+    )
+    response = await client.post(
+        "/api/chat/turns",
+        json={"message": "Run", "candidate_skill_ids": [invalid_skill_id]},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation.invalid"
+    assert "body.candidate_skill_ids.0" in response.json()["error"]["params"]["fields"]

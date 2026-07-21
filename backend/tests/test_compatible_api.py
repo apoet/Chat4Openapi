@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -259,3 +260,120 @@ async def test_noninteractive_compatibility_never_exposes_ask_user(
         conversation = session.query(Conversation).one()
         assert conversation.agent_mode == "react"
         assert conversation.pending_clarification is None
+
+
+@pytest.mark.asyncio
+async def test_skill_alias_conversation_rejects_agent_default_scope_change(
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: FinalAnswerLlm()
+    skill = seed(db_session_factory, cipher)
+    created = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": f"skill-{skill.id}",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+
+    changed = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "agent-default",
+            "conversation_id": created.json()["chatapi_conversation_id"],
+            "messages": [{"role": "user", "content": "Continue"}],
+        },
+    )
+
+    assert changed.status_code == 409
+    assert changed.json()["error"]["code"] == "chat.candidate_scope_locked"
+
+
+@pytest.mark.asyncio
+async def test_agent_default_conversation_rejects_skill_alias_scope_change(
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: FinalAnswerLlm()
+    skill = seed(db_session_factory, cipher)
+    created = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "agent-default",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+
+    changed = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": f"skill-{skill.id}",
+            "conversation_id": created.json()["chatapi_conversation_id"],
+            "messages": [{"role": "user", "content": "Continue"}],
+        },
+    )
+
+    assert changed.status_code == 409
+    assert changed.json()["error"]["code"] == "chat.candidate_scope_locked"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["skill-999", "skill-0", "skill--1"])
+async def test_unknown_or_illegal_skill_alias_is_not_found(
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory, model: str
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: FinalAnswerLlm()
+    seed(db_session_factory, cipher)
+
+    response = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "chat.skill_not_found"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unavailable_state", ["stopped", "deleted"])
+async def test_existing_unavailable_skill_alias_is_rejected(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_session_factory,
+    unavailable_state: str,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    llm = FinalAnswerLlm()
+    app.dependency_overrides[get_llm_client] = lambda: llm
+    skill = seed(db_session_factory, cipher)
+    with db_session_factory() as session:
+        stored = session.get(Skill, skill.id)
+        if unavailable_state == "stopped":
+            stored.running = False
+        else:
+            stored.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        session.commit()
+
+    response = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": f"skill-{skill.id}",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"] == {
+        "code": "agent.skill_unavailable",
+        "params": {"skill_ids": [skill.id]},
+    }
+    assert llm.calls == []
