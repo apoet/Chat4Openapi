@@ -6,10 +6,18 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from chatapi.api.admin_auth import AdminContext, require_admin, require_csrf
 from chatapi.api.errors import ApiError
-from chatapi.models import ApiSource, GlobalToolAuthConfig, Skill, SkillTool, Tool
+from chatapi.models import (
+    ApiSource,
+    GlobalToolAuthConfig,
+    Skill,
+    SkillTool,
+    Tool,
+    ToolParameterOverride,
+)
 from chatapi.schemas.tools import (
     ApiSourceEnabledRequest,
     ApiSourceSummary,
@@ -21,18 +29,28 @@ from chatapi.schemas.tools import (
     ToolAuthConfigRequest,
     ToolAuthConfigResponse,
     ToolEnabledRequest,
+    ToolParameterOverrideRequest,
     ToolSummary,
     ToolUpdateRequest,
 )
 from chatapi.tools.candidates import build_candidates
+from chatapi.tools.effective_schema import (
+    effective_input_schema,
+    reconcile_parameter_overrides,
+)
 from chatapi.tools.openapi_loader import OpenAPIImportError, load_openapi, normalize_openapi
 from chatapi.tools.network_policy import UnsafeNetworkTarget, validate_network_target
 
 router = APIRouter(prefix="/api/admin", tags=["admin-tools"])
 
 
-def _tool_summary(tool: Tool, spec: dict | None = None) -> ToolSummary:
+def _tool_summary(
+    db: Session,
+    tool: Tool,
+    spec: dict | None = None,
+) -> ToolSummary:
     summary = ToolSummary.model_validate(tool)
+    summary = summary.model_copy(update={"input_schema": effective_input_schema(db, tool)})
     if spec is None:
         return summary
     method, path = tool.operation_key.split(" ", 1)
@@ -101,7 +119,7 @@ async def _persist_import(
         raise ApiError(409, "tools.name_conflict") from exc
     return SourceImportResponse(
         source=ApiSourceSummary.model_validate(source),
-        tools=[_tool_summary(tool, spec) for tool in tools],
+        tools=[_tool_summary(context.db, tool, spec) for tool in tools],
     )
 
 
@@ -298,6 +316,7 @@ async def _refresh_source_document(
         tool.operation_key = candidate.operation_key
         tool.description = candidate.description
         tool.input_schema = candidate.input_schema
+        reconcile_parameter_overrides(context.db, tool)
         tool.execution_schema = candidate.execution_schema
         updated += 1
 
@@ -395,7 +414,10 @@ def list_tools(
             select(ApiSource).where(ApiSource.id.in_(source_ids))
         )
     }
-    return [_tool_summary(tool, source_specs.get(tool.api_source_id)) for tool in tools]
+    return [
+        _tool_summary(context.db, tool, source_specs.get(tool.api_source_id))
+        for tool in tools
+    ]
 
 
 def _managed_tool(context: AdminContext, tool_id: int) -> Tool:
@@ -423,7 +445,45 @@ def update_tool(
     context.db.commit()
     source = context.db.get(ApiSource, tool.api_source_id)
     spec = json.loads(source.spec_snapshot) if source is not None else None
-    return _tool_summary(tool, spec)
+    return _tool_summary(context.db, tool, spec)
+
+
+@router.put(
+    "/tools/{tool_id}/parameters/{argument_name}",
+    response_model=ToolSummary,
+)
+def update_tool_parameter(
+    tool_id: int,
+    argument_name: str,
+    payload: ToolParameterOverrideRequest,
+    context: AdminContext = Depends(require_csrf),
+) -> ToolSummary:
+    tool = _managed_tool(context, tool_id)
+    properties = tool.input_schema.get("properties", {})
+    if not isinstance(properties, dict) or argument_name not in properties:
+        raise ApiError(404, "tools.parameter_not_found")
+    override = context.db.scalar(
+        select(ToolParameterOverride).where(
+            ToolParameterOverride.tool_id == tool.id,
+            ToolParameterOverride.argument_name == argument_name,
+        )
+    )
+    if payload.description is None and payload.example is None:
+        if override is not None:
+            context.db.delete(override)
+    else:
+        if override is None:
+            override = ToolParameterOverride(
+                tool_id=tool.id,
+                argument_name=argument_name,
+            )
+            context.db.add(override)
+        override.description = payload.description
+        override.example = payload.example
+    context.db.commit()
+    source = context.db.get(ApiSource, tool.api_source_id)
+    spec = json.loads(source.spec_snapshot) if source is not None else None
+    return _tool_summary(context.db, tool, spec)
 
 
 @router.patch("/tools/{tool_id}/enabled", response_model=ToolSummary)
@@ -439,7 +499,7 @@ def set_tool_enabled(
     context.db.commit()
     source = context.db.get(ApiSource, tool.api_source_id)
     spec = json.loads(source.spec_snapshot) if source is not None else None
-    return _tool_summary(tool, spec)
+    return _tool_summary(context.db, tool, spec)
 
 
 @router.delete("/tools/{tool_id}", status_code=204)

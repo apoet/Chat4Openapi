@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class SourceImportRequest(BaseModel):
@@ -73,6 +73,20 @@ class ToolEnabledRequest(BaseModel):
 
 class ToolUpdateRequest(BaseModel):
     description: str | None = Field(default=None, max_length=4000)
+
+
+class ToolParameterOverrideRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    description: str | None = Field(default=None, max_length=4000)
+    example: Any | None = None
+
+    @field_validator("description")
+    @classmethod
+    def normalize_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
 
 
 class ToolAuthConfigRequest(BaseModel):

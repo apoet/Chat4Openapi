@@ -6,9 +6,12 @@ import pytest
 import yaml
 from cryptography.fernet import Fernet
 from fastapi import FastAPI
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
 
 from chatapi.api import admin_tools
 from chatapi.api.tool_sessions import get_tool_executor, get_tool_secret_cipher
+from chatapi.models import Tool, ToolParameterOverride
 from chatapi.security.encryption import SecretCipher
 from chatapi.tools.executor import ToolExecutionResult
 
@@ -155,6 +158,158 @@ async def test_tool_description_can_be_updated(client: httpx.AsyncClient) -> Non
     assert updated.status_code == 200
     assert updated.json()["description"] == "Search pets by criteria"
     assert listed.json()[0]["description"] == "Search pets by criteria"
+
+
+@pytest.mark.asyncio
+async def test_tool_parameter_guidance_updates_the_effective_schema(
+    client: httpx.AsyncClient,
+    db_session_factory: sessionmaker[Session],
+) -> None:
+    csrf = await admin_login(client)
+    imported = await client.post(
+        "/api/admin/sources/import",
+        json=import_payload(),
+        headers={"X-CSRF-Token": csrf},
+    )
+    tool_id = imported.json()["tools"][0]["id"]
+
+    updated = await client.put(
+        f"/api/admin/tools/{tool_id}/parameters/name",
+        json={"description": "Pet name supplied by the user", "example": "Fido"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    listed = await client.get("/api/admin/tools")
+
+    assert updated.status_code == 200
+    assert updated.json()["input_schema"]["properties"]["name"] == {
+        "type": "string",
+        "description": "Pet name supplied by the user",
+        "example": "Fido",
+    }
+    listed_tool = next(item for item in listed.json() if item["id"] == tool_id)
+    assert listed_tool["input_schema"] == updated.json()["input_schema"]
+    with db_session_factory() as session:
+        stored = session.get(Tool, tool_id)
+        assert stored is not None
+        assert stored.input_schema["properties"]["name"] == {"type": "string"}
+
+
+@pytest.mark.asyncio
+async def test_tool_parameter_guidance_rejects_an_unknown_argument(
+    client: httpx.AsyncClient,
+) -> None:
+    csrf = await admin_login(client)
+    imported = await client.post(
+        "/api/admin/sources/import",
+        json=import_payload(),
+        headers={"X-CSRF-Token": csrf},
+    )
+    tool_id = imported.json()["tools"][0]["id"]
+
+    response = await client.put(
+        f"/api/admin/tools/{tool_id}/parameters/missing",
+        json={"description": "Unknown"},
+        headers={"X-CSRF-Token": csrf},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "tools.parameter_not_found"
+
+
+@pytest.mark.asyncio
+async def test_tool_parameter_guidance_rejects_swagger_owned_fields(
+    client: httpx.AsyncClient,
+) -> None:
+    csrf = await admin_login(client)
+    imported = await client.post(
+        "/api/admin/sources/import",
+        json=import_payload(),
+        headers={"X-CSRF-Token": csrf},
+    )
+    tool_id = imported.json()["tools"][0]["id"]
+
+    response = await client.put(
+        f"/api/admin/tools/{tool_id}/parameters/name",
+        json={
+            "description": "Pet name",
+            "type": "integer",
+            "location": "query",
+            "required": False,
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+
+    assert response.status_code == 422
+    fields = response.json()["error"]["params"]["fields"]
+    assert {"body.type", "body.location", "body.required"} <= set(fields)
+
+
+@pytest.mark.asyncio
+async def test_null_guidance_deletes_the_parameter_override(
+    client: httpx.AsyncClient,
+) -> None:
+    csrf = await admin_login(client)
+    imported = await client.post(
+        "/api/admin/sources/import",
+        json=import_payload(),
+        headers={"X-CSRF-Token": csrf},
+    )
+    tool_id = imported.json()["tools"][0]["id"]
+    endpoint = f"/api/admin/tools/{tool_id}/parameters/name"
+    await client.put(
+        endpoint,
+        json={"description": "Pet name", "example": "Fido"},
+        headers={"X-CSRF-Token": csrf},
+    )
+
+    deleted = await client.put(
+        endpoint,
+        json={"description": "   ", "example": None},
+        headers={"X-CSRF-Token": csrf},
+    )
+
+    assert deleted.status_code == 200
+    assert deleted.json()["input_schema"]["properties"]["name"] == {"type": "string"}
+
+
+@pytest.mark.asyncio
+async def test_skill_editors_receive_effective_tool_parameter_guidance(
+    client: httpx.AsyncClient,
+) -> None:
+    csrf = await admin_login(client)
+    imported = await client.post(
+        "/api/admin/sources/import",
+        json=import_payload(),
+        headers={"X-CSRF-Token": csrf},
+    )
+    tool_id = imported.json()["tools"][0]["id"]
+    await client.patch(
+        f"/api/admin/tools/{tool_id}/enabled",
+        json={"enabled": True},
+        headers={"X-CSRF-Token": csrf},
+    )
+    await client.put(
+        f"/api/admin/tools/{tool_id}/parameters/name",
+        json={"description": "Pet name", "example": "Fido"},
+        headers={"X-CSRF-Token": csrf},
+    )
+
+    eligible = await client.get("/api/admin/skills/eligible-tools")
+    created = await client.post(
+        "/api/admin/skills",
+        json={
+            "name": "Pet helper",
+            "description": None,
+            "system_prompt": "Help with pets.",
+            "tool_ids": [tool_id],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+
+    assert eligible.status_code == 200
+    assert eligible.json()[0]["input_schema"]["properties"]["name"]["example"] == "Fido"
+    assert created.status_code == 201
+    assert created.json()["tools"][0]["input_schema"] == eligible.json()[0]["input_schema"]
 
 
 @pytest.mark.asyncio
@@ -315,6 +470,69 @@ async def test_api_source_file_refresh_updates_only_changed_tools(
     assert updated_tool["id"] == tool_id
     assert updated_tool["enabled"] is True
     assert "limit" in updated_tool["input_schema"]["properties"]
+
+
+@pytest.mark.asyncio
+async def test_source_refresh_preserves_and_reconciles_parameter_guidance(
+    client: httpx.AsyncClient,
+    db_session_factory: sessionmaker[Session],
+) -> None:
+    csrf = await admin_login(client)
+    imported = await client.post(
+        "/api/admin/sources/import",
+        json=import_payload(),
+        headers={"X-CSRF-Token": csrf},
+    )
+    source_id = imported.json()["source"]["id"]
+    tool_id = imported.json()["tools"][0]["id"]
+    await client.put(
+        f"/api/admin/tools/{tool_id}/parameters/trace",
+        json={"description": "Request trace identifier", "example": "trace-123"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    document = json.loads(import_payload()["document"])
+    document["paths"]["/pets"]["post"]["parameters"].append(
+        {"name": "limit", "in": "query", "schema": {"type": "integer"}}
+    )
+
+    preserved_refresh = await client.post(
+        f"/api/admin/sources/{source_id}/refresh-file",
+        files={
+            "document": ("openapi.json", json.dumps(document).encode(), "application/json")
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    listed = await client.get("/api/admin/tools")
+    preserved_tool = next(item for item in listed.json() if item["id"] == tool_id)
+
+    document["paths"]["/pets"]["post"]["parameters"] = [
+        parameter
+        for parameter in document["paths"]["/pets"]["post"]["parameters"]
+        if parameter["name"] != "trace"
+    ]
+    removed_refresh = await client.post(
+        f"/api/admin/sources/{source_id}/refresh-file",
+        files={
+            "document": ("openapi.json", json.dumps(document).encode(), "application/json")
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+
+    assert preserved_refresh.status_code == 200
+    assert preserved_tool["input_schema"]["properties"]["trace"] == {
+        "type": "string",
+        "description": "Request trace identifier",
+        "example": "trace-123",
+    }
+    assert removed_refresh.status_code == 200
+    with db_session_factory() as session:
+        override = session.scalar(
+            select(ToolParameterOverride).where(
+                ToolParameterOverride.tool_id == tool_id,
+                ToolParameterOverride.argument_name == "trace",
+            )
+        )
+        assert override is None
 
 
 @pytest.mark.asyncio

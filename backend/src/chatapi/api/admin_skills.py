@@ -17,8 +17,14 @@ from chatapi.models import (
 )
 from chatapi.schemas.skills import SkillResponse, SkillWriteRequest
 from chatapi.schemas.tools import ToolSummary
+from chatapi.tools.effective_schema import effective_input_schema
 
 router = APIRouter(tags=["skills"])
+
+
+def _tool_summary(db: Session, tool: Tool) -> ToolSummary:
+    summary = ToolSummary.model_validate(tool)
+    return summary.model_copy(update={"input_schema": effective_input_schema(db, tool)})
 
 
 def _skill(context: AdminContext, skill_id: int) -> Skill:
@@ -64,7 +70,7 @@ def _response(db: Session, skill: Skill) -> SkillResponse:
         description=skill.description,
         system_prompt=skill.system_prompt,
         running=skill.running,
-        tools=[ToolSummary.model_validate(tool) for tool in tools],
+        tools=[_tool_summary(db, tool) for tool in tools],
     )
 
 
@@ -130,7 +136,7 @@ def list_eligible_tools(
     )
     if login_tool_id is not None:
         statement = statement.where(Tool.id != login_tool_id)
-    return [ToolSummary.model_validate(tool) for tool in context.db.scalars(statement)]
+    return [_tool_summary(context.db, tool) for tool in context.db.scalars(statement)]
 
 
 @router.post("/api/admin/skills", response_model=SkillResponse, status_code=201)
