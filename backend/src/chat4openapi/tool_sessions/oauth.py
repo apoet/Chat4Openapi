@@ -348,19 +348,19 @@ class ToolOAuthService:
                 if flow.operation_started_at is not None
                 else None
             )
-            operation_is_active = flow.operation_in_progress and (
-                lease_expires_at is not None and lease_expires_at > now
+            retry_at = max(
+                candidate
+                for candidate in (flow.next_poll_at, lease_expires_at, now)
+                if candidate is not None
             )
-            if operation_is_active or (
+            must_wait = (
+                flow.operation_in_progress and retry_at > now
+            ) or (
                 not flow.operation_in_progress
                 and flow.next_poll_at is not None
                 and flow.next_poll_at > now
-            ):
-                retry_at = max(
-                    candidate
-                    for candidate in (flow.next_poll_at, lease_expires_at, now)
-                    if candidate is not None
-                )
+            )
+            if must_wait:
                 retry_after = max(
                     1,
                     int((retry_at - now).total_seconds()),
@@ -556,8 +556,10 @@ class ToolOAuthService:
                 source.id,
                 row.absolute_expires_at,
             )
-        except Exception:
+        except BaseException as exc:
             self._fail_claimed_pkce(flow_id, row_id)
+            if not isinstance(exc, Exception):
+                raise
             raise OAuthFlowError("oauth.exchange_failed") from None
 
     def _fail_claimed_pkce(self, flow_id: int, row_id: int) -> None:

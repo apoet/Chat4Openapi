@@ -413,6 +413,60 @@ async def test_device_poll_reclaims_a_stale_crashed_operation(db_session_factory
 
 
 @pytest.mark.asyncio
+async def test_device_stale_claim_still_waits_for_long_issuer_interval(
+    db_session_factory,
+) -> None:
+    _secret, agent_id, key_id, source_id = _seed(db_session_factory)
+    now = datetime(2026, 7, 22, 8, 0, 0)
+    poll_requests = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal poll_requests
+        if request.url.path == "/device":
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "dev",
+                    "user_code": "CODE",
+                    "verification_uri": "https://issuer.example.test/verify",
+                    "expires_in": 600,
+                    "interval": 120,
+                },
+            )
+        poll_requests += 1
+        return httpx.Response(400, json={"error": "authorization_pending"})
+
+    with db_session_factory() as db:
+        service = ToolOAuthService(
+            db,
+            SecretCipher(Fernet.generate_key()),
+            transport=httpx.MockTransport(handler),
+            network_validator=allow_network,
+            now=lambda: now,
+        )
+        _configure(service, source_id)
+        context = _context(db, agent_id, key_id)
+        started = await service.start_device(context, source_id)
+        flow = db.scalar(select(ToolOAuthAuthorization))
+        assert flow is not None
+        flow.operation_generation = 9
+        flow.operation_in_progress = True
+        flow.operation_started_at = now
+        db.commit()
+
+        now += timedelta(seconds=61)
+        with pytest.raises(OAuthPollingTooSoon) as too_soon:
+            await service.poll_device(started.tool_session_id, context)
+        assert too_soon.value.retry_after == 59
+        assert poll_requests == 0
+
+        now += timedelta(seconds=59)
+        pending = await service.poll_device(started.tool_session_id, context)
+        assert pending.status == "pending"
+        assert poll_requests == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure_kind", ["network", "json"])
 async def test_device_failed_attempt_is_still_throttled(
     db_session_factory, failure_kind: str
@@ -675,6 +729,49 @@ async def test_claimed_pkce_failure_is_redacted_and_erases_all_flow_secrets(
         assert row.status == "failed"
         assert credential.status == "failed"
         assert cipher.decrypt_json(failed_flow.encrypted_flow_data) == {}
+        assert cipher.decrypt_json(credential.encrypted_credentials) == {}
+
+
+@pytest.mark.asyncio
+async def test_claimed_pkce_cancellation_erases_secrets_and_is_re_raised(
+    db_session_factory,
+) -> None:
+    _secret, agent_id, _key_id, source_id = _seed(db_session_factory)
+    now = datetime(2026, 7, 22, 8, 0, 0)
+    cancellation = asyncio.CancelledError("cancel-secret")
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        raise cancellation
+
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as db:
+        service = ToolOAuthService(
+            db,
+            cipher,
+            transport=httpx.MockTransport(handler),
+            network_validator=allow_network,
+            now=lambda: now,
+        )
+        _configure(service, source_id)
+        started = await service.start_pkce(
+            _admin_context(db), source_id, agent_id=agent_id
+        )
+
+        with pytest.raises(asyncio.CancelledError) as raised:
+            await service.complete_pkce(started.state, "authorization-code")
+        assert raised.value is cancellation
+
+        db.expire_all()
+        flow = db.scalar(select(ToolOAuthAuthorization))
+        row = db.scalar(select(ToolUserSession))
+        credential = db.scalar(select(ToolSessionCredential))
+        assert flow is not None and row is not None and credential is not None
+        assert (flow.status, row.status, credential.status) == (
+            "failed",
+            "failed",
+            "failed",
+        )
+        assert cipher.decrypt_json(flow.encrypted_flow_data) == {}
         assert cipher.decrypt_json(credential.encrypted_credentials) == {}
 
 

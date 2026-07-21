@@ -98,3 +98,19 @@ files.
 - `git diff --check`: clean.
 - Production/migration secret-literal, logging, legacy product-name, and legacy Tool Session header
   scans: no matches.
+
+### Second review follow-up
+
+- Stale Device-operation recovery now respects both clocks. A crashed claim can be reclaimed only
+  at `max(operation_started_at + 60 seconds, next_poll_at)`, so an issuer interval longer than the
+  local lease is never shortened. The regression verifies an interval of 120 seconds remains
+  blocked at second 61 and is eligible at second 120; network/JSON failure throttling remains
+  covered.
+- PKCE cancellation after the one-time state claim now performs the same atomic failed-state and
+  ciphertext cleanup as ordinary callback failures, then re-raises the original `CancelledError`.
+  Other non-`Exception` control-flow signals, including `KeyboardInterrupt` and `SystemExit`, are
+  likewise cleaned up and re-raised rather than translated; ordinary exceptions retain the stable
+  `oauth.exchange_failed` mapping.
+
+Second follow-up verification: focused suites `59 passed`; full backend `281 passed`; Ruff,
+Alembic head/roundtrips, `git diff --check`, and production security/legacy scans all passed.
