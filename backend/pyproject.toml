@@ -13,6 +13,7 @@ dependencies = [
   "fastapi>=0.116,<1",
   "fastmcp==3.4.4",
   "httpx>=0.28,<1",
+  "jsonschema>=4.25,<5",
   "openapi-spec-validator>=0.8,<1",
   "pydantic-settings>=2.10,<3",
   "PyYAML>=6.0,<7",

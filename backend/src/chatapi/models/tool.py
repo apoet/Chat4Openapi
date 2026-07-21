@@ -18,7 +18,7 @@ class Tool(Base):
         ForeignKey("api_sources.id", ondelete="CASCADE"), index=True
     )
     operation_key: Mapped[str] = mapped_column(String(1024))
-    name: Mapped[str] = mapped_column(String(128), unique=True)
+    name: Mapped[str] = mapped_column(String(128))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     input_schema: Mapped[dict[str, Any]] = mapped_column(JSON)
     execution_schema: Mapped[dict[str, Any]] = mapped_column(JSON)

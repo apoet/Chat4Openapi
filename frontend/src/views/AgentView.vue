@@ -18,6 +18,8 @@ const form = reactive<AgentConfig>({
   model: null,
   mode: 'human_in_loop',
   max_iterations: 8,
+  created_at: '',
+  updated_at: '',
 })
 const enabledProviders = computed(() => store.providers.filter((provider) => provider.enabled))
 const canSave = computed(() => Boolean(

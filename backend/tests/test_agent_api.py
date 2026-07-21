@@ -4,6 +4,7 @@ import httpx
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
+from chatapi.chat.agent import DEFAULT_AGENT_PROMPT
 from chatapi.models import AgentConfig, LlmProvider
 
 ADMIN = {"username": "admin", "password": "StrongPass!123", "locale": "en-US"}
@@ -104,6 +105,8 @@ async def test_authenticated_admin_can_read_the_singleton_agent(
     response = await client.get("/api/admin/agent")
 
     assert response.status_code == 200
+    created_at = response.json()["created_at"]
+    updated_at = response.json()["updated_at"]
     assert response.json() == {
         "id": 1,
         "name": "ChatAPI Agent",
@@ -113,6 +116,8 @@ async def test_authenticated_admin_can_read_the_singleton_agent(
         "model": None,
         "mode": "human_in_loop",
         "max_iterations": 8,
+        "created_at": created_at,
+        "updated_at": updated_at,
     }
 
 
@@ -144,8 +149,19 @@ async def test_authenticated_admin_can_update_the_singleton_agent(
     )
 
     assert response.status_code == 200
-    assert response.json() == {"id": 1, **payload}
-    assert (await client.get("/api/admin/agent")).json() == {"id": 1, **payload}
+    assert response.json() == {
+        "id": 1,
+        **payload,
+        "created_at": response.json()["created_at"],
+        "updated_at": response.json()["updated_at"],
+    }
+    refreshed = (await client.get("/api/admin/agent")).json()
+    assert refreshed == {
+        "id": 1,
+        **payload,
+        "created_at": refreshed["created_at"],
+        "updated_at": refreshed["updated_at"],
+    }
 
 
 @pytest.mark.asyncio
@@ -216,16 +232,28 @@ async def test_authenticated_admin_can_reset_the_singleton_agent(
     )
 
     assert response.status_code == 200
+    assert response.json()["system_prompt"] == DEFAULT_AGENT_PROMPT
+    for required_rule in (
+        "load a Skill before using its Tools",
+        "never invent required Tool arguments",
+        "human-in-loop",
+        "ReAct",
+        "user's language",
+        "Markdown",
+        "retry",
+        "unavailable",
+        "Tool failures",
+    ):
+        assert required_rule.lower() in response.json()["system_prompt"].lower()
     assert response.json() == {
         "id": 1,
         "name": "ChatAPI Agent",
         "enabled": True,
-        "system_prompt": (
-            "You are ChatAPI Agent, the built-in assistant. Use the available Skills "
-            "and Tools to help the user, and return clear Markdown responses."
-        ),
+        "system_prompt": DEFAULT_AGENT_PROMPT,
         "provider_id": provider_id,
         "model": None,
         "mode": "human_in_loop",
         "max_iterations": 8,
+        "created_at": response.json()["created_at"],
+        "updated_at": response.json()["updated_at"],
     }

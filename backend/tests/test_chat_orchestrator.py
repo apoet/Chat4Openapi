@@ -3,6 +3,7 @@ import pytest
 import chatapi.chat.orchestrator as orchestrator_module
 from chatapi.chat.agent import AgentTurnRequest, AgentTurnResult
 from chatapi.chat.orchestrator import ChatOrchestrator
+from chatapi.llm.client import CanonicalMessage
 
 
 class RecordingRuntime:
@@ -58,6 +59,13 @@ async def test_compatibility_orchestrator_delegates_to_agent_runtime(monkeypatch
             candidate_skill_ids=[7],
             interactive=False,
             tool_session_id="tool-session-1",
+            incoming_messages=[
+                CanonicalMessage(role="system", content="Compatibility client context"),
+                CanonicalMessage(role="user", content="older question"),
+                CanonicalMessage(role="assistant", content="older answer"),
+                CanonicalMessage(role="user", content="Find Milo"),
+            ],
+            candidate_scope_source="explicit",
         )
     ]
 

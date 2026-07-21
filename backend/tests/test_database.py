@@ -2,7 +2,9 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+import pytest
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import IntegrityError
 
 from chatapi.db.session import create_engine_for_url
 
@@ -61,5 +63,90 @@ def test_agent_runtime_migration_creates_persistence_schema(tmp_path: Path) -> N
         "agent_mode",
         "agent_status",
         "pending_clarification",
+        "candidate_scope_source",
+        "latest_failure_summary",
     } <= conversation_columns
+    agent_columns = {column["name"] for column in inspector.get_columns("agent_config")}
+    agent_checks = {
+        constraint["name"] for constraint in inspector.get_check_constraints("agent_config")
+    }
+    assert {"created_at", "updated_at"} <= agent_columns
+    assert {"ck_agent_mode", "ck_agent_max_iterations"} <= agent_checks
     assert {"provider_id", "model"}.isdisjoint(skill_columns)
+
+
+def test_database_constraints_reject_invalid_agent_runtime_settings(tmp_path: Path) -> None:
+    database_url = sqlite_url(tmp_path / "agent-checks.db")
+    config = Config("backend/alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "head")
+    engine = create_engine_for_url(database_url)
+
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(text("UPDATE agent_config SET mode = 'invalid' WHERE id = 1"))
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(text("UPDATE agent_config SET max_iterations = 1 WHERE id = 1"))
+
+    engine.dispose()
+
+
+def test_0007_downgrade_and_reupgrade_round_trip(tmp_path: Path) -> None:
+    database_url = sqlite_url(tmp_path / "agent-hardening-round-trip.db")
+    config = Config("backend/alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "head")
+
+    command.downgrade(config, "0006_varcards_markdown_prompt")
+    engine = create_engine_for_url(database_url)
+    inspector = inspect(engine)
+    conversation_columns = {
+        column["name"] for column in inspector.get_columns("conversations")
+    }
+    agent_columns = {column["name"] for column in inspector.get_columns("agent_config")}
+    engine.dispose()
+    assert "candidate_scope_source" not in conversation_columns
+    assert "latest_failure_summary" not in conversation_columns
+    assert {"created_at", "updated_at"}.isdisjoint(agent_columns)
+
+    command.upgrade(config, "head")
+    engine = create_engine_for_url(database_url)
+    inspector = inspect(engine)
+    conversation_columns = {
+        column["name"] for column in inspector.get_columns("conversations")
+    }
+    agent_columns = {column["name"] for column in inspector.get_columns("agent_config")}
+    engine.dispose()
+    assert {"candidate_scope_source", "latest_failure_summary"} <= conversation_columns
+    assert {"created_at", "updated_at"} <= agent_columns
+
+
+def test_0007_allows_distinct_tool_rows_to_share_a_name(tmp_path: Path) -> None:
+    database_url = sqlite_url(tmp_path / "tool-name-scope.db")
+    config = Config("backend/alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "head")
+    engine = create_engine_for_url(database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO api_sources (id, name, source_type, base_url, enabled)
+                VALUES
+                    (1, 'First', 'openapi', 'https://first.test', true),
+                    (2, 'Second', 'openapi', 'https://second.test', true)
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO tools
+                    (api_source_id, operation_key, name, input_schema,
+                     execution_schema, enabled)
+                VALUES
+                    (1, 'GET /first', 'shared_name', '{}', '{}', true),
+                    (2, 'GET /second', 'shared_name', '{}', '{}', true)
+                """
+            )
+        )
+    engine.dispose()

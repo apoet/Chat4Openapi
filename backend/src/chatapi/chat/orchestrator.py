@@ -10,6 +10,7 @@ from chatapi.chat.agent import (
     LlmCompleter,
     ToolRunner,
 )
+from chatapi.llm.client import CanonicalMessage
 from chatapi.security.encryption import SecretCipher
 
 ChatError = AgentError
@@ -51,6 +52,18 @@ class ChatOrchestrator:
         if user_message is None:
             raise ValueError("Compatibility chat requires a user message")
         content = user_message.get("content", "")
+        incoming_messages = [
+            CanonicalMessage(
+                role=str(message.get("role", "user")),
+                content=(
+                    message.get("content", "")
+                    if isinstance(message.get("content", ""), str)
+                    else str(message.get("content", ""))
+                ),
+            )
+            for message in messages
+            if message.get("role") in {"system", "user", "assistant"}
+        ]
         return await self._runtime.run(
             AgentTurnRequest(
                 conversation_id=conversation_id,
@@ -58,5 +71,7 @@ class ChatOrchestrator:
                 candidate_skill_ids=[skill_id],
                 interactive=False,
                 tool_session_id=tool_session_id,
+                incoming_messages=incoming_messages,
+                candidate_scope_source="explicit",
             )
         )

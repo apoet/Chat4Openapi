@@ -10,6 +10,18 @@ down_revision: str | Sequence[str] | None = "0004_api_source_refresh"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+DEFAULT_AGENT_PROMPT = """You are ChatAPI Agent, the built-in assistant.
+
+Operating rules:
+- Choose Skills only from the provided Skill catalog, using their declared names and descriptions.
+- Always load a Skill before using its Tools.
+- Never invent required Tool arguments or claim a Tool result that was not observed.
+- In human-in-loop mode, ask the user to clarify material missing, ambiguous, or choice-dependent business inputs before making an unreliable call.
+- In non-interactive ReAct mode, make a reasonable supported assumption when necessary and disclose it in the final response.
+- Respond in the user's language.
+- Prefer clear, structured Markdown, including tables for structured results.
+- If retry attempts are exhausted, a Skill is unavailable, or Tool failures prevent completion, explain the limitation clearly and do not fabricate success."""
+
 
 def upgrade() -> None:
     op.create_table(
@@ -32,6 +44,12 @@ def upgrade() -> None:
         ),
         sa.Column("max_iterations", sa.Integer(), nullable=False, server_default="8"),
         sa.CheckConstraint("id = 1", name="ck_single_agent_config"),
+        sa.CheckConstraint(
+            "mode IN ('human_in_loop', 'react')", name="ck_agent_mode"
+        ),
+        sa.CheckConstraint(
+            "max_iterations BETWEEN 2 AND 32", name="ck_agent_max_iterations"
+        ),
     )
 
     connection = op.get_bind()
@@ -52,10 +70,11 @@ def upgrade() -> None:
             INSERT INTO agent_config
                 (id, name, enabled, system_prompt, provider_id, model, mode, max_iterations)
             VALUES
-                (1, 'ChatAPI Agent', true, '', :provider_id, NULL, 'human_in_loop', 8)
+                (1, 'ChatAPI Agent', true, :system_prompt, :provider_id,
+                 NULL, 'human_in_loop', 8)
             """
         ),
-        {"provider_id": provider_id},
+        {"provider_id": provider_id, "system_prompt": DEFAULT_AGENT_PROMPT},
     )
 
     op.create_table(

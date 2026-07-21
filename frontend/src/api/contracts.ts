@@ -101,9 +101,11 @@ export interface AgentConfig {
   model: string | null
   mode: 'human_in_loop' | 'react'
   max_iterations: number
+  created_at: string
+  updated_at: string
 }
 
-export type AgentConfigWrite = Omit<AgentConfig, 'id'>
+export type AgentConfigWrite = Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'>
 
 export interface SkillSummary {
   id: number

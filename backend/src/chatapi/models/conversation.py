@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, JSON, String, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from chatapi.db.base import Base
@@ -19,12 +19,16 @@ class Conversation(Base):
     )
     title: Mapped[str | None] = mapped_column(String(256), nullable=True)
     candidate_skill_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
+    candidate_scope_source: Mapped[str] = mapped_column(
+        String(32), default="automatic"
+    )
     loaded_skill_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
     agent_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
     agent_status: Mapped[str] = mapped_column(String(32), default="running")
     pending_clarification: Mapped[dict[str, Any] | None] = mapped_column(
         JSON, nullable=True
     )
+    latest_failure_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -24,3 +25,5 @@ class AgentConfigResponse(BaseModel):
     model: str | None
     mode: Literal["human_in_loop", "react"]
     max_iterations: int
+    created_at: datetime
+    updated_at: datetime

@@ -16,7 +16,7 @@ from chatapi.api.tool_sessions import (
 )
 from chatapi.chat.agent import AgentError, AgentRuntime, AgentTurnRequest, AgentTurnResult
 from chatapi.db.session import get_db_session
-from chatapi.llm.client import LlmClient, LlmProviderError
+from chatapi.llm.client import CanonicalMessage, LlmClient, LlmProviderError
 from chatapi.models import AgentConfig, Conversation, Skill
 from chatapi.schemas.chat import ChatTurnRequest, ChatTurnResponse
 from chatapi.security.encryption import SecretCipher
@@ -110,6 +110,37 @@ def _latest_user_content(body: dict[str, Any]) -> str:
     return _content_text(user_message.get("content", ""))
 
 
+def _incoming_messages(
+    body: dict[str, Any], *, anthropic: bool
+) -> list[CanonicalMessage]:
+    raw_messages = body.get("messages")
+    if not isinstance(raw_messages, list):
+        raise ApiError(422, "validation.invalid", fields=["body.messages"])
+    messages: list[CanonicalMessage] = []
+    if anthropic and "system" in body:
+        system = _content_text(body["system"])
+        if system:
+            messages.append(CanonicalMessage(role="system", content=system))
+    for index, item in enumerate(raw_messages):
+        if not isinstance(item, dict) or item.get("role") not in {
+            "system",
+            "user",
+            "assistant",
+        }:
+            raise ApiError(
+                422, "validation.invalid", fields=[f"body.messages.{index}"]
+            )
+        messages.append(
+            CanonicalMessage(
+                role=str(item["role"]),
+                content=_content_text(item.get("content", "")),
+            )
+        )
+    if not any(message.role == "user" for message in messages):
+        raise ApiError(422, "validation.invalid", fields=["body.messages"])
+    return messages
+
+
 def _agent_error(exc: AgentError) -> ApiError:
     status_code = 404 if exc.code == "agent.conversation_not_found" else 409
     return ApiError(status_code, exc.code, **exc.params)
@@ -134,13 +165,16 @@ def _validate_conversation_scope(
     *,
     scope_supplied: bool,
 ) -> None:
-    if conversation_id is None or not scope_supplied:
+    if conversation_id is None or not scope_supplied or not candidate_skill_ids:
         return
     conversation = db.get(Conversation, conversation_id)
     if conversation is None or conversation.deleted_at is not None:
         return
-    requested = _resolved_candidate_ids(db, candidate_skill_ids)
-    if set(requested) != set(conversation.candidate_skill_ids):
+    requested = list(dict.fromkeys(candidate_skill_ids))
+    if (
+        conversation.candidate_scope_source != "explicit"
+        or set(requested) != set(conversation.candidate_skill_ids)
+    ):
         raise ApiError(409, "chat.candidate_scope_locked")
 
 
@@ -149,6 +183,8 @@ def _validate_compatibility_scope(
     conversation_id: str | None,
     candidate_skill_ids: list[int],
     model: str,
+    *,
+    scope_supplied: bool,
 ) -> None:
     if conversation_id is None:
         return
@@ -162,7 +198,7 @@ def _validate_compatibility_scope(
         db,
         conversation_id,
         candidate_skill_ids,
-        scope_supplied=True,
+        scope_supplied=scope_supplied,
     )
 
 
@@ -190,6 +226,8 @@ async def _run(
     executor: ToolExecutor,
     chatapi_tool_session_header: str | None,
     legacy_tool_session_header: str | None,
+    *,
+    anthropic: bool,
 ):
     candidate_skill_ids = _candidate_skill_ids(body, db)
     model = body.get("model", "")
@@ -199,6 +237,9 @@ async def _run(
         conversation_id,
         candidate_skill_ids,
         model,
+        scope_supplied=(
+            model.startswith("skill-") or "chatapi_skill_ids" in body
+        ),
     )
     result = await _run_agent(
         AgentTurnRequest(
@@ -211,6 +252,12 @@ async def _run(
                 request,
                 chatapi_tool_session_header,
                 legacy_tool_session_header,
+            ),
+            incoming_messages=_incoming_messages(body, anthropic=anthropic),
+            candidate_scope_source=(
+                "explicit"
+                if model.startswith("skill-") or "chatapi_skill_ids" in body
+                else "automatic"
             ),
         ),
         db,
@@ -259,6 +306,9 @@ async def browser_turn(
                 chatapi_tool_session_header
                 or legacy_tool_session_header
                 or request.cookies.get(TOOL_SESSION_COOKIE)
+            ),
+            candidate_scope_source=(
+                "explicit" if payload.candidate_skill_ids else "automatic"
             ),
         ),
         db,
@@ -334,6 +384,7 @@ async def openai_chat(
         executor,
         chatapi_tool_session_header,
         legacy_tool_session_header,
+        anthropic=False,
     )
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
@@ -399,6 +450,7 @@ async def anthropic_messages(
         executor,
         chatapi_tool_session_header,
         legacy_tool_session_header,
+        anthropic=True,
     )
     message_id = f"msg_{uuid.uuid4().hex}"
     if body.get("stream"):

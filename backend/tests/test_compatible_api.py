@@ -8,8 +8,8 @@ from fastapi import FastAPI
 
 from chatapi.api.tool_sessions import get_tool_secret_cipher
 from chatapi.chat.api import get_llm_client
-from chatapi.llm.client import CanonicalResponse, CanonicalToolCall
-from chatapi.models import AgentConfig, Conversation, LlmProvider, Skill
+from chatapi.llm.client import CanonicalResponse, CanonicalToolCall, LlmProviderError
+from chatapi.models import AgentConfig, ChatMessage, Conversation, LlmProvider, Skill
 from chatapi.security.encryption import SecretCipher
 
 
@@ -153,6 +153,132 @@ async def test_anthropic_messages_and_event_stream_are_compatible(
     assert response.json()["content"] == [{"type": "text", "text": "Hello from the Agent."}]
     assert "event: content_block_delta" in streamed.text
     assert streamed.text.rstrip().endswith("event: message_stop\ndata: {\"type\":\"message_stop\"}")
+
+
+@pytest.mark.asyncio
+async def test_openai_new_conversation_persists_and_uses_full_transcript(
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    llm = FinalAnswerLlm()
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: llm
+    skill = seed(db_session_factory, cipher)
+
+    response = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": f"skill-{skill.id}",
+            "messages": [
+                {"role": "system", "content": "Client policy"},
+                {"role": "user", "content": "First question"},
+                {"role": "assistant", "content": "First answer"},
+                {"role": "user", "content": "Follow up"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    visible = [
+        (message.role, message.content)
+        for message in llm.calls[0]["messages"]
+        if message.role in {"system", "user", "assistant"}
+    ]
+    assert ("system", "Client policy") in visible
+    assert visible[-3:] == [
+        ("user", "First question"),
+        ("assistant", "First answer"),
+        ("user", "Follow up"),
+    ]
+    with db_session_factory() as session:
+        conversation_id = response.json()["chatapi_conversation_id"]
+        stored = session.query(ChatMessage).filter_by(
+            conversation_id=conversation_id
+        ).order_by(ChatMessage.sequence).all()
+        assert [(item.role, item.content["text"]) for item in stored] == [
+            ("system", "Client policy"),
+            ("user", "First question"),
+            ("assistant", "First answer"),
+            ("user", "Follow up"),
+            ("assistant", "Hello from the Agent."),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_top_level_system_and_full_transcript_are_preserved(
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    llm = FinalAnswerLlm()
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: llm
+    skill = seed(db_session_factory, cipher)
+
+    response = await client.post(
+        "/v1/messages",
+        json={
+            "model": f"skill-{skill.id}",
+            "max_tokens": 128,
+            "system": [{"type": "text", "text": "Anthropic policy"}],
+            "messages": [
+                {"role": "user", "content": "First question"},
+                {"role": "assistant", "content": "First answer"},
+                {"role": "user", "content": [{"type": "text", "text": "Follow up"}]},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert [(message.role, message.content) for message in llm.calls[0]["messages"]][-4:] == [
+        ("system", "Anthropic policy"),
+        ("user", "First question"),
+        ("assistant", "First answer"),
+        ("user", "Follow up"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_compatibility_continuation_appends_only_new_transcript_suffix(
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    llm = FinalAnswerLlm()
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: llm
+    skill = seed(db_session_factory, cipher)
+    first = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": f"skill-{skill.id}",
+            "messages": [{"role": "user", "content": "First question"}],
+        },
+    )
+    conversation_id = first.json()["chatapi_conversation_id"]
+
+    second = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": f"skill-{skill.id}",
+            "conversation_id": conversation_id,
+            "messages": [
+                {"role": "user", "content": "First question"},
+                {"role": "assistant", "content": "Hello from the Agent."},
+                {"role": "user", "content": "Second question"},
+            ],
+        },
+    )
+
+    assert second.status_code == 200
+    with db_session_factory() as session:
+        stored = session.query(ChatMessage).filter_by(
+            conversation_id=conversation_id
+        ).order_by(ChatMessage.sequence).all()
+        assert [(item.role, item.content["text"]) for item in stored] == [
+            ("user", "First question"),
+            ("assistant", "Hello from the Agent."),
+            ("user", "Second question"),
+            ("assistant", "Hello from the Agent."),
+        ]
 
 
 @pytest.mark.asyncio
@@ -321,6 +447,55 @@ async def test_agent_default_conversation_rejects_skill_alias_scope_change(
 
 
 @pytest.mark.asyncio
+async def test_agent_default_continuation_keeps_initial_automatic_scope_when_catalog_changes(
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    llm = FinalAnswerLlm()
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: llm
+    first_skill = seed(db_session_factory, cipher)
+    created = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "agent-default",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+    conversation_id = created.json()["chatapi_conversation_id"]
+    with db_session_factory() as session:
+        session.add(
+            Skill(
+                name="Added later",
+                description="A later catalog entry.",
+                system_prompt="Help later.",
+                running=True,
+            )
+        )
+        session.commit()
+
+    continued = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "agent-default",
+            "conversation_id": conversation_id,
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hello from the Agent."},
+                {"role": "user", "content": "Continue"},
+            ],
+        },
+    )
+
+    assert continued.status_code == 200
+    catalog = json.loads(llm.calls[-1]["messages"][1].content)
+    assert [item["id"] for item in catalog["skills"]] == [first_skill.id]
+    with db_session_factory() as session:
+        conversation = session.get(Conversation, conversation_id)
+        assert conversation.candidate_scope_source == "automatic"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("model", ["skill-999", "skill-0", "skill--1"])
 async def test_unknown_or_illegal_skill_alias_is_not_found(
     client: httpx.AsyncClient, app: FastAPI, db_session_factory, model: str
@@ -377,3 +552,38 @@ async def test_existing_unavailable_skill_alias_is_rejected(
         "params": {"skill_ids": [skill.id]},
     }
     assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_uses_redacted_structured_api_envelope(
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory
+) -> None:
+    class FailedLlm:
+        async def complete(self, **_kwargs):
+            raise LlmProviderError(500, {"body": "secret upstream response"})
+
+    cipher = SecretCipher(Fernet.generate_key())
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: FailedLlm()
+    skill = seed(db_session_factory, cipher)
+
+    response = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": f"skill-{skill.id}",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "error": {
+            "code": "agent.provider_failed",
+            "params": {"reason": "LLM provider request failed."},
+        }
+    }
+    assert "secret" not in response.text.lower()
+    with db_session_factory() as session:
+        conversation = session.query(Conversation).one()
+        assert conversation.agent_status == "failed"
+        assert conversation.latest_failure_summary == "LLM provider request failed."

@@ -8,7 +8,7 @@ from chatapi.api.tool_sessions import get_tool_secret_cipher
 from chatapi.chat.agent import AgentTurnRequest, AgentTurnResult
 from chatapi.chat.api import get_llm_client
 from chatapi.llm.client import CanonicalResponse, CanonicalToolCall
-from chatapi.models import AgentConfig, LlmProvider, Skill
+from chatapi.models import AgentConfig, Conversation, LlmProvider, Skill
 from chatapi.security.encryption import SecretCipher
 
 
@@ -175,6 +175,48 @@ async def test_browser_turn_rejects_candidate_changes_for_existing_conversation(
 
 
 @pytest.mark.asyncio
+async def test_browser_auto_scope_continuation_does_not_recompute_changed_catalog(
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    first, _second = seed_agent(db_session_factory, cipher)
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    llm = SequencedLlm(
+        [CanonicalResponse(content="First."), CanonicalResponse(content="Second.")]
+    )
+    app.dependency_overrides[get_llm_client] = lambda: llm
+    created = await client.post(
+        "/api/chat/turns", json={"message": "Hello", "candidate_skill_ids": []}
+    )
+    conversation_id = created.json()["conversation_id"]
+    with db_session_factory() as session:
+        session.add(
+            Skill(
+                name="Added later",
+                description="Later.",
+                system_prompt="Later prompt.",
+                running=True,
+            )
+        )
+        session.commit()
+
+    continued = await client.post(
+        "/api/chat/turns",
+        json={
+            "message": "Continue",
+            "conversation_id": conversation_id,
+            "candidate_skill_ids": [],
+        },
+    )
+
+    assert continued.status_code == 200
+    with db_session_factory() as session:
+        conversation = session.get(Conversation, conversation_id)
+        assert conversation.candidate_scope_source == "automatic"
+        assert conversation.candidate_skill_ids == [first.id, _second.id]
+
+
+@pytest.mark.asyncio
 async def test_browser_turn_forwards_tool_session_and_maps_agent_result(
     client: httpx.AsyncClient, monkeypatch
 ) -> None:
@@ -211,9 +253,10 @@ async def test_browser_turn_forwards_tool_session_and_maps_agent_result(
         AgentTurnRequest(
             user_content="Run",
             candidate_skill_ids=[7],
-            interactive=True,
-            tool_session_id="header-session",
-        )
+                interactive=True,
+                tool_session_id="header-session",
+                candidate_scope_source="explicit",
+            )
     ]
     assert response.json()["message"] == "Done."
 
