@@ -113,3 +113,17 @@ export interface SkillSummary {
   running: boolean
   tools: ToolSummary[]
 }
+
+export interface ChatTurnRequest {
+  message: string
+  conversation_id: string | null
+  candidate_skill_ids: number[]
+}
+
+export interface ChatTurnResponse {
+  status: 'completed' | 'needs_input'
+  conversation_id: string
+  message: string
+  loaded_skill_ids: number[]
+  pending: Record<string, unknown> | null
+}

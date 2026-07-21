@@ -178,97 +178,177 @@ describe('Skills and chat', () => {
     expect(fetchMock.mock.calls[3][0]).toBe('/api/admin/skills/5')
   })
 
-  it('places the running Skill selector below the input and renders a reply', async () => {
-    const fetchMock = vi
-      .fn()
+  it('auto-routes with an empty selection and sends multiple candidate Skills', async () => {
+    const fetchMock = vi.fn()
       .mockResolvedValueOnce(response({ enabled: false }))
-      .mockResolvedValueOnce(
-        response([
-          {
-            id: 5,
-            name: 'Pet helper',
-            description: null,
-            system_prompt: 'Help',
-            running: true,
-            tools: [],
-          },
-        ]),
-      )
-      .mockResolvedValueOnce(
-        response({
-          choices: [{ message: { role: 'assistant', content: 'Milo is ready.' } }],
-          chatapi_conversation_id: 'conversation-1',
-        }),
-      )
+      .mockResolvedValueOnce(response([
+        { id: 1, name: 'Pet helper', description: null, system_prompt: 'Help', running: true, tools: [] },
+        { id: 2, name: 'Order helper', description: null, system_prompt: 'Help', running: true, tools: [] },
+      ]))
+      .mockResolvedValueOnce(response({
+        status: 'completed',
+        conversation_id: 'conversation-1',
+        message: 'Milo is ready.',
+        loaded_skill_ids: [1],
+        pending: null,
+      }))
     vi.stubGlobal('fetch', fetchMock)
 
     const { container } = render(ChatView, {
       global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
     })
     const input = await screen.findByLabelText('Message')
-    const selector = screen.getByLabelText('Skill')
-    await screen.findByRole('option', { name: 'Pet helper' })
-    expect(
-      input.compareDocumentPosition(selector) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy()
-    await fireEvent.update(selector, '5')
+    const selector = screen.getByRole('button', { name: 'Select candidate Skills' })
+    expect(screen.getByText('Agent auto-select')).toBeTruthy()
+    expect(input.compareDocumentPosition(selector) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    await fireEvent.click(selector)
+    await fireEvent.click(await screen.findByRole('checkbox', { name: 'Pet helper' }))
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Order helper' }))
     await fireEvent.update(input, 'Find Milo')
     await fireEvent.click(screen.getByRole('button', { name: 'Send' }))
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    expect(fetchMock.mock.calls[2][0]).toBe('/api/chat/turns')
+    expect(JSON.parse(fetchMock.mock.calls[2][1]?.body as string)).toEqual({
+      message: 'Find Milo',
+      conversation_id: null,
+      candidate_skill_ids: [1, 2],
+    })
     expect(await screen.findByText('Milo is ready.')).toBeTruthy()
     expect(container.querySelector('.skill-dock')).toBeTruthy()
   })
 
-  it('stores conversations in the browser and restores them after remounting', async () => {
-    const skill = {
-      id: 5,
-      name: 'Varcards2-Gene',
-      description: null,
-      system_prompt: 'Query gene variants',
-      running: true,
-      tools: [],
-    }
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(response({ enabled: false }))
-      .mockResolvedValueOnce(response([skill]))
-      .mockResolvedValueOnce(response({
-        choices: [{ message: { role: 'assistant', content: 'ABCA4 variants found.' } }],
-        chatapi_conversation_id: 'conversation-abca4',
-      }))
-    vi.stubGlobal('fetch', fetchMock)
-
-    const first = render(ChatView, {
-      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
-    })
-    await screen.findByRole('option', { name: 'Varcards2-Gene' })
-    await fireEvent.update(await screen.findByLabelText('Message'), '查询ABCA4位点')
-    await fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-    expect(await screen.findByText('ABCA4 variants found.')).toBeTruthy()
-
-    const stored = JSON.parse(localStorage.getItem('chatapi.chat.sessions.v1') ?? '[]')
-    expect(stored).toMatchObject([{
-      conversationId: 'conversation-abca4',
-      skillId: 5,
-      title: '查询ABCA4位点',
-      messages: [
-        { role: 'user', content: '查询ABCA4位点' },
-        { role: 'assistant', content: 'ABCA4 variants found.' },
-      ],
-    }])
-    first.unmount()
-
+  it('migrates legacy single-Skill history and ignores malformed records', async () => {
+    localStorage.setItem('chatapi.chat.sessions.v1', JSON.stringify([
+      {
+        id: 'legacy-good',
+        conversationId: 'conversation-abca4',
+        skillId: 1,
+        title: '查询ABCA4位点',
+        messages: [
+          { role: 'user', content: '查询ABCA4位点' },
+          { role: 'assistant', content: 'ABCA4 variants found.' },
+        ],
+        updatedAt: '2026-07-21T00:00:00.000Z',
+      },
+      { id: 'broken', skillId: 'not-a-number', title: 42, messages: 'bad' },
+    ]))
+    const skill = { id: 1, name: 'Varcards2-Gene', description: null, system_prompt: 'Query genes', running: true, tools: [] }
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(response({ enabled: false }))
       .mockResolvedValueOnce(response([skill])))
+
     render(ChatView, {
       global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
     })
 
     expect(await screen.findByRole('button', { name: '查询ABCA4位点' })).toBeTruthy()
-    await screen.findByRole('option', { name: 'Varcards2-Gene' })
     expect(screen.getByText('ABCA4 variants found.')).toBeTruthy()
-    expect((screen.getByLabelText('Skill') as HTMLSelectElement).value).toBe('5')
+    expect(await screen.findByRole('button', { name: 'Remove Varcards2-Gene' })).toBeTruthy()
+    const stored = JSON.parse(localStorage.getItem('chatapi.chat.sessions.v1') ?? '[]')
+    expect(stored).toHaveLength(1)
+    expect(stored[0]).toMatchObject({
+      version: 2,
+      id: 'legacy-good',
+      conversationId: 'conversation-abca4',
+      skillIds: [1],
+      loadedSkillIds: [],
+      status: 'completed',
+      pending: null,
+    })
+    expect(stored[0].skillId).toBeUndefined()
+  })
+
+  it('persists clarification state and resumes the same Agent conversation', async () => {
+    const skill = { id: 1, name: 'Varcards2-Gene', description: null, system_prompt: 'Query genes', running: true, tools: [] }
+    const firstFetch = vi.fn()
+      .mockResolvedValueOnce(response({ enabled: false }))
+      .mockResolvedValueOnce(response([skill]))
+      .mockResolvedValueOnce(response({
+        status: 'needs_input',
+        conversation_id: 'conversation-abca4',
+        message: 'Which reference genome?',
+        loaded_skill_ids: [1],
+        pending: { fields: ['reference'], choices: ['GRCh37', 'GRCh38'] },
+      }))
+    vi.stubGlobal('fetch', firstFetch)
+
+    const first = render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await waitFor(() => expect(firstFetch).toHaveBeenCalledTimes(2))
+    await fireEvent.update(await screen.findByLabelText('Message'), '查询一个基因')
+    await fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    expect(await screen.findByText('Which reference genome?')).toBeTruthy()
+    expect(screen.getByText('Clarification needed')).toBeTruthy()
+    expect(await screen.findByText('Loaded: Varcards2-Gene')).toBeTruthy()
+
+    let stored = JSON.parse(localStorage.getItem('chatapi.chat.sessions.v1') ?? '[]')
+    expect(stored[0]).toMatchObject({
+      version: 2,
+      conversationId: 'conversation-abca4',
+      skillIds: [],
+      loadedSkillIds: [1],
+      status: 'needs_input',
+      pending: { fields: ['reference'], choices: ['GRCh37', 'GRCh38'] },
+    })
+    first.unmount()
+
+    const resumedFetch = vi.fn()
+      .mockResolvedValueOnce(response({ enabled: false }))
+      .mockResolvedValueOnce(response([skill]))
+      .mockResolvedValueOnce(response({
+        status: 'completed',
+        conversation_id: 'conversation-abca4',
+        message: 'Using GRCh38.',
+        loaded_skill_ids: [1],
+        pending: null,
+      }))
+    vi.stubGlobal('fetch', resumedFetch)
+    const restored = render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    expect(await screen.findByText('Which reference genome?')).toBeTruthy()
+    expect(restored.container.querySelector('.message.clarification')).toBeTruthy()
+    expect(await screen.findByText('Loaded: Varcards2-Gene')).toBeTruthy()
+    await fireEvent.update(screen.getByLabelText('Message'), 'GRCh38')
+    await fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(await screen.findByText('Using GRCh38.')).toBeTruthy()
+    expect(JSON.parse(resumedFetch.mock.calls[2][1]?.body as string)).toEqual({
+      message: 'GRCh38',
+      conversation_id: 'conversation-abca4',
+      candidate_skill_ids: [],
+    })
+    stored = JSON.parse(localStorage.getItem('chatapi.chat.sessions.v1') ?? '[]')
+    expect(stored[0]).toMatchObject({ status: 'completed', pending: null })
+  })
+
+  it('locks candidate Skills after the first turn and copies them into a new chat', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ enabled: false }))
+      .mockResolvedValueOnce(response([
+        { id: 1, name: 'Pet helper', description: null, system_prompt: 'Help', running: true, tools: [] },
+      ]))
+      .mockResolvedValueOnce(response({
+        status: 'completed', conversation_id: 'conversation-1', message: 'Done', loaded_skill_ids: [1], pending: null,
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    const selector = await screen.findByRole('button', { name: 'Select candidate Skills' })
+    await fireEvent.click(selector)
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Pet helper' }))
+    await fireEvent.update(screen.getByLabelText('Message'), 'Find Milo')
+    await fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByText('Done')
+    expect((screen.getByRole('button', { name: 'Select candidate Skills' }) as HTMLButtonElement).disabled).toBe(true)
+
+    await fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    expect((screen.getByRole('button', { name: 'Select candidate Skills' }) as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.getByRole('button', { name: 'Remove Pet helper' })).toBeTruthy()
   })
 })
