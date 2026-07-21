@@ -44,24 +44,45 @@ describe('Skills and chat', () => {
     expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/providers/1/test')
   })
 
+  it('saves a Skill as provider-free Tool and prompt orchestration', async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === '/api/admin/providers') {
+        return Promise.resolve(response([{ id: 1, name: 'Primary', provider_type: 'openai', base_url: 'https://llm.test/v1', default_model: 'gpt-test', enabled: true, has_api_key: true }]))
+      }
+      if (input === '/api/admin/skills/eligible-tools' || input === '/api/admin/sources') {
+        return Promise.resolve(response([]))
+      }
+      if (input === '/api/admin/skills' && init?.method === 'POST') {
+        return Promise.resolve(response({ id: 7, name: 'Pet helper', description: null, system_prompt: 'Use pet Tools.', running: false, tools: [] }))
+      }
+      return Promise.resolve(response([]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(SkillsView, { global: { plugins: [i18n] } })
+    await fireEvent.update(screen.getByLabelText('Skill name'), 'Pet helper')
+    await fireEvent.update(screen.getByLabelText('System prompt'), 'Use pet Tools.')
+    const save = screen.getByRole('button', { name: 'Save Skill' }) as HTMLButtonElement
+    await waitFor(() => expect(save.disabled).toBe(false))
+    expect(screen.queryByLabelText('Provider')).toBeNull()
+    expect(screen.queryByLabelText('Model override')).toBeNull()
+    await fireEvent.click(save)
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true))
+    const call = fetchMock.mock.calls.find(([input, init]) => input === '/api/admin/skills' && init?.method === 'POST')
+    expect(JSON.parse(call?.[1]?.body as string)).toEqual({
+      name: 'Pet helper',
+      description: null,
+      system_prompt: 'Use pet Tools.',
+      tool_ids: [],
+    })
+  })
+
   it('quick-references only enabled Tools and inserts a stable prompt token', async () => {
     vi.stubGlobal(
       'fetch',
       vi
         .fn()
-        .mockResolvedValueOnce(
-          response([
-            {
-              id: 1,
-              name: 'Primary',
-              provider_type: 'openai',
-              base_url: 'https://llm.test/v1',
-              default_model: 'gpt-test',
-              enabled: true,
-              has_api_key: true,
-            },
-          ]),
-        )
         .mockResolvedValueOnce(
           response([
             {
@@ -102,7 +123,6 @@ describe('Skills and chat', () => {
 
   it('offers enabled Tool mentions after typing @ in the prompt', async () => {
     vi.stubGlobal('fetch', vi.fn()
-      .mockResolvedValueOnce(response([{ id: 1, name: 'Primary', provider_type: 'openai', base_url: 'https://llm.test/v1', default_model: 'gpt-test', enabled: true, has_api_key: true }]))
       .mockResolvedValueOnce(response([
         { id: 2, api_source_id: 1, operation_key: 'GET /pets/{id}', name: 'get_pet', description: 'Get pet', input_schema: {}, execution_schema: {}, tags: ['Pets'], enabled: true },
         { id: 3, api_source_id: 1, operation_key: 'GET /orders', name: 'list_orders', description: 'List orders', input_schema: {}, execution_schema: {}, tags: ['Orders'], enabled: true },
@@ -122,7 +142,6 @@ describe('Skills and chat', () => {
 
   it('groups quick references by API source and Swagger tag', async () => {
     vi.stubGlobal('fetch', vi.fn()
-      .mockResolvedValueOnce(response([{ id: 1, name: 'Primary', provider_type: 'openai', base_url: 'https://llm.test/v1', default_model: 'gpt-test', enabled: true, has_api_key: true }]))
       .mockResolvedValueOnce(response([
         { id: 2, api_source_id: 1, operation_key: 'GET /pets', name: 'list_pets', description: null, input_schema: {}, execution_schema: {}, tags: ['Pet operations'], enabled: true },
         { id: 3, api_source_id: 2, operation_key: 'GET /orders', name: 'list_orders', description: null, input_schema: {}, execution_schema: {}, tags: ['Order operations'], enabled: true },
@@ -145,10 +164,9 @@ describe('Skills and chat', () => {
   it('deletes a managed Skill from its row actions', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(response([{ id: 1, name: 'Primary', provider_type: 'openai', base_url: 'https://llm.test/v1', default_model: 'gpt-test', enabled: true, has_api_key: true }]))
       .mockResolvedValueOnce(response([]))
       .mockResolvedValueOnce(response([]))
-      .mockResolvedValueOnce(response([{ id: 5, name: 'Pet helper', description: null, system_prompt: 'Help', provider_id: 1, model: null, running: false, tools: [] }]))
+      .mockResolvedValueOnce(response([{ id: 5, name: 'Pet helper', description: null, system_prompt: 'Help', running: false, tools: [] }]))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(response([]))
     vi.stubGlobal('fetch', fetchMock)
@@ -156,8 +174,8 @@ describe('Skills and chat', () => {
     render(SkillsView, { global: { plugins: [i18n] } })
     await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6))
-    expect(fetchMock.mock.calls[4][0]).toBe('/api/admin/skills/5')
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5))
+    expect(fetchMock.mock.calls[3][0]).toBe('/api/admin/skills/5')
   })
 
   it('places the running Skill selector below the input and renders a reply', async () => {
@@ -171,8 +189,6 @@ describe('Skills and chat', () => {
             name: 'Pet helper',
             description: null,
             system_prompt: 'Help',
-            provider_id: 1,
-            model: null,
             running: true,
             tools: [],
           },
@@ -210,8 +226,6 @@ describe('Skills and chat', () => {
       name: 'Varcards2-Gene',
       description: null,
       system_prompt: 'Query gene variants',
-      provider_id: 1,
-      model: null,
       running: true,
       tools: [],
     }

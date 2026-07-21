@@ -87,13 +87,24 @@ export interface LlmProviderSummary {
   has_api_key: boolean
 }
 
+export interface AgentConfig {
+  id: 1
+  name: string
+  enabled: boolean
+  system_prompt: string
+  provider_id: number | null
+  model: string | null
+  mode: 'human_in_loop' | 'react'
+  max_iterations: number
+}
+
+export type AgentConfigWrite = Omit<AgentConfig, 'id'>
+
 export interface SkillSummary {
   id: number
   name: string
   description: string | null
   system_prompt: string
-  provider_id: number | null
-  model: string | null
   running: boolean
   tools: ToolSummary[]
 }

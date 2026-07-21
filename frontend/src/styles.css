@@ -163,9 +163,12 @@ blockquote { margin: 0; padding-left: 20px; border-left: 2px solid #6558e8; font
 .toggle-row small { color: var(--muted); }
 .toggle-row input { width: 42px; height: 22px; accent-color: #6558e8; }
 .settings-grid { margin-top: 22px; }
+.agent-mode-note { margin: 18px 0 0; padding: 12px 14px; border-radius: 9px; color: #4f46a5; background: #f2f0ff; font-size: 13px; }
+.agent-actions { margin: 0; justify-content: flex-start; }
+.agent-error { margin: 16px 0 0; padding: 12px 14px; border: 1px solid #e7b7b7; border-radius: 9px; color: #9f2424; background: #fff4f4; }
 .mutedPanel { opacity: .55; }
 .skill-workbench { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
-.skill-editor textarea, .block-label input { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: white; resize: vertical; }
+.skill-editor textarea, .block-label input, .block-label textarea { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: white; resize: vertical; }
 .block-label { margin-top: 18px; display: grid; gap: 8px; color: #343b49; font-size: 12px; font-weight: 700; }
 .prompt-field { position: relative; }
 .tool-mention-menu { position: absolute; z-index: 5; left: 0; right: 0; max-height: 250px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; background: white; box-shadow: 0 14px 36px rgba(27,31,43,.18); }

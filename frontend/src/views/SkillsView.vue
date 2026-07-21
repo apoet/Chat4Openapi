@@ -10,7 +10,6 @@ const { t } = useI18n()
 const name = ref('')
 const description = ref('')
 const systemPrompt = ref('')
-const providerId = ref<number | null>(null)
 const selectedToolIds = ref<number[]>([])
 const promptInput = ref<HTMLTextAreaElement | null>(null)
 const editingId = ref<number | null>(null)
@@ -62,11 +61,9 @@ const referenceGroups = computed(() => {
 })
 
 onMounted(async () => {
-  await store.loadProviders()
   await store.loadTools()
   await store.loadSources()
   await store.loadSkills()
-  providerId.value = store.providers.find((provider) => provider.enabled)?.id ?? null
 })
 
 function referenceTool(tool: ToolSummary): void {
@@ -120,12 +117,10 @@ function handlePromptKeydown(event: KeyboardEvent): void {
 }
 
 async function save(): Promise<void> {
-  if (!providerId.value) return
   await store.save({
     name: name.value,
     description: description.value || null,
     system_prompt: systemPrompt.value,
-    provider_id: providerId.value,
     tool_ids: selectedToolIds.value,
   }, editingId.value ?? undefined)
   resetEditor()
@@ -136,7 +131,6 @@ function edit(skill: SkillSummary): void {
   name.value = skill.name
   description.value = skill.description ?? ''
   systemPrompt.value = skill.system_prompt
-  providerId.value = skill.provider_id
   selectedToolIds.value = skill.tools.map((tool) => tool.id)
 }
 
@@ -147,7 +141,6 @@ function resetEditor(): void {
   systemPrompt.value = ''
   selectedToolIds.value = []
   closeMention()
-  providerId.value = store.providers.find((provider) => provider.enabled)?.id ?? null
 }
 
 async function remove(skill: SkillSummary): Promise<void> {
@@ -163,12 +156,11 @@ async function remove(skill: SkillSummary): Promise<void> {
       <section class="settings-panel skill-editor">
         <div class="settings-grid">
           <label>{{ t('skills.name') }}<input v-model="name" /></label>
-          <label>{{ t('skills.provider') }}<select v-model="providerId"><option v-for="provider in store.providers.filter((item) => item.enabled)" :key="provider.id" :value="provider.id">{{ provider.name }} · {{ provider.default_model }}</option></select></label>
         </div>
         <label class="block-label">{{ t('skills.description') }}<input v-model="description" /></label>
         <div class="prompt-field"><label class="block-label">{{ t('skills.prompt') }}<textarea ref="promptInput" v-model="systemPrompt" rows="9" @input="updateMention" @keydown="handlePromptKeydown" /></label><div v-if="mentionTools.length" class="tool-mention-menu"><button v-for="tool in mentionTools" :key="tool.id" type="button" :aria-label="t('skills.mentionTool', { name: tool.name })" @click="chooseMention(tool)"><strong>{{ tool.name }}</strong><small>{{ tool.description || tool.operation_key }}</small></button></div></div>
         <div class="bound-count">{{ t('skills.bound', { count: selectedToolIds.length }) }}</div>
-        <div class="row-actions editor-actions"><button class="primary-action" :disabled="!name || !providerId || !systemPrompt" @click="save">{{ t('skills.save') }}</button><button v-if="editingId" class="secondary-action" @click="resetEditor">{{ t('skills.cancel') }}</button></div>
+        <div class="row-actions editor-actions"><button class="primary-action" :disabled="!name || !systemPrompt" @click="save">{{ t('skills.save') }}</button><button v-if="editingId" class="secondary-action" @click="resetEditor">{{ t('skills.cancel') }}</button></div>
       </section>
       <aside class="tool-reference-tray">
         <p class="eyebrow">{{ t('skills.quickReference') }}</p><h2>{{ t('skills.enabledTools') }}</h2><p class="muted">{{ t('skills.quickHint') }}</p>

@@ -21,6 +21,7 @@ export function createAppRouter(): Router {
           { path: 'tool-auth', name: 'tool-auth', component: () => import('../views/ToolAuthView.vue') },
           { path: 'providers', name: 'providers', component: () => import('../views/ProvidersView.vue') },
           { path: 'skills', name: 'skills', component: () => import('../views/SkillsView.vue') },
+          { path: 'agent', name: 'agent', component: () => import('../views/AgentView.vue') },
         ],
       },
     ],

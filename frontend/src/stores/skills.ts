@@ -4,21 +4,16 @@ import { ref } from 'vue'
 import { request } from '../api/client'
 import type {
   ApiSourceSummary,
-  LlmProviderSummary,
   SkillSummary,
   ToolSummary,
 } from '../api/contracts'
 import { useAuthStore } from './auth'
 
 export const useSkillsStore = defineStore('skills', () => {
-  const providers = ref<LlmProviderSummary[]>([])
   const tools = ref<ToolSummary[]>([])
   const sources = ref<ApiSourceSummary[]>([])
   const skills = ref<SkillSummary[]>([])
 
-  async function loadProviders(): Promise<void> {
-    providers.value = await request<LlmProviderSummary[]>('/api/admin/providers')
-  }
   async function loadTools(): Promise<void> {
     tools.value = await request<ToolSummary[]>('/api/admin/skills/eligible-tools')
   }
@@ -51,11 +46,9 @@ export const useSkillsStore = defineStore('skills', () => {
     await loadSkills()
   }
   return {
-    providers,
     tools,
     sources,
     skills,
-    loadProviders,
     loadTools,
     loadSources,
     loadSkills,

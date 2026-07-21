@@ -47,7 +47,8 @@ export default {
   tools: { eyebrow: '运行时目录', title: 'Tools', subtitle: '检查已导入操作，仅开放可信的 Tool。', enabled: '已启用', disabled: '已停用', enable: '启用', disable: '停用', delete: '删除', empty: '没有符合筛选条件的 Tool。', count: '{count} 个 Tools', untagged: '未分组', searchLabel: '搜索 Tools', searchPlaceholder: '按接口名称或描述搜索', descriptionLabel: 'Tool 描述', editDescription: '编辑描述', saveDescription: '保存描述', cancelDescription: '取消', parameters: '{count} 个参数', required: '必填', optional: '可选', sourceFilter: 'API 来源：{name}', showAllSources: '显示全部来源', location: { path: '路径', query: '查询', header: '请求头', cookie: 'Cookie', body: '请求体', input: '输入' }, filter: { all: '全部', enabled: '已启用', disabled: '已停用' } },
   toolAuth: { nav: 'Tool 登录认证', eyebrow: '原 API 用户身份', title: 'Tool 登录认证', subtitle: '绑定一个已启用的登录 Tool。每个 Tool Session 只登录一次，并共享该原 API 用户身份。', enable: '要求登录原 API', enableHint: '管理员凭据绝不会用于调用 Tool。', loginTool: '登录 Tool', selectTool: '选择已启用的 Tool', tokenPath: 'Token JSON 路径', usernameField: '用户名字段', passwordField: '密码字段', idle: '空闲过期（分钟）', absolute: '绝对过期（小时）', save: '保存认证配置' },
   providers: { eyebrow: '模型运行时', title: '大模型供应商', subtitle: '连接 OpenAI 兼容或 Anthropic 兼容接口。', name: '供应商名称', type: '协议', baseUrl: '基础 URL', model: '默认模型', apiKey: 'API Key', save: '添加供应商', test: '测试', testing: '测试中…', testSuccess: '连接成功' },
-  skills: { eyebrow: '能力编排', title: 'Skills', subtitle: '组合模型、指令和有序的 Tool 白名单。', name: 'Skill 名称', provider: '供应商', description: '描述', prompt: '系统提示词', bound: '已绑定 {count} 个 Tool', save: '保存 Skill', edit: '编辑', cancel: '取消', quickReference: '快捷引用', enabledTools: '已启用 Tools', quickHint: "在提示词中输入 {'@'}，或点击下方 Tool，即可绑定并引用。", mentionTool: '引用 {name}', untagged: '未分组', noTools: '请先启用 Tool，再到此处引用。', start: '启动', stop: '停止' },
+  agent: { nav: 'Agent', eyebrow: 'Agent 运行时', title: 'Agent 配置', name: 'Agent 名称', enabled: '已启用', enabledHint: '允许内置 Agent 处理新的对话轮次。', provider: '供应商', selectProvider: '选择已启用的供应商', model: '模型覆盖', modelHint: '使用供应商默认模型', mode: '模式', humanInLoop: '人工参与', react: 'ReAct', maxIterations: '最大迭代次数', systemPrompt: '系统提示词', toolApprovalNote: 'Tool 调用无需审批。', save: '保存 Agent', reset: '恢复默认设置' },
+  skills: { eyebrow: '能力编排', title: 'Skills', subtitle: '组合指令和有序的 Tool 白名单。', name: 'Skill 名称', description: '描述', prompt: '系统提示词', bound: '已绑定 {count} 个 Tool', save: '保存 Skill', edit: '编辑', cancel: '取消', quickReference: '快捷引用', enabledTools: '已启用 Tools', quickHint: "在提示词中输入 {'@'}，或点击下方 Tool，即可绑定并引用。", mentionTool: '引用 {name}', untagged: '未分组', noTools: '请先启用 Tool，再到此处引用。', start: '启动', stop: '停止' },
   chat: { title: '对话', eyebrow: '已准备好', emptyTitle: '你的 API 能做什么？', emptyHint: '选择运行中的 Skill，然后用自然语言提问。', message: '消息', placeholder: '输入问题…', send: '发送', sending: '发送中…', skill: 'Skill', skillHint: '仅显示运行中的 Skill', apiLogin: '原 API 登录', loginTitle: '登录后开始对话', loginHint: '此凭据属于原 API 业务用户，与管理员账号完全隔离。', login: '进入对话', history: '历史会话', newChat: '新建对话', noHistory: '暂无本地历史会话。', untitled: '新会话', unknownSkill: '不可用的 Skill' },
   action: { continue: '继续' },
   error: {
@@ -60,6 +61,7 @@ export default {
       csrf_invalid: '安全令牌无效，请刷新后重试。',
     },
     validation: { invalid: '请检查表单字段后重试。' },
+    agent: { provider_unavailable: '保存 Agent 前，请选择一个已启用的供应商。', load_failed: '无法加载 Agent 配置。', save_failed: '无法保存 Agent 配置。', reset_failed: '无法恢复 Agent 默认设置。' },
     unknown: '发生错误，请重试。',
   },
 }
