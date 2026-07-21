@@ -31,6 +31,106 @@ def test_rejects_external_references() -> None:
         load_openapi(spec)
 
 
+def test_ignores_broken_named_references_from_swagger_generators() -> None:
+    spec = fixture_bytes("openapi3.yaml").replace(
+        b'"#/components/schemas/Pet"',
+        b'"Error-ModelName{namespace=\'java.time\', name=\'LocalDateTime\'}"',
+        1,
+    )
+
+    document = load_openapi(spec)
+
+    response_schema = document["paths"]["/pets"]["post"]["responses"]["200"][
+        "content"
+    ]["application/json"]["schema"]
+    assert response_schema == {}
+
+
+def test_normalizes_swagger_header_parameters_missing_a_type() -> None:
+    spec = fixture_bytes("openapi2.yaml").replace(
+        b"        - name: trace\n          in: query\n          required: false\n          type: string",
+        b"        - name: tenant-id\n          in: header\n          required: false",
+        1,
+    )
+
+    normalized = normalize_openapi(load_openapi(spec))
+
+    parameter = normalized["paths"]["/pets"]["post"]["parameters"][0]
+    assert parameter == {
+        "name": "tenant-id",
+        "in": "header",
+        "required": False,
+        "schema": {},
+    }
+
+
+def test_normalizes_misplaced_swagger_file_parameters() -> None:
+    spec = fixture_bytes("openapi2.yaml").replace(
+        b"          type: string",
+        b"          type: file",
+        1,
+    )
+
+    normalized = normalize_openapi(load_openapi(spec))
+
+    schema = normalized["paths"]["/pets"]["post"]["parameters"][0]["schema"]
+    assert schema == {"type": "string", "format": "binary"}
+
+
+def test_escapes_slashes_in_swagger_definition_references() -> None:
+    spec = load_openapi(fixture_bytes("openapi2.yaml"))
+    spec["definitions"]["Pet/Input"] = spec["definitions"]["PetInput"]
+    spec["paths"]["/pets"]["post"]["parameters"][1]["schema"]["$ref"] = (
+        "#/definitions/Pet/Input"
+    )
+
+    normalized = normalize_openapi(spec)
+
+    reference = normalized["paths"]["/pets"]["post"]["requestBody"]["content"][
+        "application/json"
+    ]["schema"]["$ref"]
+    assert reference == "#/components/schemas/Pet~1Input"
+
+
+def test_aligns_a_single_mismatched_swagger_path_parameter() -> None:
+    spec = load_openapi(fixture_bytes("openapi2.yaml"))
+    spec["paths"]["/pets/{petId}"] = spec["paths"].pop("/pets")
+    parameter = spec["paths"]["/pets/{petId}"]["post"]["parameters"][0]
+    parameter.update({"name": "varId", "in": "path", "required": True})
+
+    normalized = normalize_openapi(spec)
+
+    converted = normalized["paths"]["/pets/{petId}"]["post"]["parameters"][0]
+    assert converted["name"] == "petId"
+
+
+def test_drops_extra_swagger_path_parameters_not_in_the_path() -> None:
+    spec = load_openapi(fixture_bytes("openapi2.yaml"))
+    spec["paths"]["/pets/{petId}"] = spec["paths"].pop("/pets")
+    parameters = spec["paths"]["/pets/{petId}"]["post"]["parameters"]
+    parameters[0].update({"name": "petId", "in": "path", "required": True})
+    parameters.insert(
+        1,
+        {"name": "varId", "in": "path", "required": True, "type": "string"},
+    )
+
+    normalized = normalize_openapi(spec)
+
+    converted = normalized["paths"]["/pets/{petId}"]["post"]["parameters"]
+    assert [item["name"] for item in converted] == ["petId"]
+
+
+def test_uses_the_import_url_scheme_when_swagger_omits_schemes() -> None:
+    spec = load_openapi(fixture_bytes("openapi2.yaml"))
+    spec.pop("schemes")
+
+    normalized = normalize_openapi(
+        spec, source_url="http://localhost:48080/v2/api-docs"
+    )
+
+    assert normalized["servers"] == [{"url": "http://api.example.test/v1"}]
+
+
 def test_normalizes_swagger_body_query_and_internal_refs() -> None:
     normalized = normalize_openapi(load_openapi(fixture_bytes("openapi2.yaml")))
     operation = normalized["paths"]["/pets"]["post"]

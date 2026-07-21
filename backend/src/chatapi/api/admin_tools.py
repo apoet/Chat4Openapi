@@ -36,6 +36,8 @@ def _tool_summary(tool: Tool) -> ToolSummary:
 async def _persist_import(
     payload: SourceImportRequest,
     context: AdminContext,
+    *,
+    source_url: str | None = None,
 ) -> SourceImportResponse:
     raw = (
         json.dumps(payload.document, ensure_ascii=False).encode()
@@ -44,7 +46,7 @@ async def _persist_import(
     )
     try:
         spec = load_openapi(raw)
-        normalized = normalize_openapi(spec)
+        normalized = normalize_openapi(spec, source_url=source_url)
     except OpenAPIImportError as exc:
         raise ApiError(422, "tools.openapi_invalid", reason=str(exc)) from exc
     base_url = payload.base_url
@@ -166,6 +168,7 @@ async def import_source_url(
             allow_private_networks=payload.allow_private_networks,
         ),
         context,
+        source_url=payload.url,
     )
 
 

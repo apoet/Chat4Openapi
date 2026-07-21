@@ -1,23 +1,50 @@
 from copy import deepcopy
+import re
 from typing import Any
 from urllib.parse import urlunsplit
 
 HTTP_METHODS = {"delete", "get", "head", "options", "patch", "post", "put", "trace"}
 
 
-def _rewrite_refs(value: Any) -> Any:
+def _rewrite_refs(value: Any, definition_names: set[str]) -> Any:
     if isinstance(value, dict):
         return {
             key: (
-                item.replace("#/definitions/", "#/components/schemas/")
+                _rewrite_reference(item, definition_names)
                 if key == "$ref" and isinstance(item, str)
-                else _rewrite_refs(item)
+                else _rewrite_refs(item, definition_names)
             )
             for key, item in value.items()
         }
     if isinstance(value, list):
-        return [_rewrite_refs(item) for item in value]
+        return [_rewrite_refs(item, definition_names) for item in value]
     return value
+
+
+def _rewrite_reference(reference: str, definition_names: set[str]) -> str:
+    prefix = "#/definitions/"
+    if not reference.startswith(prefix):
+        return reference
+    name = reference[len(prefix) :]
+    if name in definition_names:
+        name = name.replace("~", "~0").replace("/", "~1")
+    return f"#/components/schemas/{name}"
+
+
+def _align_path_parameters(operation: dict[str, Any], path: str) -> None:
+    placeholders = re.findall(r"{([^}]+)}", path)
+    parameters = operation.get("parameters", [])
+    path_parameters = [item for item in parameters if item.get("in") == "path"]
+    known = {item.get("name") for item in path_parameters}
+    missing = [name for name in placeholders if name not in known]
+    unmatched = [item for item in path_parameters if item.get("name") not in placeholders]
+    if len(missing) == len(unmatched) == 1:
+        unmatched[0]["name"] = missing[0]
+    elif not missing and unmatched:
+        unmatched_ids = {id(item) for item in unmatched}
+        operation["parameters"] = [
+            item for item in parameters if id(item) not in unmatched_ids
+        ]
 
 
 def _parameter_schema(parameter: dict[str, Any]) -> dict[str, Any]:
@@ -36,7 +63,11 @@ def _parameter_schema(parameter: dict[str, Any]) -> dict[str, Any]:
         "minItems",
         "uniqueItems",
     }
-    return {key: deepcopy(value) for key, value in parameter.items() if key in schema_keys}
+    schema = {key: deepcopy(value) for key, value in parameter.items() if key in schema_keys}
+    if schema.get("type") == "file":
+        schema["type"] = "string"
+        schema["format"] = "binary"
+    return schema
 
 
 def _convert_operation(
@@ -133,6 +164,7 @@ def convert_swagger_v2(spec: dict[str, Any]) -> dict[str, Any]:
                 converted_path[key.lower()] = _convert_operation(
                     value, consumes=consumes, produces=produces
                 )
+                _align_path_parameters(converted_path[key.lower()], path)
             else:
                 converted_path[key] = deepcopy(value)
         converted["paths"][path] = converted_path
@@ -141,4 +173,4 @@ def convert_swagger_v2(spec: dict[str, Any]) -> dict[str, Any]:
         components["schemas"] = deepcopy(source["definitions"])
     if components:
         converted["components"] = components
-    return _rewrite_refs(converted)
+    return _rewrite_refs(converted, set(source.get("definitions", {})))
