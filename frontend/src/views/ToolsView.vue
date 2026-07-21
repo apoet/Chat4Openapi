@@ -18,6 +18,11 @@ interface ToolDisplay extends ToolSummary {
   parameters: ToolParameterView[]
 }
 
+interface ToolTagGroup {
+  name: string
+  tools: ToolDisplay[]
+}
+
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -78,6 +83,8 @@ const { t } = useI18n()
 const route = inject(routeLocationKey, null)
 const router = inject(routerKey, null)
 const filter = ref<'all' | 'enabled' | 'disabled'>('all')
+const editingDescriptionId = ref<number | null>(null)
+const descriptionDraft = ref('')
 const sourceId = computed(() => {
   const value = route?.query.source_id
   if (typeof value !== 'string' || !/^\d+$/.test(value)) return null
@@ -93,7 +100,12 @@ const visibleTools = computed(() => store.tools.filter((tool) => {
   return matchesStatus && matchesSource
 }))
 const groupedTools = computed(() => {
-  const groups = new Map<number, { id: number; name: string; tools: ToolDisplay[] }>()
+  const groups = new Map<number, {
+    id: number
+    name: string
+    toolCount: number
+    tags: Map<string, ToolTagGroup>
+  }>()
   for (const tool of visibleTools.value) {
     let group = groups.get(tool.api_source_id)
     if (!group) {
@@ -102,17 +114,45 @@ const groupedTools = computed(() => {
       group = {
         id: tool.api_source_id,
         name: routedName || source?.name || `#${tool.api_source_id}`,
-        tools: [],
+        toolCount: 0,
+        tags: new Map(),
       }
       groups.set(tool.api_source_id, group)
     }
-    group.tools.push({ ...tool, parameters: toolParameters(tool) })
+    const primaryTag = tool.tags?.[0] || t('tools.untagged')
+    let tagGroup = group.tags.get(primaryTag)
+    if (!tagGroup) {
+      tagGroup = { name: primaryTag, tools: [] }
+      group.tags.set(primaryTag, tagGroup)
+    }
+    tagGroup.tools.push({ ...tool, parameters: toolParameters(tool) })
+    group.toolCount += 1
   }
-  return [...groups.values()]
+  return [...groups.values()].map((group) => ({
+    id: group.id,
+    name: group.name,
+    toolCount: group.toolCount,
+    tags: [...group.tags.values()],
+  }))
 })
 
 function clearSourceFilter(): void {
   void router?.replace({ name: 'tools' })
+}
+
+function startDescriptionEdit(tool: ToolSummary): void {
+  editingDescriptionId.value = tool.id
+  descriptionDraft.value = tool.description || ''
+}
+
+function cancelDescriptionEdit(): void {
+  editingDescriptionId.value = null
+  descriptionDraft.value = ''
+}
+
+async function saveDescription(tool: ToolSummary): Promise<void> {
+  await store.updateToolDescription(tool, descriptionDraft.value)
+  cancelDescriptionEdit()
 }
 
 onMounted(() => void Promise.all([store.loadTools(), store.loadSources()]))
@@ -126,12 +166,22 @@ onMounted(() => void Promise.all([store.loadTools(), store.loadSources()]))
     <div v-if="sourceId !== null" class="source-filter-banner"><span>{{ t('tools.sourceFilter', { name: sourceName }) }}</span><button class="secondary-action" @click="clearSourceFilter">{{ t('tools.showAllSources') }}</button></div>
     <div v-if="!store.loading && visibleTools.length === 0" class="empty-state">{{ t('tools.empty') }}</div>
     <details v-for="group in groupedTools" :key="group.id" class="tool-source-group" open>
-      <summary class="tool-source-heading"><h2>{{ group.name }}</h2><span>{{ t('tools.count', { count: group.tools.length }) }}</span></summary>
-      <div class="tool-grid">
-        <article v-for="tool in group.tools" :key="tool.id" class="tool-card">
+      <summary class="tool-source-heading"><h2>{{ group.name }}</h2><span>{{ t('tools.count', { count: group.toolCount }) }}</span></summary>
+      <details v-for="tagGroup in group.tags" :key="tagGroup.name" class="tool-tag-group" open>
+        <summary class="tool-tag-heading"><h3>{{ tagGroup.name }}</h3><span>{{ t('tools.count', { count: tagGroup.tools.length }) }}</span></summary>
+        <div class="tool-grid">
+        <article v-for="tool in tagGroup.tools" :key="tool.id" class="tool-card">
           <div class="tool-card-head"><code>{{ tool.operation_key.split(' ')[0] }}</code><span :class="['status-pill', tool.enabled ? 'enabled' : 'disabled']">{{ tool.enabled ? t('tools.enabled') : t('tools.disabled') }}</span></div>
           <div v-if="tool.tags?.length" class="tool-tags"><span v-for="tag in tool.tags" :key="tag">{{ tag }}</span></div>
-          <h2>{{ tool.name }}</h2><p>{{ tool.description || tool.operation_key }}</p>
+          <h2>{{ tool.name }}</h2>
+          <div v-if="editingDescriptionId === tool.id" class="tool-description-editor">
+            <label><span>{{ t('tools.descriptionLabel') }}</span><textarea v-model="descriptionDraft" rows="3" maxlength="4000" /></label>
+            <div><button class="primary-action" @click="saveDescription(tool)">{{ t('tools.saveDescription') }}</button><button class="secondary-action" @click="cancelDescriptionEdit">{{ t('tools.cancelDescription') }}</button></div>
+          </div>
+          <template v-else>
+            <p>{{ tool.description || tool.operation_key }}</p>
+            <button class="description-edit-action" @click="startDescriptionEdit(tool)">{{ t('tools.editDescription') }}</button>
+          </template>
           <details v-if="tool.parameters.length" class="tool-parameters">
             <summary>{{ t('tools.parameters', { count: tool.parameters.length }) }}</summary>
             <div class="parameter-list">
@@ -143,7 +193,8 @@ onMounted(() => void Promise.all([store.loadTools(), store.loadSources()]))
           </details>
           <footer><button class="secondary-action" @click="store.setEnabled(tool, !tool.enabled)">{{ tool.enabled ? t('tools.disable') : t('tools.enable') }}</button><button class="danger-action" @click="store.deleteTool(tool)">{{ t('tools.delete') }}</button></footer>
         </article>
-      </div>
+        </div>
+      </details>
     </details>
   </main>
 </template>

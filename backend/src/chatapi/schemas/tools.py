@@ -63,6 +63,10 @@ class ToolEnabledRequest(BaseModel):
     enabled: bool
 
 
+class ToolUpdateRequest(BaseModel):
+    description: str | None = Field(default=None, max_length=4000)
+
+
 class ToolAuthConfigRequest(BaseModel):
     enabled: bool
     login_tool_id: int | None = None

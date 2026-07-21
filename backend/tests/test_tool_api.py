@@ -136,6 +136,28 @@ async def test_tool_list_exposes_tags_and_execution_metadata(
 
 
 @pytest.mark.asyncio
+async def test_tool_description_can_be_updated(client: httpx.AsyncClient) -> None:
+    csrf = await admin_login(client)
+    imported = await client.post(
+        "/api/admin/sources/import",
+        json=import_payload(),
+        headers={"X-CSRF-Token": csrf},
+    )
+    tool_id = imported.json()["tools"][0]["id"]
+
+    updated = await client.patch(
+        f"/api/admin/tools/{tool_id}",
+        json={"description": "Search pets by criteria"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    listed = await client.get("/api/admin/tools")
+
+    assert updated.status_code == 200
+    assert updated.json()["description"] == "Search pets by criteria"
+    assert listed.json()[0]["description"] == "Search pets by criteria"
+
+
+@pytest.mark.asyncio
 async def test_public_tool_session_config_reports_login_requirement(
     client: httpx.AsyncClient,
 ) -> None:

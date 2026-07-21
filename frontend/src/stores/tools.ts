@@ -155,6 +155,22 @@ export const useToolsStore = defineStore('tools', () => {
     if (index >= 0) tools.value[index] = updated
   }
 
+  async function updateToolDescription(tool: ToolSummary, description: string): Promise<void> {
+    const auth = useAuthStore()
+    const updated = await perform(() =>
+      request<ToolSummary>(
+        `/api/admin/tools/${tool.id}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ description: description.trim() || null }),
+        },
+        auth.csrfToken,
+      ),
+    )
+    const index = tools.value.findIndex((item) => item.id === updated.id)
+    if (index >= 0) tools.value[index] = updated
+  }
+
   async function deleteTool(tool: ToolSummary): Promise<void> {
     const auth = useAuthStore()
     await perform(() =>
@@ -189,6 +205,7 @@ export const useToolsStore = defineStore('tools', () => {
     setSourceEnabled,
     deleteSource,
     setEnabled,
+    updateToolDescription,
     deleteTool,
     saveAuthConfig,
   }

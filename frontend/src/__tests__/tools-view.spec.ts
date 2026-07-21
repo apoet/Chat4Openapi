@@ -58,7 +58,7 @@ describe('Tool administration views', () => {
 
     render(ToolsView, { global: { plugins: [i18n] } })
 
-    expect(await screen.findByText('Pets')).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Pets' })).toBeTruthy()
     expect(screen.getByText('Public')).toBeTruthy()
     expect(screen.getByText('Unique pet identifier')).toBeTruthy()
     expect(screen.getByText('Tenant identifier')).toBeTruthy()
@@ -86,6 +86,49 @@ describe('Tool administration views', () => {
 
     expect(await screen.findByRole('heading', { name: 'Pet API' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Orders API' })).toBeTruthy()
+  })
+
+  it('preserves Swagger tag groups inside each API source', async () => {
+    const tools = [
+      { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: ['Pet operations', 'Public'], enabled: false },
+      { id: 2, api_source_id: 1, operation_key: 'GET /orders', name: 'listOrders', description: null, input_schema: {}, execution_schema: {}, tags: ['Order operations'], enabled: false },
+    ]
+    const sources = [
+      { id: 1, name: 'Commerce API', source_type: 'openapi', base_url: 'https://api.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+    ]
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => Promise.resolve(
+      jsonResponse(String(input).endsWith('/sources') ? sources : tools),
+    )))
+
+    const { container } = render(ToolsView, { global: { plugins: [i18n] } })
+
+    expect(await screen.findByRole('heading', { name: 'Pet operations' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Order operations' })).toBeTruthy()
+    expect(container.querySelectorAll('details.tool-tag-group')).toHaveLength(2)
+  })
+
+  it('edits a Tool description', async () => {
+    const tool = { id: 4, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: 'List pets', input_schema: {}, execution_schema: {}, tags: ['Pets'], enabled: false }
+    const sources = [
+      { id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://api.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+    ]
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse(sources))
+      if (init?.method === 'PATCH') return Promise.resolve(jsonResponse({ ...tool, description: 'Search all pets' }))
+      return Promise.resolve(jsonResponse([tool]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    await fireEvent.click(await screen.findByRole('button', { name: 'Edit description' }))
+    await fireEvent.update(screen.getByLabelText('Tool description'), 'Search all pets')
+    await fireEvent.click(screen.getByRole('button', { name: 'Save description' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    expect(fetchMock.mock.calls[2][0]).toBe('/api/admin/tools/4')
+    expect(JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string)).toEqual({ description: 'Search all pets' })
+    expect(await screen.findByText('Search all pets')).toBeTruthy()
   })
 
   it('allows each API source group to collapse and expand', async () => {

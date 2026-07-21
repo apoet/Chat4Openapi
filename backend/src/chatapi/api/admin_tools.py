@@ -21,6 +21,7 @@ from chatapi.schemas.tools import (
     ToolAuthConfigResponse,
     ToolEnabledRequest,
     ToolSummary,
+    ToolUpdateRequest,
 )
 from chatapi.tools.candidates import build_candidates
 from chatapi.tools.openapi_loader import OpenAPIImportError, load_openapi, normalize_openapi
@@ -314,6 +315,21 @@ def _ensure_not_login_tool(context: AdminContext, tool_id: int) -> None:
     config = context.db.get(GlobalToolAuthConfig, 1)
     if config is not None and config.enabled and config.login_tool_id == tool_id:
         raise ApiError(409, "tools.login_tool_conflict")
+
+
+@router.patch("/tools/{tool_id}", response_model=ToolSummary)
+def update_tool(
+    tool_id: int,
+    payload: ToolUpdateRequest,
+    context: AdminContext = Depends(require_csrf),
+) -> ToolSummary:
+    tool = _managed_tool(context, tool_id)
+    description = payload.description.strip() if payload.description else ""
+    tool.description = description or None
+    context.db.commit()
+    source = context.db.get(ApiSource, tool.api_source_id)
+    spec = json.loads(source.spec_snapshot) if source is not None else None
+    return _tool_summary(tool, spec)
 
 
 @router.patch("/tools/{tool_id}/enabled", response_model=ToolSummary)
