@@ -15,7 +15,7 @@ from chatapi.llm.client import (
     LlmClient,
     LlmProviderError,
 )
-from chatapi.models import LlmProvider
+from chatapi.models import AgentConfig, LlmProvider
 from chatapi.security.encryption import SecretCipher
 
 ADMIN = {"username": "admin", "password": "StrongPass!123", "locale": "en-US"}
@@ -102,6 +102,109 @@ async def test_provider_connection_test_uses_encrypted_configuration(
     assert tested.status_code == 200
     assert tested.json() == {"ok": True, "model": "gpt-test", "response": "OK"}
     assert captured["api_key"] == "connection-secret"
+
+
+def seed_provider_lifecycle(
+    factory: sessionmaker[Session], cipher: SecretCipher
+) -> tuple[int, int]:
+    with factory() as session:
+        referenced = LlmProvider(
+            name="Agent provider",
+            provider_type="openai",
+            base_url="https://agent-provider.test/v1",
+            encrypted_api_key=cipher.encrypt_json({"api_key": "agent-secret"}),
+            default_model="agent-model",
+            enabled=True,
+        )
+        unreferenced = LlmProvider(
+            name="Spare provider",
+            provider_type="openai",
+            base_url="https://spare-provider.test/v1",
+            encrypted_api_key=cipher.encrypt_json({"api_key": "spare-secret"}),
+            default_model="spare-model",
+            enabled=True,
+        )
+        session.add_all([referenced, unreferenced])
+        session.flush()
+        session.add(
+            AgentConfig(
+                id=1,
+                name="ChatAPI Agent",
+                enabled=True,
+                system_prompt="Use configured Skills.",
+                provider_id=referenced.id,
+                mode="human_in_loop",
+                max_iterations=8,
+            )
+        )
+        session.commit()
+        return referenced.id, unreferenced.id
+
+
+@pytest.mark.asyncio
+async def test_agent_provider_cannot_be_disabled_or_deleted(
+    client: httpx.AsyncClient,
+    db_session_factory: sessionmaker[Session],
+) -> None:
+    token = await csrf(client)
+    cipher = SecretCipher(Fernet.generate_key())
+    referenced_id, _ = seed_provider_lifecycle(db_session_factory, cipher)
+
+    disabled = await client.patch(
+        f"/api/admin/providers/{referenced_id}",
+        json={"enabled": False},
+        headers={"X-CSRF-Token": token},
+    )
+    deleted = await client.delete(
+        f"/api/admin/providers/{referenced_id}",
+        headers={"X-CSRF-Token": token},
+    )
+
+    expected = {
+        "error": {"code": "providers.agent_in_use", "params": {"agent_id": 1}}
+    }
+    assert disabled.status_code == 409
+    assert disabled.json() == expected
+    assert deleted.status_code == 409
+    assert deleted.json() == expected
+    with db_session_factory() as session:
+        provider = session.get(LlmProvider, referenced_id)
+        assert provider is not None
+        assert provider.enabled is True
+        assert provider.deleted_at is None
+        assert session.get(AgentConfig, 1).provider_id == referenced_id
+
+
+@pytest.mark.asyncio
+async def test_unreferenced_provider_can_be_disabled_and_deleted(
+    client: httpx.AsyncClient,
+    db_session_factory: sessionmaker[Session],
+) -> None:
+    token = await csrf(client)
+    cipher = SecretCipher(Fernet.generate_key())
+    referenced_id, unreferenced_id = seed_provider_lifecycle(
+        db_session_factory, cipher
+    )
+
+    disabled = await client.patch(
+        f"/api/admin/providers/{unreferenced_id}",
+        json={"enabled": False},
+        headers={"X-CSRF-Token": token},
+    )
+    deleted = await client.delete(
+        f"/api/admin/providers/{unreferenced_id}",
+        headers={"X-CSRF-Token": token},
+    )
+
+    assert disabled.status_code == 200
+    assert disabled.json()["enabled"] is False
+    assert deleted.status_code == 204
+    with db_session_factory() as session:
+        provider = session.get(LlmProvider, unreferenced_id)
+        assert provider is not None
+        assert provider.enabled is False
+        assert provider.deleted_at is not None
+        assert session.get(AgentConfig, 1).provider_id == referenced_id
 
 
 @pytest.mark.asyncio

@@ -8,7 +8,7 @@ from chatapi.api.admin_auth import AdminContext, require_admin, require_csrf
 from chatapi.api.errors import ApiError
 from chatapi.api.tool_sessions import get_tool_secret_cipher
 from chatapi.llm.client import CanonicalMessage, LlmClient, LlmProviderError
-from chatapi.models import LlmProvider, Skill
+from chatapi.models import AgentConfig, LlmProvider
 from chatapi.schemas.providers import (
     ProviderCreateRequest,
     ProviderResponse,
@@ -28,6 +28,12 @@ def _provider(context: AdminContext, provider_id: int) -> LlmProvider:
     if provider is None or provider.deleted_at is not None:
         raise ApiError(404, "providers.not_found")
     return provider
+
+
+def _ensure_not_agent_provider(context: AdminContext, provider_id: int) -> None:
+    agent = context.db.get(AgentConfig, 1)
+    if agent is not None and agent.provider_id == provider_id:
+        raise ApiError(409, "providers.agent_in_use", agent_id=agent.id)
 
 
 @router.get("", response_model=list[ProviderResponse])
@@ -99,15 +105,12 @@ def update_provider(
     provider = _provider(context, provider_id)
     values = payload.model_dump(exclude_unset=True)
     api_key = values.pop("api_key", None)
+    if values.get("enabled") is False:
+        _ensure_not_agent_provider(context, provider.id)
     for key, value in values.items():
         setattr(provider, key, value)
     if api_key:
         provider.encrypted_api_key = cipher.encrypt_json({"api_key": api_key})
-    if provider.enabled is False:
-        for skill in context.db.scalars(
-            select(Skill).where(Skill.provider_id == provider.id, Skill.running.is_(True))
-        ):
-            skill.running = False
     try:
         context.db.commit()
     except IntegrityError as exc:
@@ -121,8 +124,7 @@ def delete_provider(
     provider_id: int, context: AdminContext = Depends(require_csrf)
 ) -> None:
     provider = _provider(context, provider_id)
+    _ensure_not_agent_provider(context, provider.id)
     provider.enabled = False
     provider.deleted_at = datetime.now(UTC).replace(tzinfo=None)
-    for skill in context.db.scalars(select(Skill).where(Skill.provider_id == provider.id)):
-        skill.running = False
     context.db.commit()
