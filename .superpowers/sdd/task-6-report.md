@@ -63,3 +63,29 @@ available Python 3.12 `chatapi` conda environment.
 - Alembic head: `0009_tool_sessions (head)`.
 - `git diff --check`: clean.
 - Secret-value, logging, OAuth-scope, and legacy Header alias scans: no matches in production code.
+
+## Independent-review fixes
+
+- Scoped Swagger automatic-login credentials to the login Tool's own API Source. Both initial
+  creation and refresh now write only that source's credential row; a second enabled source
+  cannot reuse the login result.
+- Applied both configured expiry extraction and JWT `exp` capping to Swagger login credentials,
+  including when `expires_json_path` is empty. The earliest expiry also caps the Tool Session.
+- Scoped the legacy global auth-name allow-list to the login Tool's API Source. Other sources
+  require their own OpenAPI security scheme or explicit source extension.
+- Enforced RFC 6265 cookie-octet values and HTTP token-safe cookie names before encryption or
+  transport. Whitespace, quotes, commas, semicolons, backslashes, control bytes, empty values,
+  and unsafe names are rejected. A transport regression confirms one normalized Cookie header.
+- Added owner-aware CSRF enforcement to every Tool Session mutation, including direct Tool
+  invocation. Administrator-cookie requests require the current CSRF token; Agent-key requests
+  remain bearer-authenticated and do not require browser CSRF.
+
+### Fix verification
+
+- Focused Tool Session, credential, and updated Swagger API tests: `26 passed`.
+- Full backend suite: `248 passed`.
+- Ruff: `All checks passed!` for `backend/src` and `backend/tests`.
+- Tool Session migration test: `1 passed`.
+- `git diff --check`: clean.
+- Secret logging, legacy Tool Session header alias, and premature OAuth/PKCE/Device Flow scans:
+  no matches in the modified production scope.

@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from functools import lru_cache
+import secrets
 from fastapi import APIRouter, Cookie, Depends, Header, Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -85,6 +86,22 @@ def get_tool_session_owner(
     if context is None:
         raise ApiError(401, "auth.api_key_required")
     return context
+
+
+def get_tool_session_mutation_owner(
+    owner: AgentKeyContext | AdminContext | None = Depends(get_optional_tool_session_owner),
+    csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
+) -> AgentKeyContext | AdminContext:
+    if owner is None:
+        raise ApiError(401, "auth.api_key_required")
+    if isinstance(owner, AdminContext) and (
+        csrf_token is None
+        or not secrets.compare_digest(
+            hash_token(csrf_token), owner.admin_session.csrf_hash
+        )
+    ):
+        raise ApiError(403, "auth.csrf_invalid")
+    return owner
 
 
 def _creation_agent_id(
@@ -184,7 +201,7 @@ async def browser_login(
     response: Response,
     service: ToolSessionService = Depends(get_tool_session_service),
     settings: Settings = Depends(get_settings),
-    owner: AgentKeyContext | AdminContext = Depends(get_tool_session_owner),
+    owner: AgentKeyContext | AdminContext = Depends(get_tool_session_mutation_owner),
 ) -> ToolSessionCreated:
     try:
         created = await service.create(
@@ -234,7 +251,7 @@ async def browser_logout(
     response: Response,
     tool_session_id: str | None = Cookie(default=None, alias=TOOL_SESSION_COOKIE),
     service: ToolSessionService = Depends(get_tool_session_service),
-    owner: AgentKeyContext | AdminContext = Depends(get_tool_session_owner),
+    owner: AgentKeyContext | AdminContext = Depends(get_tool_session_mutation_owner),
 ) -> None:
     if tool_session_id:
         try:
@@ -254,7 +271,7 @@ async def browser_logout(
 async def api_login(
     payload: ToolSessionLoginRequest,
     service: ToolSessionService = Depends(get_tool_session_service),
-    owner: AgentKeyContext | AdminContext = Depends(get_tool_session_owner),
+    owner: AgentKeyContext | AdminContext = Depends(get_tool_session_mutation_owner),
 ) -> ToolSessionCreated:
     try:
         created = await service.create(
@@ -274,7 +291,7 @@ async def api_login(
 async def inject_credentials(
     payload: ToolCredentialInjectionRequest,
     service: ToolSessionService = Depends(get_tool_session_service),
-    owner: AgentKeyContext | AdminContext = Depends(get_tool_session_owner),
+    owner: AgentKeyContext | AdminContext = Depends(get_tool_session_mutation_owner),
 ) -> ToolSessionCreated:
     try:
         created = await service.create_injected(
@@ -309,7 +326,7 @@ async def api_status(
 async def revoke_session(
     tool_session_id: str,
     service: ToolSessionService = Depends(get_tool_session_service),
-    owner: AgentKeyContext | AdminContext = Depends(get_tool_session_owner),
+    owner: AgentKeyContext | AdminContext = Depends(get_tool_session_mutation_owner),
 ) -> None:
     try:
         binding = service.binding_for_context(tool_session_id, owner)
@@ -327,7 +344,7 @@ async def revoke_session(
 async def api_logout(
     tool_session_id: str,
     service: ToolSessionService = Depends(get_tool_session_service),
-    owner: AgentKeyContext | AdminContext = Depends(get_tool_session_owner),
+    owner: AgentKeyContext | AdminContext = Depends(get_tool_session_mutation_owner),
 ) -> None:
     try:
         binding = service.binding_for_context(tool_session_id, owner)
@@ -349,7 +366,7 @@ async def invoke_tool(
     db: Session = Depends(get_db_session),
     service: ToolSessionService = Depends(get_tool_session_service),
     executor: ToolExecutor = Depends(get_tool_executor),
-    owner: AgentKeyContext | AdminContext | None = Depends(get_optional_tool_session_owner),
+    owner: AgentKeyContext | AdminContext = Depends(get_tool_session_mutation_owner),
 ) -> ToolInvokeResponse:
     tool = db.get(Tool, tool_id)
     if tool is None or tool.deleted_at is not None or not tool.enabled:
@@ -360,8 +377,6 @@ async def invoke_tool(
     token = payload.tool_session_id or request.cookies.get(TOOL_SESSION_COOKIE)
     try:
         if token:
-            if owner is None:
-                raise ToolSessionNotFound
             binding = service.binding_for_context(token, owner)
             result = await service.execute(
                 tool,

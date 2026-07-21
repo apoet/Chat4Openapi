@@ -15,6 +15,8 @@ from chat4openapi.models import (
     ApiSource,
     ToolSessionCredential,
     ToolUserSession,
+    Tool,
+    GlobalToolAuthConfig,
 )
 from chat4openapi.security.agent_keys import AgentKeyContext
 from chat4openapi.security.encryption import SecretCipher
@@ -22,7 +24,9 @@ from chat4openapi.tool_sessions.service import (
     ToolSessionNotFound,
     ToolSessionService,
 )
+from chat4openapi.tool_sessions.credentials import CredentialValidationError
 from chat4openapi.tools.executor import RequestAuth
+from chat4openapi.tools.executor import ToolExecutor
 
 
 class UnusedExecutor:
@@ -258,13 +262,141 @@ async def test_injected_header_value_cannot_contain_transport_controls(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "unsafe_value", ["", "has space", 'has\"quote', "has,comma", "has;semicolon", r"has\slash", "has\x7fctl"]
+)
+async def test_injected_cookie_value_must_be_rfc6265_safe(
+    client: httpx.AsyncClient, app, db_session_factory, unsafe_value: str
+) -> None:
+    secret, _agent_id, _key_id, source_id, _ = _seed_owner(db_session_factory)
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: SecretCipher(
+        Fernet.generate_key()
+    )
+
+    response = await client.post(
+        "/api/tool-sessions/credentials",
+        headers={"Authorization": f"Bearer {secret}"},
+        json={"api_source_id": source_id, "cookies": {"session_id": unsafe_value}},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "tool_credentials.field_not_allowed"
+
+
+@pytest.mark.asyncio
+async def test_safe_injected_cookie_reaches_transport_as_one_cookie_header() -> None:
+    captured: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request.headers["Cookie"])
+        return httpx.Response(200, json={"ok": True})
+
+    source = ApiSource(
+        id=1,
+        name="Cookie API",
+        source_type="openapi",
+        base_url="https://api.test",
+        allow_private_networks=True,
+    )
+    tool = Tool(
+        id=1,
+        api_source_id=1,
+        operation_key="GET /me",
+        name="get_me",
+        input_schema={"type": "object"},
+        execution_schema={"method": "GET", "path": "/me", "parameters": []},
+    )
+    executor = ToolExecutor(
+        transport=httpx.MockTransport(handler),
+        network_validator=lambda *_args: _completed(),
+    )
+
+    await executor.execute(
+        tool, source, {}, RequestAuth(cookies={"session_id": "safe-token_123.~"})
+    )
+
+    assert captured == ["session_id=safe-token_123.~"]
+
+
+async def _completed() -> None:
+    return None
+
+
+@pytest.mark.asyncio
+async def test_legacy_login_allowlist_does_not_authorize_an_unrelated_source(
+    db_session_factory,
+) -> None:
+    _secret, agent_id, key_id, login_source_id, _ = _seed_owner(db_session_factory)
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as session:
+        login = Tool(
+            api_source_id=login_source_id,
+            operation_key="POST /login",
+            name="login",
+            input_schema={"type": "object"},
+            execution_schema={"method": "POST", "path": "/login", "parameters": []},
+        )
+        unrelated = ApiSource(
+            name="Unrelated", source_type="openapi", base_url="https://unrelated.test"
+        )
+        session.add_all([login, unrelated])
+        session.flush()
+        session.add(
+            GlobalToolAuthConfig(
+                id=1,
+                enabled=True,
+                login_tool_id=login.id,
+                auth_type="bearer",
+                auth_name="Authorization",
+            )
+        )
+        session.commit()
+        service = ToolSessionService(session, cipher, UnusedExecutor())
+
+        with pytest.raises(CredentialValidationError) as exc_info:
+            await service.create_injected(
+                _context(session, agent_id, key_id),
+                {unrelated.id: {"headers": {"Authorization": "Bearer leaked"}}},
+                None,
+            )
+
+        assert exc_info.value.code == "tool_credentials.field_not_allowed"
+
+
+@pytest.mark.asyncio
+async def test_explicit_allowlist_cannot_make_an_unsafe_cookie_name_valid(
+    db_session_factory,
+) -> None:
+    _secret, agent_id, key_id, source_id, _ = _seed_owner(db_session_factory)
+    with db_session_factory() as session:
+        source = session.get(ApiSource, source_id)
+        assert source is not None
+        source.spec_snapshot = json.dumps(
+            {
+                "openapi": "3.1.0",
+                "x-chat4openapi-credential-allowlist": {"cookies": ["bad;name"]},
+            }
+        )
+        session.commit()
+        service = ToolSessionService(
+            session, SecretCipher(Fernet.generate_key()), UnusedExecutor()
+        )
+
+        with pytest.raises(CredentialValidationError):
+            await service.create_injected(
+                _context(session, agent_id, key_id),
+                {source_id: {"cookies": {"bad;name": "safe-value"}}},
+                None,
+            )
+
+
+@pytest.mark.asyncio
 async def test_programmatic_injection_response_contains_token_but_no_secrets(
     client: httpx.AsyncClient, app, db_session_factory
 ) -> None:
     secret, agent_id, key_id, source_id, _ = _seed_owner(db_session_factory)
-    app.dependency_overrides[get_tool_secret_cipher] = lambda: SecretCipher(
-        Fernet.generate_key()
-    )
+    test_cipher = SecretCipher(Fernet.generate_key())
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: test_cipher
 
     response = await client.post(
         "/api/tool-sessions/credentials",
@@ -317,3 +449,62 @@ async def test_programmatic_status_and_revoke_enforce_the_creating_key(
     assert revoked.status_code == 204
     assert after.status_code == 401
     assert after.json()["error"]["code"] == "tool_session.required"
+
+
+@pytest.mark.asyncio
+async def test_admin_cookie_tool_session_mutations_require_csrf(
+    client: httpx.AsyncClient, app, db_session_factory
+) -> None:
+    _secret, agent_id, _key_id, source_id, _ = _seed_owner(db_session_factory)
+    with db_session_factory() as session:
+        tool = Tool(
+            api_source_id=source_id,
+            operation_key="GET /me",
+            name="get_me",
+            input_schema={"type": "object"},
+            execution_schema={"method": "GET", "path": "/me", "parameters": []},
+            enabled=True,
+        )
+        session.add(tool)
+        session.commit()
+        tool_id = tool.id
+    setup = await client.post(
+        "/api/setup",
+        json={"username": "admin", "password": "admin123", "locale": "en-US"},
+    )
+    assert setup.status_code == 201
+    login = await client.post(
+        "/api/admin/auth/login",
+        json={"username": "admin", "password": "admin123"},
+    )
+    assert login.status_code == 200
+    csrf = login.json()["csrf_token"]
+    csrf_cipher = SecretCipher(Fernet.generate_key())
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: csrf_cipher
+    payload = {
+        "agent_id": agent_id,
+        "api_source_id": source_id,
+        "headers": {"Authorization": "Bearer browser-secret"},
+    }
+
+    missing_create = await client.post("/api/tool-sessions/credentials", json=payload)
+    created = await client.post(
+        "/api/tool-sessions/credentials",
+        json=payload,
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert created.status_code == 201
+    token = created.json()["tool_session_id"]
+    missing_invoke = await client.post(
+        f"/api/tools/{tool_id}/invoke",
+        json={"arguments": {}, "tool_session_id": token},
+    )
+    missing_revoke = await client.delete(f"/api/tool-sessions/{token}")
+    revoked = await client.delete(
+        f"/api/tool-sessions/{token}", headers={"X-CSRF-Token": csrf}
+    )
+
+    for response in (missing_create, missing_invoke, missing_revoke):
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "auth.csrf_invalid"
+    assert revoked.status_code == 204

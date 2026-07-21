@@ -1,4 +1,6 @@
 from datetime import UTC, datetime, timedelta
+import base64
+import json
 
 import pytest
 from cryptography.fernet import Fernet
@@ -165,6 +167,93 @@ async def test_sessions_are_encrypted_and_identity_isolated(db_session_factory) 
         "Authorization": "Bearer bob-token-2"
     }
     assert executor.login_calls == ["alice", "bob"]
+    session.close()
+
+
+@pytest.mark.asyncio
+async def test_swagger_login_credentials_are_scoped_to_the_login_tool_source(
+    db_session_factory,
+) -> None:
+    session, _, protected, context = configured_runtime(db_session_factory)
+    other_source = ApiSource(
+        name="Unrelated API", source_type="openapi", base_url="https://other.test"
+    )
+    session.add(other_source)
+    session.commit()
+    service = ToolSessionService(session, cipher(), FakeExecutor())
+
+    created = await service.create("alice", "password", context=context)
+
+    credentials = session.scalars(
+        select(ToolSessionCredential).order_by(ToolSessionCredential.api_source_id)
+    ).all()
+    assert created.api_source_ids == (protected.api_source_id,)
+    assert [row.api_source_id for row in credentials] == [protected.api_source_id]
+    with pytest.raises(ToolSessionNotFound):
+        await service.resolve(
+            created.token, context.agent.id, context.api_key.id, other_source.id
+        )
+
+    await service.resolve(
+        created.token,
+        context.agent.id,
+        context.api_key.id,
+        protected.api_source_id,
+        force_refresh=True,
+    )
+    assert session.scalar(select(ToolSessionCredential).where(
+        ToolSessionCredential.api_source_id == other_source.id
+    )) is None
+    session.close()
+
+
+def _unsigned_jwt(expiry: datetime) -> str:
+    def encode(payload: dict[str, object]) -> str:
+        return base64.urlsafe_b64encode(
+            json.dumps(payload, separators=(",", ":")).encode()
+        ).decode().rstrip("=")
+
+    utc_expiry = expiry.replace(tzinfo=UTC) if expiry.tzinfo is None else expiry
+    return f"{encode({'alg': 'none'})}.{encode({'exp': int(utc_expiry.timestamp())})}.unsigned"
+
+
+@pytest.mark.asyncio
+async def test_swagger_login_jwt_caps_expiry_without_expires_json_path(
+    db_session_factory,
+) -> None:
+    session, _, protected, context = configured_runtime(db_session_factory)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    jwt_expiry = (now + timedelta(minutes=15)).replace(microsecond=0)
+    config = session.get(GlobalToolAuthConfig, 1)
+    assert config is not None
+    config.expires_json_path = ""
+    session.commit()
+
+    class JwtLoginExecutor(FakeExecutor):
+        async def execute(self, tool, _source, arguments, auth):
+            if tool.name == "login":
+                self.login_calls.append(arguments["user"])
+                return ToolExecutionResult(
+                    200,
+                    {"data": {"access_token": _unsigned_jwt(jwt_expiry)}},
+                    "application/json",
+                )
+            return await super().execute(tool, _source, arguments, auth)
+
+    service = ToolSessionService(session, cipher(), JwtLoginExecutor(), now=lambda: now)
+    created = await service.create("alice", "password", context=context)
+    row = session.scalar(select(ToolUserSession))
+    credential = session.scalar(select(ToolSessionCredential))
+
+    assert row is not None and credential is not None
+    assert created.absolute_expires_at == jwt_expiry
+    assert row.auth_expires_at == jwt_expiry
+    assert credential.expires_at == jwt_expiry
+    assert (
+        await service.resolve(
+            created.token, context.agent.id, context.api_key.id, protected.api_source_id
+        )
+    ).auth.headers["Authorization"].startswith("Bearer ey")
     session.close()
 
 

@@ -621,16 +621,24 @@ async def test_browser_and_api_tool_sessions_use_original_api_credentials(
     )
 
     browser_login = await client.post(
-        "/api/tool-session/login", json={"username": "alice", "password": "api-password"}
+        "/api/tool-session/login",
+        json={"username": "alice", "password": "api-password"},
+        headers={"X-CSRF-Token": csrf},
     )
     status = await client.get("/api/tool-session/status")
     invocation = await client.post(
-        f"/api/tools/{protected_tool_id}/invoke", json={"arguments": {}}
+        f"/api/tools/{protected_tool_id}/invoke",
+        json={"arguments": {}},
+        headers={"X-CSRF-Token": csrf},
     )
-    logout = await client.post("/api/tool-session/logout")
+    logout = await client.post(
+        "/api/tool-session/logout", headers={"X-CSRF-Token": csrf}
+    )
     missing = await client.get("/api/tool-session/status")
     api_login = await client.post(
-        "/v1/tool-sessions", json={"username": "bob", "password": "api-password"}
+        "/v1/tool-sessions",
+        json={"username": "bob", "password": "api-password"},
+        headers={"X-CSRF-Token": csrf},
     )
 
     assert browser_login.status_code == 200

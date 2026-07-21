@@ -200,22 +200,25 @@ class ToolSessionService:
         login_data = {config.username_field: username, config.password_field: password}
         auth_payload = await self._login(config, login_data)
         now = self._now()
+        auth = build_request_auth(config, auth_payload)
+        expiry_candidates = [
+            expiry
+            for expiry in (self._auth_expiry(config, auth_payload), credential_expiry(auth))
+            if expiry is not None
+        ]
+        auth_expires_at = min(expiry_candidates) if expiry_candidates else None
+        absolute_expires_at = min(
+            [now + timedelta(hours=config.absolute_hours), *expiry_candidates]
+        )
         token, row = self._new_row(
             context=context,
             agent_id=agent_id,
-            absolute_expires_at=now + timedelta(hours=config.absolute_hours),
+            absolute_expires_at=absolute_expires_at,
             encrypted_login_data=self._cipher.encrypt_json(login_data),
             encrypted_auth_data=self._cipher.encrypt_json(auth_payload),
-            auth_expires_at=self._auth_expiry(config, auth_payload),
+            auth_expires_at=auth_expires_at,
         )
-        auth = build_request_auth(config, auth_payload)
-        source_ids = list(
-            self._session.scalars(
-                select(ApiSource.id).where(
-                    ApiSource.enabled.is_(True), ApiSource.deleted_at.is_(None)
-                )
-            )
-        )
+        source_ids = [self._login_runtime(config)[1].id]
         for source_id in source_ids:
             self._session.add(
                 ToolSessionCredential(
@@ -253,6 +256,15 @@ class ToolSessionService:
         requested_expiry = _naive_utc(expires_at) or now + timedelta(hours=8)
         normalized: list[tuple[ApiSource, RequestAuth, datetime | None]] = []
         legacy_config = self._session.get(GlobalToolAuthConfig, 1)
+        legacy_source_id: int | None = None
+        if (
+            legacy_config is not None
+            and legacy_config.enabled
+            and legacy_config.login_tool_id is not None
+        ):
+            login_tool = self._session.get(Tool, legacy_config.login_tool_id)
+            if login_tool is not None and login_tool.deleted_at is None:
+                legacy_source_id = login_tool.api_source_id
         for source_id, supplied in credentials_by_source.items():
             source = self._session.get(ApiSource, source_id)
             if (
@@ -261,7 +273,8 @@ class ToolSessionService:
                 or not source.enabled
             ):
                 raise ToolSessionNotFound("API Source was not found")
-            auth = validate_and_normalize_credentials(source, supplied, legacy_config)
+            scoped_legacy_config = legacy_config if source.id == legacy_source_id else None
+            auth = validate_and_normalize_credentials(source, supplied, scoped_legacy_config)
             normalized.append((source, auth, credential_expiry(auth)))
         caps = [expiry for _, _, expiry in normalized if expiry is not None]
         absolute_expiry = min([requested_expiry, *caps])
@@ -371,15 +384,26 @@ class ToolSessionService:
         payload = await self._login(config, login_data)
         auth = build_request_auth(config, payload)
         row.encrypted_auth_data = self._cipher.encrypt_json(payload)
-        row.auth_expires_at = self._auth_expiry(config, payload)
+        expiry_candidates = [
+            expiry
+            for expiry in (self._auth_expiry(config, payload), credential_expiry(auth))
+            if expiry is not None
+        ]
+        row.auth_expires_at = min(expiry_candidates) if expiry_candidates else None
+        login_source_id = self._login_runtime(config)[1].id
         credentials = self._session.scalars(
             select(ToolSessionCredential).where(
-                ToolSessionCredential.tool_session_id == row.id
+                ToolSessionCredential.tool_session_id == row.id,
+                ToolSessionCredential.api_source_id == login_source_id,
             )
         ).all()
         for credential in credentials:
             credential.encrypted_credentials = self._cipher.encrypt_json(auth_to_json(auth))
-            credential.expires_at = row.auth_expires_at
+            credential.expires_at = (
+                min(row.auth_expires_at, row.absolute_expires_at)
+                if row.auth_expires_at is not None
+                else row.absolute_expires_at
+            )
             credential.status = "ready"
         self._session.commit()
 

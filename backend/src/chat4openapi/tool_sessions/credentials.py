@@ -2,6 +2,7 @@ import base64
 import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from string import ascii_letters, digits
 from typing import Any
 
 from chat4openapi.models import ApiSource, GlobalToolAuthConfig
@@ -26,6 +27,7 @@ FORBIDDEN_HEADERS = {
     "x-forwarded-port",
     "x-forwarded-proto",
 }
+COOKIE_NAME_CHARACTERS = frozenset(ascii_letters + digits + "!#$%&'*+-.^_`|~")
 
 
 class CredentialValidationError(ValueError):
@@ -101,10 +103,29 @@ def _normalize_fields(
         if not isinstance(raw_name, str):
             raise CredentialValidationError()
         name = raw_name.strip().lower()
+        invalid_cookie_value = not headers and isinstance(value, str) and (
+            not value
+            or any(
+                not (
+                    ordinal == 0x21
+                    or 0x23 <= ordinal <= 0x2B
+                    or 0x2D <= ordinal <= 0x3A
+                    or 0x3C <= ordinal <= 0x5B
+                    or 0x5D <= ordinal <= 0x7E
+                )
+                for ordinal in map(ord, value)
+            )
+        )
+        invalid_cookie_name = not headers and (
+            not set(raw_name) <= COOKIE_NAME_CHARACTERS
+            or not set(configured.get(name, "")) <= COOKIE_NAME_CHARACTERS
+        )
         if (
             not name
             or not isinstance(value, str)
             or any(ord(character) < 32 or ord(character) == 127 for character in value)
+            or invalid_cookie_value
+            or invalid_cookie_name
             or (headers and (name in FORBIDDEN_HEADERS or name.startswith("x-forwarded-")))
             or name not in configured
             or configured[name] in normalized
