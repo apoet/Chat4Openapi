@@ -28,6 +28,15 @@ describe('locale coverage', () => {
         'overview.journey.source',
         'overview.journey.tool',
         'overview.journey.skill',
+        'agent.listTitle',
+        'agent.newAgent',
+        'agent.boundSkills',
+        'agent.keys.title',
+        'agent.keys.oneTimeWarning',
+        'error.agents.default_cannot_disable',
+        'error.agents.default_cannot_delete',
+        'error.agents.provider_unavailable',
+        'error.agents.no_running_skills',
       ]),
     )
   })

@@ -93,9 +93,10 @@ export interface LlmProviderSummary {
 }
 
 export interface AgentConfig {
-  id: 1
+  id: number
   name: string
   enabled: boolean
+  is_default: boolean
   system_prompt: string
   provider_id: number | null
   model: string | null
@@ -103,9 +104,28 @@ export interface AgentConfig {
   max_iterations: number
   created_at: string
   updated_at: string
+  deleted_at: string | null
+  skill_ids: number[]
 }
 
-export type AgentConfigWrite = Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'>
+export type AgentConfigWrite = Omit<AgentConfig, 'id' | 'is_default' | 'created_at' | 'updated_at' | 'deleted_at' | 'skill_ids'>
+
+export interface AgentApiKey {
+  id: number
+  agent_id: number
+  label: string
+  key_prefix: string
+  enabled: boolean
+  expires_at: string | null
+  last_used_at: string | null
+  created_at: string
+  updated_at: string
+  revoked_at: string | null
+}
+
+export interface AgentApiKeyCreated extends AgentApiKey {
+  secret: string
+}
 
 export interface SkillSummary {
   id: number

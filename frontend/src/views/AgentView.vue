@@ -1,102 +1,116 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { ApiError } from '../api/client'
-import type { AgentConfig } from '../api/contracts'
-import { useAgentStore } from '../stores/agent'
+import type { AgentConfig, AgentConfigWrite } from '../api/contracts'
+import AgentEditor from '../components/AgentEditor.vue'
+import AgentKeyPanel from '../components/AgentKeyPanel.vue'
+import { useAgentsStore } from '../stores/agents'
 
-const store = useAgentStore()
+const store = useAgentsStore()
 const { t } = useI18n()
+const selectedId = ref<number | null>(null)
+const creating = ref(false)
 const errorMessage = ref('')
-const form = reactive<AgentConfig>({
-  id: 1,
-  name: '',
-  enabled: true,
-  system_prompt: '',
-  provider_id: null,
-  model: null,
-  mode: 'human_in_loop',
-  max_iterations: 8,
-  created_at: '',
-  updated_at: '',
-})
-const enabledProviders = computed(() => store.providers.filter((provider) => provider.enabled))
-const canSave = computed(() => Boolean(
-  form.name.trim()
-  && form.system_prompt.trim()
-  && enabledProviders.value.some((provider) => provider.id === form.provider_id)
-  && form.max_iterations >= 2
-  && form.max_iterations <= 32,
-))
+const selectedAgent = computed(() => store.agents.find((agent) => agent.id === selectedId.value) ?? null)
 
 onMounted(async () => {
   try {
     await store.load()
-    if (store.config) Object.assign(form, store.config)
-  } catch {
-    errorMessage.value = t('error.agent.load_failed')
-  }
+    selectedId.value = store.agents.find((agent) => agent.is_default)?.id ?? store.agents[0]?.id ?? null
+  } catch (error) { showError(error, 'load_failed') }
 })
 
-function actionError(error: unknown, fallback: 'save_failed' | 'reset_failed'): string {
-  if (error instanceof ApiError && error.code === 'agent.provider_unavailable') {
-    return t('error.agent.provider_unavailable')
+function showError(error: unknown, fallback: string): void {
+  if (error instanceof ApiError) {
+    const known = [
+      'agents.default_cannot_disable', 'agents.default_cannot_delete',
+      'agents.provider_unavailable', 'agents.no_running_skills',
+      'agents.skill_duplicate', 'agents.skill_unavailable', 'agents.not_found',
+      'agent_keys.not_found',
+    ]
+    if (known.includes(error.code)) {
+      errorMessage.value = t(`error.${error.code}`, error.params)
+      return
+    }
   }
-  return t(`error.agent.${fallback}`)
+  errorMessage.value = t(`error.agents.${fallback}`)
 }
 
-async function save(): Promise<void> {
-  if (!canSave.value) return
+function select(agent: AgentConfig): void {
+  creating.value = false
+  selectedId.value = agent.id
   errorMessage.value = ''
-  try {
-    await store.save({
-      name: form.name.trim(),
-      enabled: form.enabled,
-      system_prompt: form.system_prompt,
-      provider_id: form.provider_id as number,
-      model: form.model?.trim() || null,
-      mode: form.mode,
-      max_iterations: form.max_iterations,
-    })
-    if (store.config) Object.assign(form, store.config)
-  } catch (error) {
-    errorMessage.value = actionError(error, 'save_failed')
-  }
 }
 
-async function reset(): Promise<void> {
+async function save(payload: AgentConfigWrite, skillIds: number[]): Promise<void> {
   errorMessage.value = ''
   try {
-    await store.reset()
-    if (store.config) Object.assign(form, store.config)
-  } catch (error) {
-    errorMessage.value = actionError(error, 'reset_failed')
-  }
+    const saved = await store.save(payload, skillIds, creating.value ? undefined : selectedAgent.value?.id)
+    selectedId.value = saved.id
+    creating.value = false
+  } catch (error) { showError(error, 'save_failed') }
+}
+
+async function lifecycle(action: 'enable' | 'disable' | 'set-default'): Promise<void> {
+  if (!selectedAgent.value) return
+  errorMessage.value = ''
+  try {
+    const updated = await store.lifecycle(selectedAgent.value, action)
+    selectedId.value = updated.id
+  } catch (error) { showError(error, 'action_failed') }
+}
+
+async function remove(): Promise<void> {
+  if (!selectedAgent.value) return
+  errorMessage.value = ''
+  try {
+    await store.remove(selectedAgent.value)
+    selectedId.value = store.agents.find((agent) => agent.is_default)?.id ?? store.agents[0]?.id ?? null
+  } catch (error) { showError(error, 'delete_failed') }
 }
 </script>
 
 <template>
-  <main class="management-page narrow-page">
-    <header class="page-heading">
+  <main class="management-page agent-management-page">
+    <header class="page-heading with-actions">
       <div>
         <p class="eyebrow">{{ t('agent.eyebrow') }}</p>
         <h1>{{ t('agent.title') }}</h1>
+        <p class="muted">{{ t('agent.subtitle') }}</p>
       </div>
+      <button type="button" class="primary-action heading-action" @click="creating = true; selectedId = null; errorMessage = ''">{{ t('agent.newAgent') }}</button>
     </header>
-    <section class="settings-panel">
-      <label class="toggle-row"><span><strong>{{ t('agent.enabled') }}</strong><small>{{ t('agent.enabledHint') }}</small></span><input v-model="form.enabled" type="checkbox" /></label>
-      <div class="settings-grid">
-        <label>{{ t('agent.name') }}<input v-model="form.name" /></label>
-        <label>{{ t('agent.provider') }}<select v-model="form.provider_id"><option :value="null">{{ t('agent.selectProvider') }}</option><option v-for="provider in enabledProviders" :key="provider.id" :value="provider.id">{{ provider.name }} · {{ provider.default_model }}</option></select></label>
-        <label>{{ t('agent.model') }}<input v-model="form.model" :placeholder="t('agent.modelHint')" /></label>
-        <label>{{ t('agent.mode') }}<select v-model="form.mode"><option value="human_in_loop">{{ t('agent.humanInLoop') }}</option><option value="react">{{ t('agent.react') }}</option></select></label>
-        <label>{{ t('agent.maxIterations') }}<input v-model.number="form.max_iterations" type="number" min="2" max="32" /></label>
+
+    <p v-if="errorMessage" class="agent-error page-error" role="alert">{{ errorMessage }}</p>
+
+    <div class="agent-workspace">
+      <aside class="agent-roster" :aria-label="t('agent.listTitle')">
+        <div class="panel-heading compact-heading"><h2>{{ t('agent.listTitle') }}</h2><span>{{ store.agents.length }}</span></div>
+        <div class="agent-list">
+          <button v-for="agent in store.agents" :key="agent.id" type="button" :class="['agent-list-item', { active: selectedId === agent.id && !creating }]" @click="select(agent)">
+            <span class="agent-avatar">{{ agent.name.slice(0, 2).toUpperCase() }}</span>
+            <span><strong>{{ agent.name }}</strong><small>{{ agent.enabled ? t('tools.enabled') : t('tools.disabled') }}</small></span>
+            <b v-if="agent.is_default">{{ t('agent.default') }}</b>
+          </button>
+        </div>
+        <p v-if="store.agents.length === 0" class="empty-inline">{{ t('agent.empty') }}</p>
+      </aside>
+
+      <div class="agent-detail">
+        <template v-if="creating || selectedAgent">
+          <div v-if="selectedAgent && !creating" class="agent-lifecycle" :aria-label="t('agent.lifecycle')">
+            <button v-if="selectedAgent.enabled" type="button" class="secondary-action" :disabled="selectedAgent.is_default" @click="lifecycle('disable')">{{ t('agent.disable') }}</button>
+            <button v-else type="button" class="secondary-action" @click="lifecycle('enable')">{{ t('agent.enable') }}</button>
+            <button v-if="!selectedAgent.is_default" type="button" class="secondary-action" @click="lifecycle('set-default')">{{ t('agent.setDefault') }}</button>
+            <button v-if="!selectedAgent.is_default" type="button" class="danger-action" @click="remove">{{ t('agent.delete') }}</button>
+          </div>
+          <AgentEditor :agent="creating ? null : selectedAgent" :providers="store.providers" :skills="store.skills" @save="save" @cancel="creating = false; selectedId = store.agents[0]?.id ?? null" />
+          <AgentKeyPanel v-if="selectedAgent && !creating" :agent-id="selectedAgent.id" @error="showError($event, 'keys_failed')" />
+        </template>
+        <section v-else class="empty-state">{{ t('agent.chooseAgent') }}</section>
       </div>
-      <p class="agent-mode-note">{{ t('agent.toolApprovalNote') }}</p>
-      <label class="block-label">{{ t('agent.systemPrompt') }}<textarea v-model="form.system_prompt" rows="12" /></label>
-      <p v-if="errorMessage" class="agent-error" role="alert">{{ errorMessage }}</p>
-      <div class="row-actions agent-actions"><button class="primary-action" :disabled="!canSave" @click="save">{{ t('agent.save') }}</button><button class="secondary-action" @click="reset">{{ t('agent.reset') }}</button></div>
-    </section>
+    </div>
   </main>
 </template>
