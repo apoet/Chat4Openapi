@@ -23,6 +23,26 @@ beforeEach(() => {
 })
 
 describe('Tool administration views', () => {
+  it('groups Tools by API source name', async () => {
+    const tools = [
+      { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, enabled: false },
+      { id: 2, api_source_id: 2, operation_key: 'GET /orders', name: 'listOrders', description: null, input_schema: {}, enabled: false },
+    ]
+    const sources = [
+      { id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://pets.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+      { id: 2, name: 'Orders API', source_type: 'openapi', base_url: 'https://orders.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+    ]
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const path = String(input)
+      return Promise.resolve(jsonResponse(path.endsWith('/sources') ? sources : tools))
+    }))
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+
+    expect(await screen.findByRole('heading', { name: 'Pet API' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Orders API' })).toBeTruthy()
+  })
+
   it('jumps from an API source to its Tools', async () => {
     const source = {
       id: 7,
@@ -55,30 +75,31 @@ describe('Tool administration views', () => {
   })
 
   it('shows only Tools from the API source in the route query', async () => {
+    const tools = [
+      {
+        id: 1,
+        api_source_id: 1,
+        operation_key: 'GET /pets',
+        name: 'listPets',
+        description: null,
+        input_schema: {},
+        enabled: false,
+      },
+      {
+        id: 2,
+        api_source_id: 2,
+        operation_key: 'GET /orders',
+        name: 'listOrders',
+        description: null,
+        input_schema: {},
+        enabled: false,
+      },
+    ]
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue(
-        jsonResponse([
-          {
-            id: 1,
-            api_source_id: 1,
-            operation_key: 'GET /pets',
-            name: 'listPets',
-            description: null,
-            input_schema: {},
-            enabled: false,
-          },
-          {
-            id: 2,
-            api_source_id: 2,
-            operation_key: 'GET /orders',
-            name: 'listOrders',
-            description: null,
-            input_schema: {},
-            enabled: false,
-          },
-        ]),
-      ),
+      vi.fn((input: RequestInfo | URL) => Promise.resolve(
+        jsonResponse(String(input).endsWith('/sources') ? [] : tools),
+      )),
     )
     const router = createRouter({
       history: createMemoryHistory(),
@@ -166,6 +187,19 @@ describe('Tool administration views', () => {
         ]),
       )
       .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            id: 1,
+            name: 'Pet API',
+            source_type: 'openapi',
+            base_url: 'https://api.test',
+            allow_private_networks: false,
+            enabled: true,
+            created_at: '2026-07-21T00:00:00',
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
         jsonResponse({
           id: 4,
           api_source_id: 1,
@@ -183,9 +217,9 @@ describe('Tool administration views', () => {
     expect(screen.getAllByText('Disabled')).toHaveLength(2)
     await fireEvent.click(screen.getByRole('button', { name: 'Enable' }))
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
-    expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/tools/4/enabled')
-    expect((fetchMock.mock.calls[1][1] as RequestInit).headers).toEqual(
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    expect(fetchMock.mock.calls[2][0]).toBe('/api/admin/tools/4/enabled')
+    expect((fetchMock.mock.calls[2][1] as RequestInit).headers).toEqual(
       expect.objectContaining({}),
     )
   })
