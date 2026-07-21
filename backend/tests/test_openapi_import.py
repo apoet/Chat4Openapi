@@ -47,7 +47,7 @@ def test_ignores_broken_named_references_from_swagger_generators() -> None:
 
 
 def test_normalizes_swagger_header_parameters_missing_a_type() -> None:
-    spec = fixture_bytes("openapi2.yaml").replace(
+    spec = fixture_bytes("openapi2.yaml").replace(b"\r\n", b"\n").replace(
         b"        - name: trace\n          in: query\n          required: false\n          type: string",
         b"        - name: tenant-id\n          in: header\n          required: false",
         1,
