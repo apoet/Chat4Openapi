@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createMemoryHistory, createRouter } from 'vue-router'
 
 import { i18n } from '../i18n'
 import { useAuthStore } from '../stores/auth'
@@ -22,6 +23,76 @@ beforeEach(() => {
 })
 
 describe('Tool administration views', () => {
+  it('jumps from an API source to its Tools', async () => {
+    const source = {
+      id: 7,
+      name: 'Pet API',
+      source_type: 'openapi',
+      base_url: 'https://api.test',
+      allow_private_networks: false,
+      enabled: true,
+      created_at: '2026-07-21T00:00:00',
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse([source])))
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/admin/sources', component: ApiSourcesView },
+        { path: '/admin/tools', name: 'tools', component: ToolsView },
+      ],
+    })
+    await router.push('/admin/sources')
+    await router.isReady()
+
+    render(ApiSourcesView, { global: { plugins: [i18n, router] } })
+    await fireEvent.click(await screen.findByRole('button', { name: 'View Tools' }))
+
+    await waitFor(() => expect(router.currentRoute.value.name).toBe('tools'))
+    expect(router.currentRoute.value.query).toEqual({
+      source_id: '7',
+      source_name: 'Pet API',
+    })
+  })
+
+  it('shows only Tools from the API source in the route query', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse([
+          {
+            id: 1,
+            api_source_id: 1,
+            operation_key: 'GET /pets',
+            name: 'listPets',
+            description: null,
+            input_schema: {},
+            enabled: false,
+          },
+          {
+            id: 2,
+            api_source_id: 2,
+            operation_key: 'GET /orders',
+            name: 'listOrders',
+            description: null,
+            input_schema: {},
+            enabled: false,
+          },
+        ]),
+      ),
+    )
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/admin/tools', name: 'tools', component: ToolsView }],
+    })
+    await router.push('/admin/tools?source_id=2&source_name=Orders%20API')
+    await router.isReady()
+
+    render(ToolsView, { global: { plugins: [i18n, router] } })
+
+    expect(await screen.findByText('listOrders')).toBeTruthy()
+    expect(screen.queryByText('listPets')).toBeNull()
+  })
+
   it('edits and deletes an API source', async () => {
     const source = {
       id: 1,

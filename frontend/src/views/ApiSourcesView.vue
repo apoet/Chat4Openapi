@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { inject, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { routerKey } from 'vue-router'
 
 import type { ApiSourceSummary } from '../api/contracts'
 import { useToolsStore } from '../stores/tools'
 
 const store = useToolsStore()
 const { t } = useI18n()
+const router = inject(routerKey, null)
 const name = ref('')
 const baseUrl = ref('')
 const importMode = ref<'file' | 'url'>('file')
@@ -75,6 +77,13 @@ async function saveEdit(source: ApiSourceSummary): Promise<void> {
   })
   editingId.value = null
 }
+
+function viewTools(source: ApiSourceSummary): void {
+  void router?.push({
+    name: 'tools',
+    query: { source_id: String(source.id), source_name: source.name },
+  })
+}
 </script>
 
 <template>
@@ -109,7 +118,7 @@ async function saveEdit(source: ApiSourceSummary): Promise<void> {
         <template v-else>
           <div><strong>{{ source.name }}</strong><p>{{ source.base_url }}</p></div>
           <span :class="['status-pill', source.enabled ? 'enabled' : 'disabled']">{{ source.enabled ? t('tools.enabled') : t('tools.disabled') }}</span>
-          <footer class="row-actions"><button class="secondary-action" @click="startEdit(source)">{{ t('skills.edit') }}</button><button class="secondary-action" @click="store.setSourceEnabled(source, !source.enabled)">{{ source.enabled ? t('tools.disable') : t('tools.enable') }}</button><button class="danger-action" @click="store.deleteSource(source)">{{ t('tools.delete') }}</button></footer>
+          <footer class="row-actions"><button class="secondary-action" @click="viewTools(source)">{{ t('sources.viewTools') }}</button><button class="secondary-action" @click="startEdit(source)">{{ t('skills.edit') }}</button><button class="secondary-action" @click="store.setSourceEnabled(source, !source.enabled)">{{ source.enabled ? t('tools.disable') : t('tools.enable') }}</button><button class="danger-action" @click="store.deleteSource(source)">{{ t('tools.delete') }}</button></footer>
         </template>
       </article>
     </section>
