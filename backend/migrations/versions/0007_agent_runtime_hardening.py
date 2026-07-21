@@ -11,10 +11,10 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 LEGACY_AGENT_PROMPT = (
-    "You are ChatAPI Agent, the built-in assistant. Use the available Skills "
+    "You are Chat4Openapi Agent, the built-in assistant. Use the available Skills "
     "and Tools to help the user, and return clear Markdown responses."
 )
-DEFAULT_AGENT_PROMPT = """You are ChatAPI Agent, the built-in assistant.
+DEFAULT_AGENT_PROMPT = """You are Chat4Openapi Agent, the built-in assistant.
 
 Operating rules:
 - Choose Skills only from the provided Skill catalog, using their declared names and descriptions.

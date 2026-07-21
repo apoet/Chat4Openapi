@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session, sessionmaker
 
-from chatapi.models import ApiSource, Tool, ToolParameterOverride
-from chatapi.tools.effective_schema import (
+from chat4openapi.models import ApiSource, Tool, ToolParameterOverride
+from chat4openapi.tools.effective_schema import (
     effective_input_schema,
     reconcile_parameter_overrides,
 )

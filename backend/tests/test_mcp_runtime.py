@@ -2,11 +2,11 @@ from cryptography.fernet import Fernet
 from fastmcp import Client
 import pytest
 
-from chatapi.mcp.runtime import create_mcp_server
-from chatapi.models import ApiSource, GlobalToolAuthConfig, Tool
-from chatapi.security.encryption import SecretCipher
-from chatapi.tool_sessions.service import ToolSessionService
-from chatapi.tools.executor import ToolExecutionResult
+from chat4openapi.mcp.runtime import create_mcp_server
+from chat4openapi.models import ApiSource, GlobalToolAuthConfig, Tool
+from chat4openapi.security.encryption import SecretCipher
+from chat4openapi.tool_sessions.service import ToolSessionService
+from chat4openapi.tools.executor import ToolExecutionResult
 
 pytestmark = pytest.mark.asyncio
 

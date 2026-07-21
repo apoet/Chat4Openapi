@@ -4,7 +4,7 @@
 
 **Goal:** Import OpenAPI 2.0/3.x operations as managed MCP Tools, execute them safely with one global original-API login per Tool Session, and expose administrator management APIs plus an MCP Streamable HTTP endpoint.
 
-**Architecture:** OpenAPI documents are validated and normalized into a version-independent operation model. FastMCP 3.4.4 generates candidate Tool schemas, while ChatAPI persists lifecycle state and uses its own request-scoped HTTP executor. A singleton global login configuration creates encrypted, expiring Tool User Sessions whose authentication result is injected into every Tool call in that session.
+**Architecture:** OpenAPI documents are validated and normalized into a version-independent operation model. FastMCP 3.4.4 generates candidate Tool schemas, while Chat4Openapi persists lifecycle state and uses its own request-scoped HTTP executor. A singleton global login configuration creates encrypted, expiring Tool User Sessions whose authentication result is injected into every Tool call in that session.
 
 **Tech Stack:** Existing FastAPI/SQLAlchemy/Alembic stack, FastMCP 3.4.4, openapi-spec-validator, PyYAML, HTTPX, cryptography/Fernet, pytest.
 
@@ -26,13 +26,13 @@
 ### Task 1: Tool Persistence and Migration
 
 **Files:**
-- Create: `backend/src/chatapi/models/api_source.py`
-- Create: `backend/src/chatapi/models/tool.py`
-- Create: `backend/src/chatapi/models/tool_auth.py`
-- Create: `backend/src/chatapi/models/tool_session.py`
-- Create: `backend/src/chatapi/models/tool_invocation.py`
+- Create: `backend/src/chat4openapi/models/api_source.py`
+- Create: `backend/src/chat4openapi/models/tool.py`
+- Create: `backend/src/chat4openapi/models/tool_auth.py`
+- Create: `backend/src/chat4openapi/models/tool_session.py`
+- Create: `backend/src/chat4openapi/models/tool_invocation.py`
 - Create: `backend/migrations/versions/0002_tool_runtime.py`
-- Modify: `backend/src/chatapi/models/__init__.py`
+- Modify: `backend/src/chat4openapi/models/__init__.py`
 - Test: `backend/tests/test_tool_models.py`
 
 **Interfaces:**
@@ -48,9 +48,9 @@
 ### Task 2: OpenAPI Validation, Normalization, and FastMCP Candidates
 
 **Files:**
-- Create: `backend/src/chatapi/tools/openapi_loader.py`
-- Create: `backend/src/chatapi/tools/openapi_v2.py`
-- Create: `backend/src/chatapi/tools/candidates.py`
+- Create: `backend/src/chat4openapi/tools/openapi_loader.py`
+- Create: `backend/src/chat4openapi/tools/openapi_v2.py`
+- Create: `backend/src/chat4openapi/tools/candidates.py`
 - Create: `backend/tests/fixtures/openapi2.yaml`
 - Create: `backend/tests/fixtures/openapi3.yaml`
 - Test: `backend/tests/test_openapi_import.py`
@@ -68,9 +68,9 @@
 ### Task 3: Safe Request-Scoped Tool Executor
 
 **Files:**
-- Create: `backend/src/chatapi/tools/network_policy.py`
-- Create: `backend/src/chatapi/tools/executor.py`
-- Create: `backend/src/chatapi/tools/errors.py`
+- Create: `backend/src/chat4openapi/tools/network_policy.py`
+- Create: `backend/src/chat4openapi/tools/executor.py`
+- Create: `backend/src/chat4openapi/tools/errors.py`
 - Test: `backend/tests/test_tool_executor.py`
 
 **Interfaces:**
@@ -86,27 +86,27 @@
 
 **Files:**
 - Modify: `backend/pyproject.toml`
-- Create: `backend/src/chatapi/security/encryption.py`
-- Create: `backend/src/chatapi/tool_sessions/service.py`
-- Create: `backend/src/chatapi/tool_sessions/auth_mapping.py`
+- Create: `backend/src/chat4openapi/security/encryption.py`
+- Create: `backend/src/chat4openapi/tool_sessions/service.py`
+- Create: `backend/src/chat4openapi/tool_sessions/auth_mapping.py`
 - Test: `backend/tests/test_tool_sessions.py`
 
 **Interfaces:**
 - Produces: `create_tool_session(username, password)`, `resolve_tool_session(id)`, `revoke_tool_session(id)`, and `RequestAuth` mapping.
-- Browser IDs live in HttpOnly `chatapi_tool_session`; API clients receive an opaque ID and storage keeps only its SHA-256 hash.
+- Browser IDs live in HttpOnly `chat4openapi_tool_session`; API clients receive an opaque ID and storage keeps only its SHA-256 hash.
 
 - [ ] Write failing tests for encrypted-at-rest credentials, user isolation, idle/absolute expiry, response JSON-path extraction, Bearer/custom-header/cookie injection, token refresh, and one retry after 401/403.
-- [ ] Add explicit `cryptography>=45,<50`, load `CHATAPI_ENCRYPTION_KEY` or generate `data/.chatapi.key` with restrictive permissions, and implement Fernet JSON envelopes.
+- [ ] Add explicit `cryptography>=45,<50`, load `CHAT4OPENAPI_ENCRYPTION_KEY` or generate `data/.chat4openapi.key` with restrictive permissions, and implement Fernet JSON envelopes.
 - [ ] Execute the configured login Tool without existing auth, store encrypted login input/result, and remove expired/revoked session ciphertext.
 - [ ] Run Tool Session tests and commit with `feat: add global API-user Tool Sessions`.
 
 ### Task 5: Administrator Tool APIs and Public Tool Session APIs
 
 **Files:**
-- Create: `backend/src/chatapi/schemas/tools.py`
-- Create: `backend/src/chatapi/api/admin_tools.py`
-- Create: `backend/src/chatapi/api/tool_sessions.py`
-- Modify: `backend/src/chatapi/main.py`
+- Create: `backend/src/chat4openapi/schemas/tools.py`
+- Create: `backend/src/chat4openapi/api/admin_tools.py`
+- Create: `backend/src/chat4openapi/api/tool_sessions.py`
+- Modify: `backend/src/chat4openapi/main.py`
 - Test: `backend/tests/test_tool_api.py`
 
 **Interfaces:**
@@ -121,9 +121,9 @@
 ### Task 6: Dynamic MCP Server
 
 **Files:**
-- Create: `backend/src/chatapi/mcp/runtime.py`
-- Create: `backend/src/chatapi/mcp/tool.py`
-- Modify: `backend/src/chatapi/main.py`
+- Create: `backend/src/chat4openapi/mcp/runtime.py`
+- Create: `backend/src/chat4openapi/mcp/tool.py`
+- Modify: `backend/src/chat4openapi/main.py`
 - Test: `backend/tests/test_mcp_runtime.py`
 
 **Interfaces:**

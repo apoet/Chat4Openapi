@@ -5,16 +5,16 @@ from cryptography.fernet import Fernet
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from chatapi.models import ApiSource, GlobalToolAuthConfig, Tool, ToolUserSession
-from chatapi.security.encryption import SecretCipher
-from chatapi.tool_sessions.auth_mapping import build_request_auth, extract_json_path
-from chatapi.tool_sessions.service import (
+from chat4openapi.models import ApiSource, GlobalToolAuthConfig, Tool, ToolUserSession
+from chat4openapi.security.encryption import SecretCipher
+from chat4openapi.tool_sessions.auth_mapping import build_request_auth, extract_json_path
+from chat4openapi.tool_sessions.service import (
     ToolSessionExpired,
     ToolSessionNotFound,
     ToolSessionService,
 )
-from chatapi.tools.errors import ToolExecutionError
-from chatapi.tools.executor import RequestAuth, ToolExecutionResult
+from chat4openapi.tools.errors import ToolExecutionError
+from chat4openapi.tools.executor import RequestAuth, ToolExecutionResult
 
 
 class FakeExecutor:

@@ -1,4 +1,4 @@
-from chatapi.skills.defaults import VARCARDS2_GENE_SYSTEM_PROMPT
+from chat4openapi.skills.defaults import VARCARDS2_GENE_SYSTEM_PROMPT
 
 
 def test_varcards2_gene_default_prompt_requires_a_stable_markdown_table() -> None:

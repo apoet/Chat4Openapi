@@ -6,11 +6,11 @@ import pytest
 from cryptography.fernet import Fernet
 from fastapi import FastAPI
 
-from chatapi.api.tool_sessions import get_tool_secret_cipher
-from chatapi.chat.api import get_llm_client
-from chatapi.llm.client import CanonicalResponse, CanonicalToolCall, LlmProviderError
-from chatapi.models import AgentConfig, ChatMessage, Conversation, LlmProvider, Skill
-from chatapi.security.encryption import SecretCipher
+from chat4openapi.api.tool_sessions import get_tool_secret_cipher
+from chat4openapi.chat.api import get_llm_client
+from chat4openapi.llm.client import CanonicalResponse, CanonicalToolCall, LlmProviderError
+from chat4openapi.models import AgentConfig, ChatMessage, Conversation, LlmProvider, Skill
+from chat4openapi.security.encryption import SecretCipher
 
 
 class FinalAnswerLlm:
@@ -41,7 +41,7 @@ def seed(factory, cipher: SecretCipher) -> Skill:
         session.add(
             AgentConfig(
                 id=1,
-                name="ChatAPI Agent",
+                name="Chat4Openapi Agent",
                 enabled=True,
                 system_prompt="Route through declared Skills.",
                 provider_id=provider.id,
@@ -191,7 +191,7 @@ async def test_openai_new_conversation_persists_and_uses_full_transcript(
         ("user", "Follow up"),
     ]
     with db_session_factory() as session:
-        conversation_id = response.json()["chatapi_conversation_id"]
+        conversation_id = response.json()["chat4openapi_conversation_id"]
         stored = session.query(ChatMessage).filter_by(
             conversation_id=conversation_id
         ).order_by(ChatMessage.sequence).all()
@@ -253,7 +253,7 @@ async def test_compatibility_continuation_appends_only_new_transcript_suffix(
             "messages": [{"role": "user", "content": "First question"}],
         },
     )
-    conversation_id = first.json()["chatapi_conversation_id"]
+    conversation_id = first.json()["chat4openapi_conversation_id"]
 
     second = await client.post(
         "/v1/chat/completions",
@@ -303,7 +303,7 @@ async def test_agent_default_and_extension_scope_delegate_non_interactively(
             "model": "agent-default",
             "max_tokens": 128,
             "messages": [{"role": "user", "content": [{"type": "text", "text": "Hello"}]}],
-            "chatapi_skill_ids": [skill.id],
+            "chat4openapi_skill_ids": [skill.id],
         },
     )
 
@@ -332,17 +332,17 @@ async def test_agent_default_explicit_empty_extension_remains_automatic_on_conti
         "/v1/chat/completions",
         json={
             "model": "agent-default",
-            "chatapi_skill_ids": [],
+            "chat4openapi_skill_ids": [],
             "messages": [{"role": "user", "content": "Hello"}],
         },
     )
-    conversation_id = created.json()["chatapi_conversation_id"]
+    conversation_id = created.json()["chat4openapi_conversation_id"]
 
     continued = await client.post(
         "/v1/chat/completions",
         json={
             "model": "agent-default",
-            "chatapi_skill_ids": [],
+            "chat4openapi_skill_ids": [],
             "conversation_id": conversation_id,
             "messages": [
                 {"role": "user", "content": "Hello"},
@@ -371,7 +371,7 @@ async def test_skill_alias_rejects_conflicting_extension_scope(
         "/v1/chat/completions",
         json={
             "model": f"skill-{skill.id}",
-            "chatapi_skill_ids": [skill.id],
+            "chat4openapi_skill_ids": [skill.id],
             "messages": [{"role": "user", "content": "Hello"}],
         },
     )
@@ -447,7 +447,7 @@ async def test_skill_alias_conversation_rejects_agent_default_scope_change(
         "/v1/chat/completions",
         json={
             "model": "agent-default",
-            "conversation_id": created.json()["chatapi_conversation_id"],
+            "conversation_id": created.json()["chat4openapi_conversation_id"],
             "messages": [{"role": "user", "content": "Continue"}],
         },
     )
@@ -476,7 +476,7 @@ async def test_agent_default_conversation_rejects_skill_alias_scope_change(
         "/v1/chat/completions",
         json={
             "model": f"skill-{skill.id}",
-            "conversation_id": created.json()["chatapi_conversation_id"],
+            "conversation_id": created.json()["chat4openapi_conversation_id"],
             "messages": [{"role": "user", "content": "Continue"}],
         },
     )
@@ -501,7 +501,7 @@ async def test_agent_default_continuation_keeps_initial_automatic_scope_when_cat
             "messages": [{"role": "user", "content": "Hello"}],
         },
     )
-    conversation_id = created.json()["chatapi_conversation_id"]
+    conversation_id = created.json()["chat4openapi_conversation_id"]
     with db_session_factory() as session:
         session.add(
             Skill(
@@ -613,7 +613,7 @@ async def test_existing_skill_alias_continuation_records_unavailable_failure(
             "messages": [{"role": "user", "content": "Hello"}],
         },
     )
-    conversation_id = created.json()["chatapi_conversation_id"]
+    conversation_id = created.json()["chat4openapi_conversation_id"]
     with db_session_factory() as session:
         stored = session.get(Skill, skill.id)
         if unavailable_state == "stopped":

@@ -7,10 +7,10 @@ import pytest_asyncio
 from fastapi import FastAPI
 from sqlalchemy.orm import Session, sessionmaker
 
-from chatapi.db.base import Base
-from chatapi.db.session import create_engine_for_url, get_db_session
-from chatapi.main import create_app
-from chatapi import models  # noqa: F401
+from chat4openapi.db.base import Base
+from chat4openapi.db.session import create_engine_for_url, get_db_session
+from chat4openapi.main import create_app
+from chat4openapi import models  # noqa: F401
 
 
 @pytest.fixture

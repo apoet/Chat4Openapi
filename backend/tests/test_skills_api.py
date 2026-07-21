@@ -2,7 +2,7 @@ import httpx
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
-from chatapi.models import ApiSource, GlobalToolAuthConfig, Tool
+from chat4openapi.models import ApiSource, GlobalToolAuthConfig, Tool
 
 ADMIN = {"username": "admin", "password": "StrongPass!123", "locale": "en-US"}
 

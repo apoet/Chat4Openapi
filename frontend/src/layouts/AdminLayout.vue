@@ -24,7 +24,7 @@ async function logout(): Promise<void> {
 <template>
   <div class="admin-shell">
     <aside class="sidebar">
-      <div class="sidebar-brand"><span class="brand-mark small">CA</span><strong>ChatAPI</strong></div>
+      <div class="sidebar-brand"><span class="brand-mark small">CA</span><strong>Chat4Openapi</strong></div>
       <nav>
         <RouterLink to="/admin" class="nav-link">⌂ <span>{{ t('nav.overview') }}</span></RouterLink>
         <span class="nav-section">{{ t('nav.build') }}</span>

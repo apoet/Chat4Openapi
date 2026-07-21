@@ -1,5 +1,5 @@
 export default {
-  app: { name: 'ChatAPI', tagline: '与你的 API 对话。' },
+  app: { name: 'Chat4Openapi', tagline: '与你的 API 对话。' },
   setup: {
     eyebrow: '首次设置',
     title: '创建后台管理员',
@@ -16,14 +16,14 @@ export default {
   login: {
     eyebrow: '后台管理',
     title: '欢迎回来',
-    description: '登录以管理 ChatAPI 实例。',
+    description: '登录以管理 Chat4Openapi 实例。',
     username: '用户名',
     password: '密码',
     submit: '登录',
     quote: '将接口定义转化为实用、可治理的智能对话。',
   },
   overview: {
-    eyebrow: 'ChatAPI 管理平台',
+    eyebrow: 'Chat4Openapi 管理平台',
     title: '平台概览',
     subtitle: '依次配置各项能力，然后在 Skill 中进行编排。',
     providers: '大模型供应商',
@@ -82,7 +82,7 @@ export default {
   },
   action: { continue: '继续' },
   error: {
-    setup: { already_initialized: '此 ChatAPI 实例已经完成初始化。' },
+    setup: { already_initialized: '此 Chat4Openapi 实例已经完成初始化。' },
     auth: {
       invalid_credentials: '用户名或密码不正确。',
       required: '请先登录。',

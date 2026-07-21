@@ -61,6 +61,6 @@ describe('setup view', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Create administrator' }))
 
-    expect(await screen.findByText('This ChatAPI instance is already initialized.')).toBeTruthy()
+    expect(await screen.findByText('This Chat4Openapi instance is already initialized.')).toBeTruthy()
   })
 })

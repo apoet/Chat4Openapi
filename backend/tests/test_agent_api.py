@@ -4,8 +4,8 @@ import httpx
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
-from chatapi.chat.agent import DEFAULT_AGENT_PROMPT
-from chatapi.models import AgentConfig, LlmProvider
+from chat4openapi.chat.agent import DEFAULT_AGENT_PROMPT
+from chat4openapi.models import AgentConfig, LlmProvider
 
 ADMIN = {"username": "admin", "password": "StrongPass!123", "locale": "en-US"}
 
@@ -34,7 +34,7 @@ def seed_agent(factory: sessionmaker[Session]) -> int:
         session.add(
             AgentConfig(
                 id=1,
-                name="ChatAPI Agent",
+                name="Chat4Openapi Agent",
                 enabled=True,
                 system_prompt="Original prompt",
                 provider_id=provider.id,
@@ -52,7 +52,7 @@ def seed_providerless_agent(factory: sessionmaker[Session]) -> None:
         session.add(
             AgentConfig(
                 id=1,
-                name="ChatAPI Agent",
+                name="Chat4Openapi Agent",
                 enabled=True,
                 system_prompt="Original prompt",
                 provider_id=None,
@@ -109,7 +109,7 @@ async def test_authenticated_admin_can_read_the_singleton_agent(
     updated_at = response.json()["updated_at"]
     assert response.json() == {
         "id": 1,
-        "name": "ChatAPI Agent",
+        "name": "Chat4Openapi Agent",
         "enabled": True,
         "system_prompt": "Original prompt",
         "provider_id": provider_id,
@@ -247,7 +247,7 @@ async def test_authenticated_admin_can_reset_the_singleton_agent(
         assert required_rule.lower() in response.json()["system_prompt"].lower()
     assert response.json() == {
         "id": 1,
-        "name": "ChatAPI Agent",
+        "name": "Chat4Openapi Agent",
         "enabled": True,
         "system_prompt": DEFAULT_AGENT_PROMPT,
         "provider_id": provider_id,

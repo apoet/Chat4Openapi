@@ -3,9 +3,9 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from chatapi.models.admin import AdminUser
-from chatapi.models.app_setting import AppSetting
-from chatapi.security.passwords import verify_password
+from chat4openapi.models.admin import AdminUser
+from chat4openapi.models.app_setting import AppSetting
+from chat4openapi.security.passwords import verify_password
 
 
 @pytest.mark.asyncio

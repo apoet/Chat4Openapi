@@ -1,9 +1,9 @@
 import pytest
 
-import chatapi.chat.orchestrator as orchestrator_module
-from chatapi.chat.agent import AgentTurnRequest, AgentTurnResult
-from chatapi.chat.orchestrator import ChatOrchestrator
-from chatapi.llm.client import CanonicalMessage
+import chat4openapi.chat.orchestrator as orchestrator_module
+from chat4openapi.chat.agent import AgentTurnRequest, AgentTurnResult
+from chat4openapi.chat.orchestrator import ChatOrchestrator
+from chat4openapi.llm.client import CanonicalMessage
 
 
 class RecordingRuntime:

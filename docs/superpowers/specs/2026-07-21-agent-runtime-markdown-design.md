@@ -83,7 +83,7 @@ Browser Chat sends `candidate_skill_ids` with each new conversation:
 
 The Agent receives only Skill catalog metadata during routing. It receives full Skill prompts and Tool schemas after `load_skills`. Compound requests may load multiple Skills. A browser-selected candidate is a scope restriction, not a forced eager load.
 
-The compatibility APIs accept optional `chatapi_skill_ids` as an extension. Existing `skill-<id>` model identifiers remain compatible and are treated as a one-Skill candidate set. A generic built-in Agent model identifier exposes automatic routing across all running Skills.
+The compatibility APIs accept optional `chat4openapi_skill_ids` as an extension. Existing `skill-<id>` model identifiers remain compatible and are treated as a one-Skill candidate set. A generic built-in Agent model identifier exposes automatic routing across all running Skills.
 
 `GET /v1/models` exposes the generic Agent identifier and retains `skill-<id>` aliases for candidate scoping. These identifiers select Agent routing scope; they never select a Skill-owned provider.
 

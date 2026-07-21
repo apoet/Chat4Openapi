@@ -9,11 +9,11 @@ from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from chatapi.api import admin_tools
-from chatapi.api.tool_sessions import get_tool_executor, get_tool_secret_cipher
-from chatapi.models import Tool, ToolParameterOverride
-from chatapi.security.encryption import SecretCipher
-from chatapi.tools.executor import ToolExecutionResult
+from chat4openapi.api import admin_tools
+from chat4openapi.api.tool_sessions import get_tool_executor, get_tool_secret_cipher
+from chat4openapi.models import Tool, ToolParameterOverride
+from chat4openapi.security.encryption import SecretCipher
+from chat4openapi.tools.executor import ToolExecutionResult
 
 ADMIN_PAYLOAD = {"username": "admin", "password": "StrongPass!123", "locale": "en-US"}
 FIXTURE = Path(__file__).parent / "fixtures" / "openapi3.yaml"

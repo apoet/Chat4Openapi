@@ -7,8 +7,8 @@ from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from chatapi.db.session import create_engine_for_url
-from chatapi.models import Skill, SkillTool, Tool
+from chat4openapi.db.session import create_engine_for_url
+from chat4openapi.models import Skill, SkillTool, Tool
 
 
 def sqlite_url(path: Path) -> str:
@@ -77,7 +77,7 @@ def test_skill_tool_and_position_are_unique_within_skill(
 
 
 def _create_source(session: Session) -> int:
-    from chatapi.models import ApiSource
+    from chat4openapi.models import ApiSource
 
     source = ApiSource(name="API", source_type="openapi", base_url="https://api.test")
     session.add(source)

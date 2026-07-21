@@ -57,7 +57,7 @@ describe('Agent administration', () => {
       }
       return Promise.resolve(response({
         id: 1,
-        name: 'ChatAPI Agent',
+        name: 'Chat4Openapi Agent',
         enabled: true,
         system_prompt: 'Use Skills and Tools.',
         provider_id: 1,
@@ -69,7 +69,7 @@ describe('Agent administration', () => {
 
     render(AgentView, { global: { plugins: [i18n] } })
 
-    await waitFor(() => expect((screen.getByLabelText('Agent name') as HTMLInputElement).value).toBe('ChatAPI Agent'))
+    await waitFor(() => expect((screen.getByLabelText('Agent name') as HTMLInputElement).value).toBe('Chat4Openapi Agent'))
     expect((screen.getByLabelText('Provider') as HTMLSelectElement).value).toBe('1')
     expect(screen.getByRole('option', { name: /Primary/ })).toBeTruthy()
     expect(screen.queryByRole('option', { name: /Disabled/ })).toBeNull()
@@ -83,7 +83,7 @@ describe('Agent administration', () => {
       .mockResolvedValueOnce(response([]))
       .mockResolvedValueOnce(response({
         id: 1,
-        name: 'ChatAPI Agent',
+        name: 'Chat4Openapi Agent',
         enabled: true,
         system_prompt: 'Use Skills and Tools.',
         provider_id: null,
@@ -94,14 +94,14 @@ describe('Agent administration', () => {
 
     render(AgentView, { global: { plugins: [i18n] } })
 
-    await waitFor(() => expect((screen.getByLabelText('Agent name') as HTMLInputElement).value).toBe('ChatAPI Agent'))
+    await waitFor(() => expect((screen.getByLabelText('Agent name') as HTMLInputElement).value).toBe('Chat4Openapi Agent'))
     expect((screen.getByRole('button', { name: 'Save Agent' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('saves every Agent configuration field with administrator CSRF', async () => {
     const initial = {
       id: 1 as const,
-      name: 'ChatAPI Agent',
+      name: 'Chat4Openapi Agent',
       enabled: true,
       system_prompt: 'Original prompt',
       provider_id: 1,
@@ -116,7 +116,7 @@ describe('Agent administration', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(AgentView, { global: { plugins: [i18n] } })
-    await waitFor(() => expect((screen.getByLabelText('Agent name') as HTMLInputElement).value).toBe('ChatAPI Agent'))
+    await waitFor(() => expect((screen.getByLabelText('Agent name') as HTMLInputElement).value).toBe('Chat4Openapi Agent'))
 
     await fireEvent.update(screen.getByLabelText('Agent name'), 'Operations Agent')
     await fireEvent.click(screen.getByRole('checkbox', { name: /Enabled/ }))
@@ -155,7 +155,7 @@ describe('Agent administration', () => {
     }
     const defaults = {
       ...initial,
-      name: 'ChatAPI Agent',
+      name: 'Chat4Openapi Agent',
       enabled: true,
       system_prompt: 'Built-in prompt',
       model: null,
@@ -172,7 +172,7 @@ describe('Agent administration', () => {
     await waitFor(() => expect((screen.getByLabelText('Agent name') as HTMLInputElement).value).toBe('Operations Agent'))
     await fireEvent.click(screen.getByRole('button', { name: 'Restore defaults' }))
 
-    await waitFor(() => expect((screen.getByLabelText('Agent name') as HTMLInputElement).value).toBe('ChatAPI Agent'))
+    await waitFor(() => expect((screen.getByLabelText('Agent name') as HTMLInputElement).value).toBe('Chat4Openapi Agent'))
     expect(fetchMock.mock.calls[2][0]).toBe('/api/admin/agent/reset')
     const init = fetchMock.mock.calls[2][1] as RequestInit
     expect(init.method).toBe('POST')
@@ -183,7 +183,7 @@ describe('Agent administration', () => {
   it('shows a localized Agent error when the selected provider becomes unavailable', async () => {
     const initial = {
       id: 1 as const,
-      name: 'ChatAPI Agent',
+      name: 'Chat4Openapi Agent',
       enabled: true,
       system_prompt: 'Built-in prompt',
       provider_id: 1,
@@ -197,7 +197,7 @@ describe('Agent administration', () => {
       .mockResolvedValueOnce(response({ error: { code: 'agent.provider_unavailable', params: {} } }, 409)))
 
     render(AgentView, { global: { plugins: [i18n] } })
-    await waitFor(() => expect((screen.getByLabelText('Agent name') as HTMLInputElement).value).toBe('ChatAPI Agent'))
+    await waitFor(() => expect((screen.getByLabelText('Agent name') as HTMLInputElement).value).toBe('Chat4Openapi Agent'))
     await fireEvent.click(screen.getByRole('button', { name: 'Save Agent' }))
 
     expect(await screen.findByRole('alert')).toHaveProperty(

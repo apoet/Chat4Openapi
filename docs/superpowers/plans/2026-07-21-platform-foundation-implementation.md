@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a runnable ChatAPI foundation with SQLite migrations, first-run single-admin setup, secure admin sessions, English/Chinese localization, and a Vue initialization/login shell.
+**Goal:** Build a runnable Chat4Openapi foundation with SQLite migrations, first-run single-admin setup, secure admin sessions, English/Chinese localization, and a Vue initialization/login shell.
 
 **Architecture:** A FastAPI application under `backend/` owns configuration, SQLAlchemy persistence, setup and admin authentication APIs. A Vue 3 application under `frontend/` calls those APIs and guards routes using setup and login state. This phase deliberately excludes API import, Tool Session, Skills, chat execution, and compatibility endpoints; later phases build on the interfaces defined here.
 
@@ -16,7 +16,7 @@
 - Administrator cookies are HttpOnly and SameSite=Lax; state-changing requests require CSRF validation.
 - Passwords use Argon2id and are never logged or returned.
 - `fastmcp==3.4.4` is pinned now so later phases do not change the dependency baseline.
-- Node.js is selected through nvm; Python runs from the conda environment named `chatapi`.
+- Node.js is selected through nvm; Python runs from the conda environment named `chat4openapi`.
 - API errors use stable codes plus interpolation parameters; frontend code owns translated user-facing text.
 
 ---
@@ -24,7 +24,7 @@
 ## Planned File Structure
 
 ```text
-ChatAPI/
+Chat4Openapi/
 ├── environment.yml                     # conda environment entrypoint
 ├── backend/
 │   ├── pyproject.toml                  # backend dependencies and tool configuration
@@ -32,7 +32,7 @@ ChatAPI/
 │   ├── migrations/
 │   │   ├── env.py
 │   │   └── versions/0001_foundation.py
-│   ├── src/chatapi/
+│   ├── src/chat4openapi/
 │   │   ├── main.py                     # application factory and router mounting
 │   │   ├── config.py                   # validated environment settings
 │   │   ├── api/errors.py               # stable API error envelope
@@ -82,22 +82,22 @@ ChatAPI/
 **Files:**
 - Create: `environment.yml`
 - Create: `backend/pyproject.toml`
-- Create: `backend/src/chatapi/__init__.py`
-- Create: `backend/src/chatapi/config.py`
-- Create: `backend/src/chatapi/main.py`
-- Create: `backend/src/chatapi/api/__init__.py`
-- Create: `backend/src/chatapi/api/health.py`
+- Create: `backend/src/chat4openapi/__init__.py`
+- Create: `backend/src/chat4openapi/config.py`
+- Create: `backend/src/chat4openapi/main.py`
+- Create: `backend/src/chat4openapi/api/__init__.py`
+- Create: `backend/src/chat4openapi/api/health.py`
 - Create: `backend/tests/test_health.py`
 
 **Interfaces:**
-- Consumes: environment variables prefixed with `CHATAPI_`.
-- Produces: `chatapi.main:create_app() -> FastAPI`, `GET /health -> {"status":"ok"}` and `Settings.database_url`.
+- Consumes: environment variables prefixed with `CHAT4OPENAPI_`.
+- Produces: `chat4openapi.main:create_app() -> FastAPI`, `GET /health -> {"status":"ok"}` and `Settings.database_url`.
 
 - [ ] **Step 1: Add the environment and Python package metadata**
 
 ```yaml
 # environment.yml
-name: chatapi
+name: chat4openapi
 channels:
   - conda-forge
 dependencies:
@@ -114,7 +114,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "chatapi"
+name = "chat4openapi"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -133,7 +133,7 @@ dependencies = [
 dev = ["pytest>=8.4,<9", "pytest-asyncio>=1.1,<2", "ruff>=0.12,<1"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/chatapi"]
+packages = ["src/chat4openapi"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
@@ -149,7 +149,7 @@ target-version = "py312"
 ```python
 from fastapi.testclient import TestClient
 
-from chatapi.main import create_app
+from chat4openapi.main import create_app
 
 
 def test_health_returns_ok() -> None:
@@ -162,14 +162,14 @@ def test_health_returns_ok() -> None:
 
 - [ ] **Step 3: Create the conda environment and confirm the application does not exist**
 
-Run: `conda env create -f environment.yml && conda run -n chatapi pip install -e "backend[dev]" && conda run -n chatapi pytest backend/tests/test_health.py -q`
+Run: `conda env create -f environment.yml && conda run -n chat4openapi pip install -e "backend[dev]" && conda run -n chat4openapi pytest backend/tests/test_health.py -q`
 
-Expected: FAIL during collection because `chatapi.main` has not been created.
+Expected: FAIL during collection because `chat4openapi.main` has not been created.
 
 - [ ] **Step 4: Implement configuration, health router, and app factory**
 
 ```python
-# backend/src/chatapi/config.py
+# backend/src/chat4openapi/config.py
 from functools import lru_cache
 from pathlib import Path
 
@@ -177,9 +177,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="CHATAPI_", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="CHAT4OPENAPI_", extra="ignore")
 
-    database_url: str = f"sqlite:///{Path('data/chatapi.db').as_posix()}"
+    database_url: str = f"sqlite:///{Path('data/chat4openapi.db').as_posix()}"
     default_locale: str = "en-US"
     admin_session_idle_minutes: int = 30
     admin_session_absolute_hours: int = 8
@@ -192,7 +192,7 @@ def get_settings() -> Settings:
 ```
 
 ```python
-# backend/src/chatapi/api/health.py
+# backend/src/chat4openapi/api/health.py
 from fastapi import APIRouter
 
 router = APIRouter(tags=["health"])
@@ -204,14 +204,14 @@ def health() -> dict[str, str]:
 ```
 
 ```python
-# backend/src/chatapi/main.py
+# backend/src/chat4openapi/main.py
 from fastapi import FastAPI
 
-from chatapi.api.health import router as health_router
+from chat4openapi.api.health import router as health_router
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="ChatAPI", version="0.1.0")
+    app = FastAPI(title="Chat4Openapi", version="0.1.0")
     app.include_router(health_router)
     return app
 
@@ -221,7 +221,7 @@ app = create_app()
 
 - [ ] **Step 5: Run backend checks**
 
-Run: `conda run -n chatapi pytest backend/tests/test_health.py -q && conda run -n chatapi ruff check backend`
+Run: `conda run -n chat4openapi pytest backend/tests/test_health.py -q && conda run -n chat4openapi ruff check backend`
 
 Expected: one passing test and `All checks passed!`.
 
@@ -238,13 +238,13 @@ git commit -m "feat: scaffold backend application"
 - Create: `backend/alembic.ini`
 - Create: `backend/migrations/env.py`
 - Create: `backend/migrations/versions/0001_foundation.py`
-- Create: `backend/src/chatapi/db/__init__.py`
-- Create: `backend/src/chatapi/db/base.py`
-- Create: `backend/src/chatapi/db/session.py`
-- Create: `backend/src/chatapi/models/__init__.py`
-- Create: `backend/src/chatapi/models/admin.py`
-- Create: `backend/src/chatapi/models/admin_session.py`
-- Create: `backend/src/chatapi/models/app_setting.py`
+- Create: `backend/src/chat4openapi/db/__init__.py`
+- Create: `backend/src/chat4openapi/db/base.py`
+- Create: `backend/src/chat4openapi/db/session.py`
+- Create: `backend/src/chat4openapi/models/__init__.py`
+- Create: `backend/src/chat4openapi/models/admin.py`
+- Create: `backend/src/chat4openapi/models/admin_session.py`
+- Create: `backend/src/chat4openapi/models/app_setting.py`
 - Create: `backend/tests/conftest.py`
 - Create: `backend/tests/test_database.py`
 
@@ -277,21 +277,21 @@ def test_foundation_tables_exist(db_engine) -> None:
 
 - [ ] **Step 2: Run tests and confirm missing fixtures/models**
 
-Run: `conda run -n chatapi pytest backend/tests/test_database.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_database.py -q`
 
 Expected: FAIL because `db_engine` is unavailable.
 
 - [ ] **Step 3: Implement the database engine contract**
 
 ```python
-# backend/src/chatapi/db/session.py
+# backend/src/chat4openapi/db/session.py
 from collections.abc import Iterator
 from contextlib import contextmanager
 
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
-from chatapi.config import get_settings
+from chat4openapi.config import get_settings
 
 
 def create_engine_for_url(url: str) -> Engine:
@@ -328,13 +328,13 @@ def session_scope() -> Iterator[Session]:
 - [ ] **Step 4: Add typed models and the initial Alembic migration**
 
 ```python
-# backend/src/chatapi/models/admin.py
+# backend/src/chat4openapi/models/admin.py
 from datetime import datetime
 
 from sqlalchemy import Boolean, CheckConstraint, DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from chatapi.db.base import Base
+from chat4openapi.db.base import Base
 
 
 class AdminUser(Base):
@@ -350,13 +350,13 @@ class AdminUser(Base):
 ```
 
 ```python
-# backend/src/chatapi/models/admin_session.py
+# backend/src/chat4openapi/models/admin_session.py
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from chatapi.db.base import Base
+from chat4openapi.db.base import Base
 
 
 class AdminSession(Base):
@@ -372,11 +372,11 @@ class AdminSession(Base):
 ```
 
 ```python
-# backend/src/chatapi/models/app_setting.py
+# backend/src/chat4openapi/models/app_setting.py
 from sqlalchemy import Boolean, CheckConstraint, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from chatapi.db.base import Base
+from chat4openapi.db.base import Base
 
 
 class AppSetting(Base):
@@ -389,7 +389,7 @@ class AppSetting(Base):
 ```
 
 ```python
-# backend/src/chatapi/db/base.py
+# backend/src/chat4openapi/db/base.py
 from sqlalchemy.orm import DeclarativeBase
 
 
@@ -397,9 +397,9 @@ class Base(DeclarativeBase):
     pass
 
 
-from chatapi.models.admin import AdminUser  # noqa: E402,F401
-from chatapi.models.admin_session import AdminSession  # noqa: E402,F401
-from chatapi.models.app_setting import AppSetting  # noqa: E402,F401
+from chat4openapi.models.admin import AdminUser  # noqa: E402,F401
+from chat4openapi.models.admin_session import AdminSession  # noqa: E402,F401
+from chat4openapi.models.app_setting import AppSetting  # noqa: E402,F401
 ```
 
 ```python
@@ -444,7 +444,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 
-from chatapi.db.session import create_engine_for_url
+from chat4openapi.db.session import create_engine_for_url
 
 
 @pytest.fixture
@@ -454,7 +454,7 @@ def database_url(tmp_path) -> str:
 
 @pytest.fixture
 def db_engine(database_url, monkeypatch):
-    monkeypatch.setenv("CHATAPI_DATABASE_URL", database_url)
+    monkeypatch.setenv("CHAT4OPENAPI_DATABASE_URL", database_url)
     config = Config("backend/alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
     command.upgrade(config, "head")
@@ -463,26 +463,26 @@ def db_engine(database_url, monkeypatch):
     engine.dispose()
 ```
 
-Run: `conda run -n chatapi pytest backend/tests/test_database.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_database.py -q`
 
 Expected: two passing tests.
 
 - [ ] **Step 6: Commit the persistence foundation**
 
 ```powershell
-git add backend/alembic.ini backend/migrations backend/src/chatapi/db backend/src/chatapi/models backend/tests
+git add backend/alembic.ini backend/migrations backend/src/chat4openapi/db backend/src/chat4openapi/models backend/tests
 git commit -m "feat: add SQLite persistence foundation"
 ```
 
 ### Task 3: First-Run Administrator Setup
 
 **Files:**
-- Create: `backend/src/chatapi/api/errors.py`
-- Create: `backend/src/chatapi/api/setup.py`
-- Create: `backend/src/chatapi/schemas/setup.py`
-- Create: `backend/src/chatapi/security/passwords.py`
-- Create: `backend/src/chatapi/services/admin_auth.py`
-- Modify: `backend/src/chatapi/main.py`
+- Create: `backend/src/chat4openapi/api/errors.py`
+- Create: `backend/src/chat4openapi/api/setup.py`
+- Create: `backend/src/chat4openapi/schemas/setup.py`
+- Create: `backend/src/chat4openapi/security/passwords.py`
+- Create: `backend/src/chat4openapi/services/admin_auth.py`
+- Modify: `backend/src/chat4openapi/main.py`
 - Test: `backend/tests/test_setup.py`
 
 **Interfaces:**
@@ -516,14 +516,14 @@ def test_setup_rejects_weak_password(client) -> None:
 
 - [ ] **Step 2: Run setup tests and confirm 404 responses**
 
-Run: `conda run -n chatapi pytest backend/tests/test_setup.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_setup.py -q`
 
 Expected: FAIL because `/api/setup` routes do not exist.
 
 - [ ] **Step 3: Implement password and setup service contracts**
 
 ```python
-# backend/src/chatapi/security/passwords.py
+# backend/src/chat4openapi/security/passwords.py
 from pwdlib import PasswordHash
 
 password_hash = PasswordHash.recommended()
@@ -538,7 +538,7 @@ def verify_password(password: str, encoded: str) -> bool:
 ```
 
 ```python
-# backend/src/chatapi/schemas/setup.py
+# backend/src/chat4openapi/schemas/setup.py
 from pydantic import BaseModel, Field
 
 
@@ -558,7 +558,7 @@ class SetupStatus(BaseModel):
 - [ ] **Step 4: Implement setup API with stable error envelope**
 
 ```python
-# backend/src/chatapi/api/errors.py
+# backend/src/chat4openapi/api/errors.py
 from typing import Any
 
 from fastapi import HTTPException
@@ -572,25 +572,25 @@ The application installs an `HTTPException` handler that returns `exc.detail` un
 
 - [ ] **Step 5: Run setup and password tests**
 
-Run: `conda run -n chatapi pytest backend/tests/test_setup.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_setup.py -q`
 
 Expected: three passing tests, and a database assertion confirms the stored password is an Argon2 hash rather than plaintext.
 
 - [ ] **Step 6: Commit first-run setup**
 
 ```powershell
-git add backend/src/chatapi backend/tests/test_setup.py
+git add backend/src/chat4openapi backend/tests/test_setup.py
 git commit -m "feat: add first-run administrator setup"
 ```
 
 ### Task 4: Secure Administrator Sessions
 
 **Files:**
-- Create: `backend/src/chatapi/api/admin_auth.py`
-- Create: `backend/src/chatapi/schemas/auth.py`
-- Create: `backend/src/chatapi/security/session_tokens.py`
-- Modify: `backend/src/chatapi/services/admin_auth.py`
-- Modify: `backend/src/chatapi/main.py`
+- Create: `backend/src/chat4openapi/api/admin_auth.py`
+- Create: `backend/src/chat4openapi/schemas/auth.py`
+- Create: `backend/src/chat4openapi/security/session_tokens.py`
+- Modify: `backend/src/chat4openapi/services/admin_auth.py`
+- Modify: `backend/src/chat4openapi/main.py`
 - Test: `backend/tests/test_admin_auth.py`
 
 **Interfaces:**
@@ -629,14 +629,14 @@ def test_me_rejects_expired_session(initialized_client, expire_admin_sessions) -
 
 - [ ] **Step 2: Run auth tests and confirm missing routes**
 
-Run: `conda run -n chatapi pytest backend/tests/test_admin_auth.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_admin_auth.py -q`
 
 Expected: FAIL with 404 responses.
 
 - [ ] **Step 3: Implement opaque token primitives**
 
 ```python
-# backend/src/chatapi/security/session_tokens.py
+# backend/src/chat4openapi/security/session_tokens.py
 import hashlib
 import secrets
 
@@ -651,20 +651,20 @@ def hash_token(token: str) -> str:
 
 - [ ] **Step 4: Implement login and authenticated dependency**
 
-`authenticate_admin(session, username, password, now)` verifies the single enabled admin, creates independent opaque session and CSRF tokens, stores only SHA-256 hashes, and sets idle and absolute expiry from `Settings`. `require_admin` hashes the `chatapi_admin_session` cookie, rejects revoked/expired rows, and advances idle expiry without exceeding absolute expiry. `require_csrf` compares the hash of `X-CSRF-Token` with the stored CSRF hash using `secrets.compare_digest`.
+`authenticate_admin(session, username, password, now)` verifies the single enabled admin, creates independent opaque session and CSRF tokens, stores only SHA-256 hashes, and sets idle and absolute expiry from `Settings`. `require_admin` hashes the `chat4openapi_admin_session` cookie, rejects revoked/expired rows, and advances idle expiry without exceeding absolute expiry. `require_csrf` compares the hash of `X-CSRF-Token` with the stored CSRF hash using `secrets.compare_digest`.
 
-The login response sets `chatapi_admin_session` with `httponly=True`, `samesite="lax"`, `secure=settings.secure_cookies`, and `path="/"`. Logout requires both dependencies, marks the row revoked, and deletes the cookie.
+The login response sets `chat4openapi_admin_session` with `httponly=True`, `samesite="lax"`, `secure=settings.secure_cookies`, and `path="/"`. Logout requires both dependencies, marks the row revoked, and deletes the cookie.
 
 - [ ] **Step 5: Run the complete backend suite**
 
-Run: `conda run -n chatapi pytest backend/tests -q && conda run -n chatapi ruff check backend`
+Run: `conda run -n chat4openapi pytest backend/tests -q && conda run -n chat4openapi ruff check backend`
 
 Expected: all tests pass and Ruff reports no violations.
 
 - [ ] **Step 6: Commit administrator authentication**
 
 ```powershell
-git add backend/src/chatapi backend/tests
+git add backend/src/chat4openapi backend/tests
 git commit -m "feat: add secure administrator sessions"
 ```
 
@@ -698,7 +698,7 @@ Expected: `Now using node v20.19.4`.
 
 ```json
 {
-  "name": "chatapi-frontend",
+  "name": "chat4openapi-frontend",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -865,7 +865,7 @@ git commit -m "feat: add setup and admin login flows"
 ### Task 7: Serve the SPA and Verify the Vertical Slice
 
 **Files:**
-- Modify: `backend/src/chatapi/main.py`
+- Modify: `backend/src/chat4openapi/main.py`
 - Create: `backend/tests/test_spa.py`
 - Modify: `README.md`
 - Create: `.env.example`
@@ -891,7 +891,7 @@ def test_unknown_api_path_never_falls_back_to_spa(app_with_dist) -> None:
 
 - [ ] **Step 2: Run SPA tests and confirm fallback is absent**
 
-Run: `conda run -n chatapi pytest backend/tests/test_spa.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_spa.py -q`
 
 Expected: FAIL because `/admin` returns 404.
 
@@ -903,19 +903,19 @@ Expected: FAIL because `/admin` returns 404.
 
 ```powershell
 conda env create -f environment.yml
-conda run -n chatapi alembic -c backend/alembic.ini upgrade head
-conda run -n chatapi uvicorn chatapi.main:app --app-dir backend/src --reload
+conda run -n chat4openapi alembic -c backend/alembic.ini upgrade head
+conda run -n chat4openapi uvicorn chat4openapi.main:app --app-dir backend/src --reload
 nvm use 20.19.4
 Set-Location frontend
 npm install
 npm run dev
 ```
 
-`.env.example` contains `CHATAPI_DATABASE_URL=sqlite:///data/chatapi.db`, `CHATAPI_DEFAULT_LOCALE=en-US`, and `CHATAPI_SECURE_COOKIES=false`, with comments stating that secure cookies must be true behind production HTTPS.
+`.env.example` contains `CHAT4OPENAPI_DATABASE_URL=sqlite:///data/chat4openapi.db`, `CHAT4OPENAPI_DEFAULT_LOCALE=en-US`, and `CHAT4OPENAPI_SECURE_COOKIES=false`, with comments stating that secure cookies must be true behind production HTTPS.
 
 - [ ] **Step 5: Run full verification**
 
-Run: `conda run -n chatapi pytest backend/tests -q; conda run -n chatapi ruff check backend; Set-Location frontend; npm test; npm run typecheck; npm run build`
+Run: `conda run -n chat4openapi pytest backend/tests -q; conda run -n chat4openapi ruff check backend; Set-Location frontend; npm test; npm run typecheck; npm run build`
 
 Expected: every command exits 0, the backend suite passes, frontend tests pass, type checking passes, and Vite creates `dist`.
 

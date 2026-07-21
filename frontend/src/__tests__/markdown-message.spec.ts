@@ -61,7 +61,7 @@ describe('MarkdownMessage', () => {
   })
 
   it('keeps user content plain while rendering assistant and clarification Markdown', async () => {
-    localStorage.setItem('chatapi.chat.sessions.v1', JSON.stringify([{
+    localStorage.setItem('chat4openapi.chat.sessions.v1', JSON.stringify([{
       version: 2,
       id: 'markdown-history',
       conversationId: 'conversation-markdown',

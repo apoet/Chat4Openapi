@@ -230,7 +230,7 @@ describe('Skills and chat', () => {
   })
 
   it('migrates legacy single-Skill history and ignores malformed records', async () => {
-    localStorage.setItem('chatapi.chat.sessions.v1', JSON.stringify([
+    localStorage.setItem('chat4openapi.chat.sessions.v1', JSON.stringify([
       {
         id: 'legacy-good',
         conversationId: 'conversation-abca4',
@@ -256,7 +256,7 @@ describe('Skills and chat', () => {
     expect(await screen.findByRole('button', { name: '查询ABCA4位点' })).toBeTruthy()
     expect(screen.getByText('ABCA4 variants found.')).toBeTruthy()
     expect(await screen.findByRole('button', { name: 'Remove Varcards2-Gene' })).toBeTruthy()
-    const stored = JSON.parse(localStorage.getItem('chatapi.chat.sessions.v1') ?? '[]')
+    const stored = JSON.parse(localStorage.getItem('chat4openapi.chat.sessions.v1') ?? '[]')
     expect(stored).toHaveLength(1)
     expect(stored[0]).toMatchObject({
       version: 2,
@@ -275,7 +275,7 @@ describe('Skills and chat', () => {
   })
 
   it('safely restores pending v2 sessions whose messages predate explicit kinds', async () => {
-    localStorage.setItem('chatapi.chat.sessions.v1', JSON.stringify([{
+    localStorage.setItem('chat4openapi.chat.sessions.v1', JSON.stringify([{
       version: 2,
       id: 'pending-v2',
       conversationId: 'conversation-pending',
@@ -301,7 +301,7 @@ describe('Skills and chat', () => {
     expect(await screen.findByText('Which reference genome?')).toBeTruthy()
     expect(restored.container.querySelector('.message.clarification')).toBeTruthy()
     expect((screen.getByLabelText('Message') as HTMLTextAreaElement).placeholder).toBe('Answer the clarification…')
-    const stored = JSON.parse(localStorage.getItem('chatapi.chat.sessions.v1') ?? '[]')
+    const stored = JSON.parse(localStorage.getItem('chat4openapi.chat.sessions.v1') ?? '[]')
     expect(stored[0].pending).toEqual({ fields: ['reference'] })
     expect(stored[0].messages).toEqual([
       { role: 'user', content: 'Find variants', kind: 'message' },
@@ -334,7 +334,7 @@ describe('Skills and chat', () => {
     expect(screen.getByText('Clarification needed')).toBeTruthy()
     expect(await screen.findByText('Loaded: Varcards2-Gene')).toBeTruthy()
 
-    let stored = JSON.parse(localStorage.getItem('chatapi.chat.sessions.v1') ?? '[]')
+    let stored = JSON.parse(localStorage.getItem('chat4openapi.chat.sessions.v1') ?? '[]')
     expect(stored[0]).toMatchObject({
       version: 2,
       conversationId: 'conversation-abca4',
@@ -372,7 +372,7 @@ describe('Skills and chat', () => {
       conversation_id: 'conversation-abca4',
       candidate_skill_ids: [],
     })
-    stored = JSON.parse(localStorage.getItem('chatapi.chat.sessions.v1') ?? '[]')
+    stored = JSON.parse(localStorage.getItem('chat4openapi.chat.sessions.v1') ?? '[]')
     expect(stored[0]).toMatchObject({ status: 'completed', pending: null })
     expect(stored[0].messages.map((message: { kind: string }) => message.kind)).toEqual([
       'message', 'clarification', 'message', 'message',
@@ -414,7 +414,7 @@ describe('Skills and chat', () => {
     expect(screen.getByText('What can your APIs do?')).toBeTruthy()
     await fireEvent.click(screen.getByRole('button', { name: 'Find Milo' }))
     expect(await screen.findByText('Milo is ready.')).toBeTruthy()
-    const stored = JSON.parse(localStorage.getItem('chatapi.chat.sessions.v1') ?? '[]')
+    const stored = JSON.parse(localStorage.getItem('chat4openapi.chat.sessions.v1') ?? '[]')
     expect(stored.find((session: { title: string }) => session.title === 'Find Milo')).toMatchObject({
       conversationId: 'conversation-1',
       messages: [
@@ -425,7 +425,7 @@ describe('Skills and chat', () => {
   })
 
   it('attributes a deferred request error to its originating history session', async () => {
-    localStorage.setItem('chatapi.chat.sessions.v1', JSON.stringify([
+    localStorage.setItem('chat4openapi.chat.sessions.v1', JSON.stringify([
       {
         version: 2, id: 'origin', conversationId: 'conversation-origin', title: 'Origin', skillIds: [], loadedSkillIds: [],
         status: 'completed', pending: null, messages: [{ role: 'user', content: 'Earlier origin message' }], updatedAt: '2026-07-21T00:00:01.000Z',

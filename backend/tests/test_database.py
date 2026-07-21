@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 
-from chatapi.db.session import create_engine_for_url
+from chat4openapi.db.session import create_engine_for_url
 
 
 def sqlite_url(path: Path) -> str:

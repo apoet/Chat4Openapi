@@ -4,9 +4,9 @@ import pytest
 from cryptography.fernet import Fernet
 from sqlalchemy import select
 
-from chatapi.chat.agent import AgentError, AgentRuntime, AgentTurnRequest
-from chatapi.llm.client import CanonicalResponse, CanonicalToolCall, LlmProviderError
-from chatapi.models import (
+from chat4openapi.chat.agent import AgentError, AgentRuntime, AgentTurnRequest
+from chat4openapi.llm.client import CanonicalResponse, CanonicalToolCall, LlmProviderError
+from chat4openapi.models import (
     AgentConfig,
     ApiSource,
     ChatMessage,
@@ -17,13 +17,13 @@ from chatapi.models import (
     SkillTool,
     Tool,
 )
-from chatapi.security.encryption import SecretCipher
-from chatapi.skills.defaults import (
+from chat4openapi.security.encryption import SecretCipher
+from chat4openapi.skills.defaults import (
     VARCARDS2_GENE_SYSTEM_PROMPT,
     VARCARDS2_GENE_TABLE_RULE,
 )
-from chatapi.tools.executor import ToolExecutionResult
-from chatapi.tools.errors import ToolExecutionError
+from chat4openapi.tools.executor import ToolExecutionResult
+from chat4openapi.tools.errors import ToolExecutionError
 
 
 class SequencedLlm:
@@ -73,7 +73,7 @@ def seed_runtime(session, cipher: SecretCipher) -> tuple[Skill, Tool]:
     session.add(
         AgentConfig(
             id=1,
-            name="ChatAPI Agent",
+            name="Chat4Openapi Agent",
             enabled=True,
             system_prompt="Route through declared Skills.",
             provider_id=provider.id,

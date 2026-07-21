@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from chatapi.tools.candidates import build_candidates
-from chatapi.tools.openapi_loader import OpenAPIImportError, load_openapi, normalize_openapi
+from chat4openapi.tools.candidates import build_candidates
+from chat4openapi.tools.openapi_loader import OpenAPIImportError, load_openapi, normalize_openapi
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

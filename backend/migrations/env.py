@@ -3,10 +3,14 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from chatapi.db.base import Base
-from chatapi import models  # noqa: F401
+from chat4openapi.config import Settings, migrate_legacy_default_files
+from chat4openapi.db.base import Base
+from chat4openapi import models  # noqa: F401
 
 config = context.config
+migrate_legacy_default_files(
+    Settings(database_url=config.get_main_option("sqlalchemy.url"), _env_file=None)
+)
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 

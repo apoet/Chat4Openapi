@@ -10,7 +10,7 @@ down_revision: str | Sequence[str] | None = "0004_api_source_refresh"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-DEFAULT_AGENT_PROMPT = """You are ChatAPI Agent, the built-in assistant.
+DEFAULT_AGENT_PROMPT = """You are Chat4Openapi Agent, the built-in assistant.
 
 Operating rules:
 - Choose Skills only from the provided Skill catalog, using their declared names and descriptions.
@@ -28,7 +28,7 @@ def upgrade() -> None:
         "agent_config",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column(
-            "name", sa.String(160), nullable=False, server_default="ChatAPI Agent"
+            "name", sa.String(160), nullable=False, server_default="Chat4Openapi Agent"
         ),
         sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("system_prompt", sa.Text(), nullable=False),
@@ -70,7 +70,7 @@ def upgrade() -> None:
             INSERT INTO agent_config
                 (id, name, enabled, system_prompt, provider_id, model, mode, max_iterations)
             VALUES
-                (1, 'ChatAPI Agent', true, :system_prompt, :provider_id,
+                (1, 'Chat4Openapi Agent', true, :system_prompt, :provider_id,
                  NULL, 'human_in_loop', 8)
             """
         ),

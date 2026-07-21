@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "chatapi"
+name = "chat4openapi"
 version = "0.1.0"
 description = "Chat with your APIs through MCP tools and skills"
 requires-python = ">=3.12,<3.13"
@@ -32,7 +32,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/chatapi"]
+packages = ["src/chat4openapi"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

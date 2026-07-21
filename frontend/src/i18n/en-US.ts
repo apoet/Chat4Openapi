@@ -1,5 +1,5 @@
 export default {
-  app: { name: 'ChatAPI', tagline: 'Chat with your APIs.' },
+  app: { name: 'Chat4Openapi', tagline: 'Chat with your APIs.' },
   setup: {
     eyebrow: 'First-time setup',
     title: 'Create your administrator',
@@ -16,14 +16,14 @@ export default {
   login: {
     eyebrow: 'Administration',
     title: 'Welcome back',
-    description: 'Sign in to manage your ChatAPI instance.',
+    description: 'Sign in to manage your Chat4Openapi instance.',
     username: 'Username',
     password: 'Password',
     submit: 'Sign in',
     quote: 'Turn interface definitions into useful, governed conversations.',
   },
   overview: {
-    eyebrow: 'ChatAPI control plane',
+    eyebrow: 'Chat4Openapi control plane',
     title: 'Platform overview',
     subtitle: 'Configure each building block, then connect them in a Skill.',
     providers: 'Providers',
@@ -82,7 +82,7 @@ export default {
   },
   action: { continue: 'Continue' },
   error: {
-    setup: { already_initialized: 'This ChatAPI instance is already initialized.' },
+    setup: { already_initialized: 'This Chat4Openapi instance is already initialized.' },
     auth: {
       invalid_credentials: 'The username or password is incorrect.',
       required: 'Please sign in to continue.',

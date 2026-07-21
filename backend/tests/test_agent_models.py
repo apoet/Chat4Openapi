@@ -7,9 +7,9 @@ from sqlalchemy import delete, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from chatapi.db.session import create_engine_for_url
-from chatapi.chat.agent import DEFAULT_AGENT_PROMPT
-from chatapi.models import (
+from chat4openapi.db.session import create_engine_for_url
+from chat4openapi.chat.agent import DEFAULT_AGENT_PROMPT
+from chat4openapi.models import (
     AgentConfig,
     ApiSource,
     Conversation,
@@ -18,7 +18,7 @@ from chatapi.models import (
     Tool,
     ToolParameterOverride,
 )
-from chatapi.skills.defaults import (
+from chat4openapi.skills.defaults import (
     VARCARDS2_GENE_LEGACY_SYSTEM_PROMPT,
     VARCARDS2_GENE_SYSTEM_PROMPT,
 )
@@ -218,7 +218,7 @@ def test_markdown_prompt_migration_preserves_a_customized_varcards_prompt(
     [
         "",
         (
-            "You are ChatAPI Agent, the built-in assistant. Use the available Skills "
+            "You are Chat4Openapi Agent, the built-in assistant. Use the available Skills "
             "and Tools to help the user, and return clear Markdown responses."
         ),
     ],

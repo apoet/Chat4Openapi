@@ -7,16 +7,16 @@ from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from chatapi.api.tool_sessions import get_tool_secret_cipher
-from chatapi.llm.client import (
+from chat4openapi.api.tool_sessions import get_tool_secret_cipher
+from chat4openapi.llm.client import (
     CanonicalMessage,
     CanonicalResponse,
     CanonicalTool,
     LlmClient,
     LlmProviderError,
 )
-from chatapi.models import AgentConfig, LlmProvider
-from chatapi.security.encryption import SecretCipher
+from chat4openapi.models import AgentConfig, LlmProvider
+from chat4openapi.security.encryption import SecretCipher
 
 ADMIN = {"username": "admin", "password": "StrongPass!123", "locale": "en-US"}
 
@@ -129,7 +129,7 @@ def seed_provider_lifecycle(
         session.add(
             AgentConfig(
                 id=1,
-                name="ChatAPI Agent",
+                name="Chat4Openapi Agent",
                 enabled=True,
                 system_prompt="Use configured Skills.",
                 provider_id=referenced.id,

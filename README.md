@@ -1,4 +1,4 @@
-# ChatAPI
+# Chat4Openapi
 
 Chat with your APIs through managed MCP Tools and Skills.
 
@@ -26,26 +26,26 @@ Create the Python 3.12 environment and migrate the database:
 
 ```powershell
 conda env create --solver libmamba -f environment.yml
-conda run -n chatapi alembic -c backend/alembic.ini upgrade head
+conda run -n chat4openapi alembic -c backend/alembic.ini upgrade head
 ```
 
-If an existing `chatapi` environment needs refreshing:
+If an existing `chat4openapi` environment needs refreshing:
 
 ```powershell
-conda run -n chatapi python -m pip install -e "backend[dev]"
+conda run -n chat4openapi python -m pip install -e "backend[dev]"
 ```
 
 Start FastAPI:
 
 ```powershell
-conda run -n chatapi uvicorn chatapi.main:app --app-dir backend/src --reload
+conda run -n chat4openapi uvicorn chat4openapi.main:app --app-dir backend/src --reload
 ```
 
 Run backend verification:
 
 ```powershell
-conda run -n chatapi python -m pytest backend/tests -q
-conda run -n chatapi ruff check backend/src backend/tests
+conda run -n chat4openapi python -m pytest backend/tests -q
+conda run -n chat4openapi ruff check backend/src backend/tests
 ```
 
 ## Frontend development
@@ -112,7 +112,7 @@ and its rendered tables.
 OpenAI clients can use `/v1/models` and `/v1/chat/completions`; Anthropic clients can use
 `/v1/messages`. `agent-default` allows automatic routing across all running Skills. Existing
 `skill-<id>` aliases remain supported and restrict the Agent to that one candidate Skill. Requests
-using `agent-default` may instead supply the optional `chatapi_skill_ids` extension to restrict the
+using `agent-default` may instead supply the optional `chat4openapi_skill_ids` extension to restrict the
 candidate catalog. These identifiers select Agent routing scope, not a Skill-owned provider, and
 compatibility responses never contain interactive `needs_input` state.
 
@@ -129,7 +129,7 @@ names and removes overrides only when their imported argument disappears.
 Run migrations before starting a new checkout or after updating an existing installation:
 
 ```powershell
-conda run -n chatapi alembic -c backend/alembic.ini upgrade head
+conda run -n chat4openapi alembic -c backend/alembic.ini upgrade head
 ```
 
 The Agent runtime migration creates the singleton Agent configuration, moves provider/model

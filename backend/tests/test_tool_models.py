@@ -7,8 +7,8 @@ from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from chatapi.db.session import create_engine_for_url
-from chatapi.models import ApiSource, GlobalToolAuthConfig, Tool
+from chat4openapi.db.session import create_engine_for_url
+from chat4openapi.models import ApiSource, GlobalToolAuthConfig, Tool
 
 
 def sqlite_url(path: Path) -> str:

@@ -1,4 +1,4 @@
-name: chatapi
+name: chat4openapi
 channels:
   - conda-forge
 dependencies:

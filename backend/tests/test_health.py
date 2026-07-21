@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from chatapi.main import create_app
+from chat4openapi.main import create_app
 
 
 @pytest.mark.asyncio

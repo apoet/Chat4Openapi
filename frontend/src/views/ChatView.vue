@@ -25,7 +25,7 @@ type LocalChatSessionV2 = {
   updatedAt: string
 }
 
-const STORAGE_KEY = 'chatapi.chat.sessions.v1'
+const STORAGE_KEY = 'chat4openapi.chat.sessions.v1'
 const { t } = useI18n()
 const skills = ref<SkillSummary[]>([])
 const selectedSkillIds = ref<number[]>([])
@@ -300,7 +300,7 @@ async function send(): Promise<void> {
 <template>
   <main class="chat-page">
     <header class="chat-header">
-      <RouterLink to="/" class="chat-brand"><span class="brand-mark small">CA</span><strong>ChatAPI</strong></RouterLink>
+      <RouterLink to="/" class="chat-brand"><span class="brand-mark small">CA</span><strong>Chat4Openapi</strong></RouterLink>
       <span>{{ t('chat.title') }}</span>
     </header>
     <section v-if="loginRequired && !authenticated" class="chat-login">

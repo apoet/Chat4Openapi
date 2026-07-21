@@ -3,7 +3,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from chatapi.main import create_app
+from chat4openapi.main import create_app
 
 
 @pytest.fixture
@@ -12,7 +12,7 @@ def frontend_dist(tmp_path: Path) -> Path:
     assets = dist / "assets"
     assets.mkdir(parents=True)
     (dist / "index.html").write_text('<div id="app"></div>', encoding="utf-8")
-    (assets / "app.js").write_text("console.log('chatapi')", encoding="utf-8")
+    (assets / "app.js").write_text("console.log('chat4openapi')", encoding="utf-8")
     return dist
 
 
@@ -33,7 +33,7 @@ async def test_spa_assets_are_served_from_the_fixed_asset_mount(frontend_dist: P
         response = await client.get("/assets/app.js")
 
     assert response.status_code == 200
-    assert response.text == "console.log('chatapi')"
+    assert response.text == "console.log('chat4openapi')"
 
 
 @pytest.mark.asyncio

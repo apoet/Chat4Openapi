@@ -3,13 +3,13 @@ import pytest
 from cryptography.fernet import Fernet
 from fastapi import FastAPI
 
-import chatapi.chat.api as chat_api_module
-from chatapi.api.tool_sessions import get_tool_secret_cipher
-from chatapi.chat.agent import AgentTurnRequest, AgentTurnResult
-from chatapi.chat.api import get_llm_client
-from chatapi.llm.client import CanonicalResponse, CanonicalToolCall
-from chatapi.models import AgentConfig, Conversation, LlmProvider, Skill
-from chatapi.security.encryption import SecretCipher
+import chat4openapi.chat.api as chat_api_module
+from chat4openapi.api.tool_sessions import get_tool_secret_cipher
+from chat4openapi.chat.agent import AgentTurnRequest, AgentTurnResult
+from chat4openapi.chat.api import get_llm_client
+from chat4openapi.llm.client import CanonicalResponse, CanonicalToolCall
+from chat4openapi.models import AgentConfig, Conversation, LlmProvider, Skill
+from chat4openapi.security.encryption import SecretCipher
 
 
 class SequencedLlm:
@@ -34,7 +34,7 @@ def seed_agent(factory, cipher: SecretCipher) -> tuple[Skill, Skill]:
         session.add(
             AgentConfig(
                 id=1,
-                name="ChatAPI Agent",
+                name="Chat4Openapi Agent",
                 enabled=True,
                 system_prompt="Route through declared Skills.",
                 provider_id=provider.id,
@@ -297,11 +297,11 @@ async def test_browser_turn_forwards_tool_session_and_maps_agent_result(
 
     monkeypatch.setattr(chat_api_module, "AgentRuntime", RecordingRuntime, raising=False)
 
-    client.cookies.set("chatapi_tool_session", "cookie-session")
+    client.cookies.set("chat4openapi_tool_session", "cookie-session")
     response = await client.post(
         "/api/chat/turns",
         json={"message": "Run", "candidate_skill_ids": [7]},
-        headers={"X-ChatAPI-Tool-Session": "header-session"},
+        headers={"X-Chat4Openapi-Tool-Session": "header-session"},
     )
 
     assert response.status_code == 200

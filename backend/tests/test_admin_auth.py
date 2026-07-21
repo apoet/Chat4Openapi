@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from chatapi.models.admin_session import AdminSession
+from chat4openapi.models.admin_session import AdminSession
 
 ADMIN_PAYLOAD = {"username": "admin", "password": "StrongPass!123", "locale": "en-US"}
 

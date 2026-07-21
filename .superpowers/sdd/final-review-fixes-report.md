@@ -25,8 +25,8 @@ Implemented every Critical/Important finding from the final whole-branch review,
 
 ## Verification
 
-- `conda run -n chatapi pytest backend/tests -q` — 149 passed.
-- `conda run -n chatapi ruff check backend/src backend/tests` — All checks passed.
+- `conda run -n chat4openapi pytest backend/tests -q` — 149 passed.
+- `conda run -n chat4openapi ruff check backend/src backend/tests` — All checks passed.
 - Migration coverage includes fresh upgrade, existing `0006` upgrade, exact legacy/custom prompt behavior, `0007` downgrade/re-upgrade, database constraints, and removal of global Tool-name uniqueness.
 - `D:\nvm\nodejs\npm.cmd test` — 8 files, 59 tests passed.
 - `D:\nvm\nodejs\npm.cmd run build` — `vue-tsc --noEmit` and Vite production build succeeded.
@@ -48,7 +48,7 @@ The two existing Vitest `fireEvent.change` advisories remain unrelated and non-f
 
 ### Final verification after follow-up
 
-- `conda run -n chatapi pytest backend/tests -q` — 155 passed.
-- `conda run -n chatapi ruff check backend/src backend/tests` — All checks passed.
+- `conda run -n chat4openapi pytest backend/tests -q` — 155 passed.
+- `conda run -n chat4openapi ruff check backend/src backend/tests` — All checks passed.
 - `D:\nvm\nodejs\npm.cmd test` — 8 files, 59 tests passed.
 - `D:\nvm\nodejs\npm.cmd run build` — `vue-tsc --noEmit` and Vite production build succeeded.

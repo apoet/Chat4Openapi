@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Python commands run through Conda environment `chatapi`.
+- Python commands run through Conda environment `chat4openapi`.
 - Node.js commands run through the nvm-managed executables under `D:\nvm\nodejs`.
 - English and Simplified Chinese are required; English remains the default locale.
 - The system has exactly one built-in Agent; multiple Agents and Agent delegation are out of scope.
@@ -30,14 +30,14 @@
 ### Backend files to create
 
 - `backend/migrations/versions/0005_agent_runtime.py`: schema migration and existing-provider backfill.
-- `backend/src/chatapi/models/agent.py`: singleton `AgentConfig` model.
-- `backend/src/chatapi/models/tool_parameter.py`: `ToolParameterOverride` model.
-- `backend/src/chatapi/schemas/agents.py`: Agent administration contracts.
-- `backend/src/chatapi/schemas/chat.py`: browser turn contracts and Agent statuses.
-- `backend/src/chatapi/api/admin_agent.py`: singleton Agent administration API.
-- `backend/src/chatapi/chat/agent.py`: Agent state machine and control actions.
-- `backend/src/chatapi/chat/context.py`: persisted/canonical message conversion and effective Skill context loading.
-- `backend/src/chatapi/tools/effective_schema.py`: merge and reconcile parameter overrides.
+- `backend/src/chat4openapi/models/agent.py`: singleton `AgentConfig` model.
+- `backend/src/chat4openapi/models/tool_parameter.py`: `ToolParameterOverride` model.
+- `backend/src/chat4openapi/schemas/agents.py`: Agent administration contracts.
+- `backend/src/chat4openapi/schemas/chat.py`: browser turn contracts and Agent statuses.
+- `backend/src/chat4openapi/api/admin_agent.py`: singleton Agent administration API.
+- `backend/src/chat4openapi/chat/agent.py`: Agent state machine and control actions.
+- `backend/src/chat4openapi/chat/context.py`: persisted/canonical message conversion and effective Skill context loading.
+- `backend/src/chat4openapi/tools/effective_schema.py`: merge and reconcile parameter overrides.
 - `backend/tests/test_agent_models.py`: migration/model behavior.
 - `backend/tests/test_agent_api.py`: Agent administration behavior.
 - `backend/tests/test_agent_runtime.py`: routing, loading, clarification, resume, and Tool loop behavior.
@@ -64,11 +64,11 @@
 
 **Files:**
 - Create: `backend/migrations/versions/0005_agent_runtime.py`
-- Create: `backend/src/chatapi/models/agent.py`
-- Create: `backend/src/chatapi/models/tool_parameter.py`
-- Modify: `backend/src/chatapi/models/conversation.py`
-- Modify: `backend/src/chatapi/models/skill.py`
-- Modify: `backend/src/chatapi/models/__init__.py`
+- Create: `backend/src/chat4openapi/models/agent.py`
+- Create: `backend/src/chat4openapi/models/tool_parameter.py`
+- Modify: `backend/src/chat4openapi/models/conversation.py`
+- Modify: `backend/src/chat4openapi/models/skill.py`
+- Modify: `backend/src/chat4openapi/models/__init__.py`
 - Test: `backend/tests/test_agent_models.py`
 - Modify: `backend/tests/test_database.py`
 
@@ -103,7 +103,7 @@ Also assert a `ToolParameterOverride(tool_id, argument_name)` pair is unique and
 Run:
 
 ```powershell
-conda run -n chatapi pytest backend/tests/test_agent_models.py backend/tests/test_database.py -q
+conda run -n chat4openapi pytest backend/tests/test_agent_models.py backend/tests/test_database.py -q
 ```
 
 Expected: collection/import failures for missing Agent models or missing migration columns.
@@ -118,7 +118,7 @@ class AgentConfig(Base):
     __table_args__ = (CheckConstraint("id = 1", name="ck_single_agent_config"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, default=1)
-    name: Mapped[str] = mapped_column(String(160), default="ChatAPI Agent")
+    name: Mapped[str] = mapped_column(String(160), default="Chat4Openapi Agent")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     system_prompt: Mapped[str] = mapped_column(Text)
     provider_id: Mapped[int | None] = mapped_column(
@@ -154,7 +154,7 @@ Add `candidate_skill_ids`, `loaded_skill_ids`, `agent_mode`, `agent_status`, and
 Run:
 
 ```powershell
-conda run -n chatapi pytest backend/tests/test_agent_models.py backend/tests/test_database.py -q
+conda run -n chat4openapi pytest backend/tests/test_agent_models.py backend/tests/test_database.py -q
 ```
 
 Expected: all selected tests pass.
@@ -162,7 +162,7 @@ Expected: all selected tests pass.
 - [ ] **Step 5: Commit persistence changes**
 
 ```powershell
-git add backend/migrations/versions/0005_agent_runtime.py backend/src/chatapi/models backend/tests/test_agent_models.py backend/tests/test_database.py
+git add backend/migrations/versions/0005_agent_runtime.py backend/src/chat4openapi/models backend/tests/test_agent_models.py backend/tests/test_database.py
 git commit -m "feat: add agent conversation persistence"
 ```
 
@@ -171,11 +171,11 @@ git commit -m "feat: add agent conversation persistence"
 ### Task 2: Singleton Agent administration and provider-free Skills
 
 **Files:**
-- Create: `backend/src/chatapi/schemas/agents.py`
-- Create: `backend/src/chatapi/api/admin_agent.py`
-- Modify: `backend/src/chatapi/schemas/skills.py`
-- Modify: `backend/src/chatapi/api/admin_skills.py`
-- Modify: `backend/src/chatapi/main.py`
+- Create: `backend/src/chat4openapi/schemas/agents.py`
+- Create: `backend/src/chat4openapi/api/admin_agent.py`
+- Modify: `backend/src/chat4openapi/schemas/skills.py`
+- Modify: `backend/src/chat4openapi/api/admin_skills.py`
+- Modify: `backend/src/chat4openapi/main.py`
 - Create: `backend/tests/test_agent_api.py`
 - Modify: `backend/tests/test_skills_api.py`
 
@@ -190,7 +190,7 @@ Test that authenticated administrators can read/update/reset this exact contract
 ```json
 {
   "id": 1,
-  "name": "ChatAPI Agent",
+  "name": "Chat4Openapi Agent",
   "enabled": true,
   "system_prompt": "...",
   "provider_id": 1,
@@ -205,7 +205,7 @@ Assert `mode="invalid"`, `max_iterations=0`, a disabled provider, and a deleted 
 - [ ] **Step 2: Run tests and verify RED**
 
 ```powershell
-conda run -n chatapi pytest backend/tests/test_agent_api.py backend/tests/test_skills_api.py -q
+conda run -n chat4openapi pytest backend/tests/test_agent_api.py backend/tests/test_skills_api.py -q
 ```
 
 Expected: Agent routes return 404 and old Skill schema expectations fail.
@@ -232,7 +232,7 @@ Remove Skill provider validation and fields from `_write_skill`, `SkillWriteRequ
 - [ ] **Step 4: Run focused tests**
 
 ```powershell
-conda run -n chatapi pytest backend/tests/test_agent_api.py backend/tests/test_skills_api.py -q
+conda run -n chat4openapi pytest backend/tests/test_agent_api.py backend/tests/test_skills_api.py -q
 ```
 
 Expected: all selected tests pass.
@@ -240,7 +240,7 @@ Expected: all selected tests pass.
 - [ ] **Step 5: Commit Agent administration**
 
 ```powershell
-git add backend/src/chatapi/api/admin_agent.py backend/src/chatapi/schemas/agents.py backend/src/chatapi/api/admin_skills.py backend/src/chatapi/schemas/skills.py backend/src/chatapi/main.py backend/tests/test_agent_api.py backend/tests/test_skills_api.py
+git add backend/src/chat4openapi/api/admin_agent.py backend/src/chat4openapi/schemas/agents.py backend/src/chat4openapi/api/admin_skills.py backend/src/chat4openapi/schemas/skills.py backend/src/chat4openapi/main.py backend/tests/test_agent_api.py backend/tests/test_skills_api.py
 git commit -m "feat: configure the built-in agent"
 ```
 
@@ -249,10 +249,10 @@ git commit -m "feat: configure the built-in agent"
 ### Task 3: Effective Tool parameter guidance
 
 **Files:**
-- Create: `backend/src/chatapi/tools/effective_schema.py`
-- Modify: `backend/src/chatapi/schemas/tools.py`
-- Modify: `backend/src/chatapi/api/admin_tools.py`
-- Modify: `backend/src/chatapi/api/admin_skills.py`
+- Create: `backend/src/chat4openapi/tools/effective_schema.py`
+- Modify: `backend/src/chat4openapi/schemas/tools.py`
+- Modify: `backend/src/chat4openapi/api/admin_tools.py`
+- Modify: `backend/src/chat4openapi/api/admin_skills.py`
 - Create: `backend/tests/test_tool_parameter_overrides.py`
 - Modify: `backend/tests/test_tool_api.py`
 
@@ -278,7 +278,7 @@ Refresh the Tool with the same argument and assert preservation; refresh without
 - [ ] **Step 2: Run tests and verify RED**
 
 ```powershell
-conda run -n chatapi pytest backend/tests/test_tool_parameter_overrides.py backend/tests/test_tool_api.py -q
+conda run -n chat4openapi pytest backend/tests/test_tool_parameter_overrides.py backend/tests/test_tool_api.py -q
 ```
 
 Expected: missing module/route failures.
@@ -312,7 +312,7 @@ Call reconciliation immediately after a refreshed Tool receives its latest `inpu
 - [ ] **Step 4: Run focused tests**
 
 ```powershell
-conda run -n chatapi pytest backend/tests/test_tool_parameter_overrides.py backend/tests/test_tool_api.py -q
+conda run -n chat4openapi pytest backend/tests/test_tool_parameter_overrides.py backend/tests/test_tool_api.py -q
 ```
 
 Expected: all selected tests pass.
@@ -320,7 +320,7 @@ Expected: all selected tests pass.
 - [ ] **Step 5: Commit parameter guidance**
 
 ```powershell
-git add backend/src/chatapi/tools/effective_schema.py backend/src/chatapi/schemas/tools.py backend/src/chatapi/api/admin_tools.py backend/src/chatapi/api/admin_skills.py backend/tests/test_tool_parameter_overrides.py backend/tests/test_tool_api.py
+git add backend/src/chat4openapi/tools/effective_schema.py backend/src/chat4openapi/schemas/tools.py backend/src/chat4openapi/api/admin_tools.py backend/src/chat4openapi/api/admin_skills.py backend/tests/test_tool_parameter_overrides.py backend/tests/test_tool_api.py
 git commit -m "feat: edit tool parameter guidance"
 ```
 
@@ -329,9 +329,9 @@ git commit -m "feat: edit tool parameter guidance"
 ### Task 4: Built-in Agent state machine
 
 **Files:**
-- Create: `backend/src/chatapi/chat/context.py`
-- Create: `backend/src/chatapi/chat/agent.py`
-- Modify: `backend/src/chatapi/chat/orchestrator.py`
+- Create: `backend/src/chat4openapi/chat/context.py`
+- Create: `backend/src/chat4openapi/chat/agent.py`
+- Modify: `backend/src/chat4openapi/chat/orchestrator.py`
 - Create: `backend/tests/test_agent_runtime.py`
 - Modify: `backend/tests/test_chat_orchestrator.py`
 
@@ -369,7 +369,7 @@ class AgentTurnResult:
 - [ ] **Step 2: Run the routing test and verify RED**
 
 ```powershell
-conda run -n chatapi pytest backend/tests/test_agent_runtime.py::test_routes_loads_skill_and_executes_only_bound_tools -q
+conda run -n chat4openapi pytest backend/tests/test_agent_runtime.py::test_routes_loads_skill_and_executes_only_bound_tools -q
 ```
 
 Expected: import failure for `AgentRuntime`.
@@ -411,7 +411,7 @@ Build the initial system context from Agent prompt plus a JSON Skill catalog con
 The fake LLM calls `load_skills`, then `ask_user`. Assert interactive execution returns `needs_input`, stores `pending_clarification` including the Tool call ID, and performs no business Tool call. Resume with `GRCh38`; assert the next LLM context includes an internal Tool result containing that answer and finishes normally.
 
 ```powershell
-conda run -n chatapi pytest backend/tests/test_agent_runtime.py::test_human_in_loop_pauses_and_resumes_without_tool_approval -q
+conda run -n chat4openapi pytest backend/tests/test_agent_runtime.py::test_human_in_loop_pauses_and_resumes_without_tool_approval -q
 ```
 
 Expected: FAIL because `ask_user` is not handled.
@@ -429,7 +429,7 @@ Add tests for two loaded Skills in a compound task, invalid loads, stopped candi
 Run:
 
 ```powershell
-conda run -n chatapi pytest backend/tests/test_agent_runtime.py backend/tests/test_chat_orchestrator.py -q
+conda run -n chat4openapi pytest backend/tests/test_agent_runtime.py backend/tests/test_chat_orchestrator.py -q
 ```
 
 Expected: all selected tests pass. Keep `ChatOrchestrator` as a compatibility shim that constructs `AgentTurnRequest`; remove Skill-owned provider lookup from it.
@@ -437,7 +437,7 @@ Expected: all selected tests pass. Keep `ChatOrchestrator` as a compatibility sh
 - [ ] **Step 7: Commit Agent runtime**
 
 ```powershell
-git add backend/src/chatapi/chat/agent.py backend/src/chatapi/chat/context.py backend/src/chatapi/chat/orchestrator.py backend/tests/test_agent_runtime.py backend/tests/test_chat_orchestrator.py
+git add backend/src/chat4openapi/chat/agent.py backend/src/chat4openapi/chat/context.py backend/src/chat4openapi/chat/orchestrator.py backend/tests/test_agent_runtime.py backend/tests/test_chat_orchestrator.py
 git commit -m "feat: run conversations through built-in agent"
 ```
 
@@ -446,8 +446,8 @@ git commit -m "feat: run conversations through built-in agent"
 ### Task 5: Browser turn API and compatibility adapters
 
 **Files:**
-- Create: `backend/src/chatapi/schemas/chat.py`
-- Modify: `backend/src/chatapi/chat/api.py`
+- Create: `backend/src/chat4openapi/schemas/chat.py`
+- Modify: `backend/src/chat4openapi/chat/api.py`
 - Create: `backend/tests/test_chat_turn_api.py`
 - Modify: `backend/tests/test_compatible_api.py`
 
@@ -473,7 +473,7 @@ Assert a clarification response contains `status="needs_input"`, its conversatio
 - [ ] **Step 2: Run tests and verify RED**
 
 ```powershell
-conda run -n chatapi pytest backend/tests/test_chat_turn_api.py backend/tests/test_compatible_api.py -q
+conda run -n chat4openapi pytest backend/tests/test_chat_turn_api.py backend/tests/test_compatible_api.py -q
 ```
 
 Expected: browser route 404 and old compatibility tests fail after switching expectations to Agent output.
@@ -500,14 +500,14 @@ Build `AgentTurnRequest(interactive=True)` and forward the Tool Session cookie/h
 
 - [ ] **Step 4: Delegate compatibility protocols to Agent**
 
-Map `model="agent-default"` to an empty candidate list and `model="skill-7"` to `[7]`. Accept optional `chatapi_skill_ids` only when the model is `agent-default`; reject conflicting scopes. Always set `interactive=False`. Keep response object shapes and SSE events unchanged, using `AgentTurnResult.content` and token counts.
+Map `model="agent-default"` to an empty candidate list and `model="skill-7"` to `[7]`. Accept optional `chat4openapi_skill_ids` only when the model is `agent-default`; reject conflicting scopes. Always set `interactive=False`. Keep response object shapes and SSE events unchanged, using `AgentTurnResult.content` and token counts.
 
 `GET /v1/models` returns `agent-default` first and then each running Skill alias. Each Skill alias describes candidate scoping, not a model provider.
 
 - [ ] **Step 5: Run focused API tests**
 
 ```powershell
-conda run -n chatapi pytest backend/tests/test_chat_turn_api.py backend/tests/test_compatible_api.py -q
+conda run -n chat4openapi pytest backend/tests/test_chat_turn_api.py backend/tests/test_compatible_api.py -q
 ```
 
 Expected: all selected tests pass.
@@ -515,7 +515,7 @@ Expected: all selected tests pass.
 - [ ] **Step 6: Commit chat APIs**
 
 ```powershell
-git add backend/src/chatapi/schemas/chat.py backend/src/chatapi/chat/api.py backend/tests/test_chat_turn_api.py backend/tests/test_compatible_api.py
+git add backend/src/chat4openapi/schemas/chat.py backend/src/chat4openapi/chat/api.py backend/tests/test_chat_turn_api.py backend/tests/test_compatible_api.py
 git commit -m "feat: expose agent chat turn api"
 ```
 
@@ -800,7 +800,7 @@ In the Agent runtime test, assert this Skill prompt is present after dynamic loa
 
 ```powershell
 & 'D:\nvm\nodejs\npm.cmd' test -- --run src/__tests__/markdown-message.spec.ts src/__tests__/skills-chat.spec.ts
-conda run -n chatapi pytest backend/tests/test_agent_runtime.py -q
+conda run -n chat4openapi pytest backend/tests/test_agent_runtime.py -q
 ```
 
 Expected: all selected tests pass.
@@ -827,7 +827,7 @@ git commit -m "feat: render safe markdown agent responses"
 - [ ] **Step 1: Apply the migration to the application database**
 
 ```powershell
-conda run -n chatapi alembic -c backend/alembic.ini upgrade head
+conda run -n chat4openapi alembic -c backend/alembic.ini upgrade head
 ```
 
 Expected: database revision is `0005_agent_runtime`; Agent ID 1 points to the first enabled provider and Skills have no provider/model columns.
@@ -835,8 +835,8 @@ Expected: database revision is `0005_agent_runtime`; Agent ID 1 points to the fi
 - [ ] **Step 2: Run complete backend verification**
 
 ```powershell
-conda run -n chatapi pytest backend/tests -q
-conda run -n chatapi ruff check backend/src backend/tests
+conda run -n chat4openapi pytest backend/tests -q
+conda run -n chat4openapi ruff check backend/src backend/tests
 ```
 
 Expected: zero failing tests and `All checks passed!`.
