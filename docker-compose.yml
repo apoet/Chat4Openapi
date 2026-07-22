@@ -1,0 +1,24 @@
+services:
+  agent4api:
+    # `docker compose push` publishes this tag to Docker Hub. Override either
+    # variable when using another Docker Hub account or release tag.
+    image: "${DOCKERHUB_USERNAME:-apoet}/agent4api:${AGENT4API_TAG:-latest}"
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${AGENT4API_PORT:-8000}:8000"
+    environment:
+      CHAT4OPENAPI_DATABASE_URL: sqlite:////app/data/chat4openapi.db
+      CHAT4OPENAPI_ENCRYPTION_KEY_FILE: /app/data/.chat4openapi.key
+      CHAT4OPENAPI_DEFAULT_LOCALE: "${CHAT4OPENAPI_DEFAULT_LOCALE:-zh-CN}"
+      CHAT4OPENAPI_SECURE_COOKIES: "${CHAT4OPENAPI_SECURE_COOKIES:-false}"
+      CHAT4OPENAPI_ADMIN_SESSION_IDLE_MINUTES: "${CHAT4OPENAPI_ADMIN_SESSION_IDLE_MINUTES:-30}"
+      CHAT4OPENAPI_ADMIN_SESSION_ABSOLUTE_HOURS: "${CHAT4OPENAPI_ADMIN_SESSION_ABSOLUTE_HOURS:-8}"
+      CHAT4OPENAPI_BROWSER_CHAT_SESSION_DAYS: "${CHAT4OPENAPI_BROWSER_CHAT_SESSION_DAYS:-30}"
+    volumes:
+      - agent4api-data:/app/data
+
+volumes:
+  agent4api-data:

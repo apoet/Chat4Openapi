@@ -22,7 +22,29 @@ It is a single FastAPI/Vue application backed by SQLite, with an English and Sim
 
 ## Quick start
 
-### 1. Install the required runtimes
+### Docker
+
+The image defaults to `apoet/agent4api:latest`. To use another Docker Hub account, image tag, or published port, copy `.env.example` to `.env` and edit the corresponding values first.
+
+Build locally and start:
+
+```shell
+docker compose build
+docker compose up -d
+```
+
+Publish manually to Docker Hub:
+
+```shell
+docker login
+docker compose push
+```
+
+The container exposes one port for the frontend, API, MCP, and embed assets, all accessed through the same origin and relative paths. The administration page defaults to [http://127.0.0.1:8000](http://127.0.0.1:8000). SQLite data and the encryption key are persisted in the `agent4api-data` volume.
+
+### Run from source
+
+#### 1. Install the required runtimes
 
 - Python `3.12`
 - Node.js `20.19.4`, managed with nvm or nvm-windows
@@ -55,7 +77,7 @@ conda env create --solver libmamba -f environment.yml
 conda activate chat4openapi
 ```
 
-### 2. Install the frontend and create the configuration
+#### 2. Install the frontend and create the configuration
 
 ```shell
 nvm use 20.19.4
@@ -78,7 +100,7 @@ cp .env.example .env
 
 Review `.env` before starting the application.
 
-### 3. Start the application
+#### 3. Start the application
 
 With the Conda environment, use the convenience script:
 
@@ -105,6 +127,6 @@ cd frontend
 npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 ```
 
-### 4. Open the administration page
+#### 4. Open the administration page
 
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173). The first-run wizard will guide you through creating the administrator account.
