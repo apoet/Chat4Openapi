@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from chat4openapi.api.admin_auth import AdminContext, require_admin, require_csrf
 from chat4openapi.api.errors import ApiError
+from chat4openapi.db.serialized_write import serialized_write
 from chat4openapi.models import (
     ApiSource,
     GlobalToolAuthConfig,
@@ -28,6 +29,10 @@ from chat4openapi.schemas.tools import (
     SourceUrlImportRequest,
     ToolAuthConfigRequest,
     ToolAuthConfigResponse,
+    ToolBatchFailed,
+    ToolBatchRequest,
+    ToolBatchResponse,
+    ToolBatchSucceeded,
     ToolEnabledRequest,
     ToolParameterOverrideRequest,
     ToolSummary,
@@ -40,6 +45,7 @@ from chat4openapi.tools.effective_schema import (
 )
 from chat4openapi.tools.openapi_loader import OpenAPIImportError, load_openapi, normalize_openapi
 from chat4openapi.tools.network_policy import UnsafeNetworkTarget, validate_network_target
+from chat4openapi.tools.bulk import apply_tool_action
 
 router = APIRouter(prefix="/api/admin", tags=["admin-tools"])
 
@@ -364,13 +370,13 @@ def set_source_enabled(
     payload: ApiSourceEnabledRequest,
     context: AdminContext = Depends(require_csrf),
 ) -> ApiSourceSummary:
-    source = _managed_source(context, source_id)
-    tool_ids = _source_tool_ids(context, source_id)
-    if not payload.enabled:
-        _ensure_source_not_login_source(context, tool_ids)
-        _stop_skills_using_tools(context, tool_ids)
-    source.enabled = payload.enabled
-    context.db.commit()
+    with serialized_write(context.db):
+        source = _managed_source(context, source_id)
+        tool_ids = _source_tool_ids(context, source_id)
+        if not payload.enabled:
+            _ensure_source_not_login_source(context, tool_ids)
+            _stop_skills_using_tools(context, tool_ids)
+        source.enabled = payload.enabled
     return ApiSourceSummary.model_validate(source)
 
 
@@ -379,23 +385,23 @@ def delete_source(
     source_id: int,
     context: AdminContext = Depends(require_csrf),
 ) -> None:
-    source = _managed_source(context, source_id)
-    tools = context.db.scalars(
-        select(Tool).where(
-            Tool.api_source_id == source_id,
-            Tool.deleted_at.is_(None),
-        )
-    ).all()
-    tool_ids = [tool.id for tool in tools]
-    _ensure_source_not_login_source(context, tool_ids)
-    _stop_skills_using_tools(context, tool_ids)
-    deleted_at = datetime.now(UTC).replace(tzinfo=None)
-    for tool in tools:
-        tool.enabled = False
-        tool.deleted_at = deleted_at
-    source.enabled = False
-    source.deleted_at = deleted_at
-    context.db.commit()
+    with serialized_write(context.db):
+        source = _managed_source(context, source_id)
+        tools = context.db.scalars(
+            select(Tool).where(
+                Tool.api_source_id == source_id,
+                Tool.deleted_at.is_(None),
+            )
+        ).all()
+        tool_ids = [tool.id for tool in tools]
+        _ensure_source_not_login_source(context, tool_ids)
+        _stop_skills_using_tools(context, tool_ids)
+        deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        for tool in tools:
+            tool.enabled = False
+            tool.deleted_at = deleted_at
+        source.enabled = False
+        source.deleted_at = deleted_at
 
 
 @router.get("/tools", response_model=list[ToolSummary])
@@ -420,17 +426,57 @@ def list_tools(
     ]
 
 
+@router.post("/tools/batch", response_model=ToolBatchResponse)
+def batch_tools(
+    payload: ToolBatchRequest,
+    context: AdminContext = Depends(require_csrf),
+) -> ToolBatchResponse:
+    if len(payload.tool_ids) > 200:
+        raise ApiError(422, "tools.batch_limit_exceeded", limit=200)
+    succeeded: list[ToolBatchSucceeded] = []
+    failed: list[ToolBatchFailed] = []
+    with serialized_write(context.db):
+        for tool_id in payload.tool_ids:
+            try:
+                with context.db.begin_nested():
+                    status = apply_tool_action(context.db, tool_id, payload.action)
+                    context.db.flush()
+                succeeded.append(
+                    ToolBatchSucceeded(
+                        tool_id=tool_id,
+                        action=payload.action,
+                        status=status,
+                    )
+                )
+            except ApiError as exc:
+                failed.append(
+                    ToolBatchFailed(
+                        tool_id=tool_id,
+                        action=payload.action,
+                        code=exc.code,
+                        params=exc.params,
+                    )
+                )
+            except Exception:
+                failed.append(
+                    ToolBatchFailed(
+                        tool_id=tool_id,
+                        action=payload.action,
+                        code="tools.batch_item_failed",
+                    )
+                )
+    return ToolBatchResponse(
+        request_count=len(payload.tool_ids),
+        succeeded=succeeded,
+        failed=failed,
+    )
+
+
 def _managed_tool(context: AdminContext, tool_id: int) -> Tool:
     tool = context.db.get(Tool, tool_id)
     if tool is None or tool.deleted_at is not None:
         raise ApiError(404, "tools.not_found")
     return tool
-
-
-def _ensure_not_login_tool(context: AdminContext, tool_id: int) -> None:
-    config = context.db.get(GlobalToolAuthConfig, 1)
-    if config is not None and config.enabled and config.login_tool_id == tool_id:
-        raise ApiError(409, "tools.login_tool_conflict")
 
 
 @router.patch("/tools/{tool_id}", response_model=ToolSummary)
@@ -492,11 +538,13 @@ def set_tool_enabled(
     payload: ToolEnabledRequest,
     context: AdminContext = Depends(require_csrf),
 ) -> ToolSummary:
-    tool = _managed_tool(context, tool_id)
-    if not payload.enabled:
-        _ensure_not_login_tool(context, tool_id)
-    tool.enabled = payload.enabled
-    context.db.commit()
+    with serialized_write(context.db):
+        apply_tool_action(
+            context.db,
+            tool_id,
+            "enable" if payload.enabled else "disable",
+        )
+        tool = _managed_tool(context, tool_id)
     source = context.db.get(ApiSource, tool.api_source_id)
     spec = json.loads(source.spec_snapshot) if source is not None else None
     return _tool_summary(context.db, tool, spec)
@@ -504,11 +552,8 @@ def set_tool_enabled(
 
 @router.delete("/tools/{tool_id}", status_code=204)
 def delete_tool(tool_id: int, context: AdminContext = Depends(require_csrf)) -> None:
-    tool = _managed_tool(context, tool_id)
-    _ensure_not_login_tool(context, tool_id)
-    tool.enabled = False
-    tool.deleted_at = datetime.now(UTC).replace(tzinfo=None)
-    context.db.commit()
+    with serialized_write(context.db):
+        apply_tool_action(context.db, tool_id, "delete")
 
 
 @router.get("/tool-auth", response_model=ToolAuthConfigResponse)

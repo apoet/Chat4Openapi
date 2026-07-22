@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
 
 class SourceImportRequest(BaseModel):
@@ -69,6 +69,41 @@ class SourceImportResponse(BaseModel):
 
 class ToolEnabledRequest(BaseModel):
     enabled: bool
+
+
+ToolBatchAction = Literal["enable", "disable", "delete"]
+PositiveToolId = Annotated[StrictInt, Field(gt=0)]
+
+
+class ToolBatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: ToolBatchAction
+    tool_ids: list[PositiveToolId] = Field(min_length=1)
+
+    @field_validator("tool_ids")
+    @classmethod
+    def stable_unique_ids(cls, value: list[int]) -> list[int]:
+        return list(dict.fromkeys(value))
+
+
+class ToolBatchSucceeded(BaseModel):
+    tool_id: int
+    action: ToolBatchAction
+    status: Literal["enabled", "disabled", "deleted"]
+
+
+class ToolBatchFailed(BaseModel):
+    tool_id: int
+    action: ToolBatchAction
+    code: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolBatchResponse(BaseModel):
+    request_count: int
+    succeeded: list[ToolBatchSucceeded] = Field(default_factory=list)
+    failed: list[ToolBatchFailed] = Field(default_factory=list)
 
 
 class ToolUpdateRequest(BaseModel):
