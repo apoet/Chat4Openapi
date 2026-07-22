@@ -14,6 +14,17 @@
 - Browser Tool Session credentials remain in the existing HTTP-only cookie and credentialed request path. No Tool Session token, Agent API key, Authorization value, or other credential is written to local history or Chat request JSON.
 - Added responsive Agent selector styling and kept English/Simplified Chinese locale keys in parity.
 
+## Security review remediation
+
+- Browser Chat now obtains its Agent catalog from anonymous `GET /api/chat/bootstrap`. The response contains only a public browser subject plus runnable Agent summaries (`id`, `name`, `is_default`); it has no prompt, provider, binding, key, or admin fields.
+- Bootstrap establishes a high-entropy `HttpOnly`, `SameSite=Lax` browser-chat cookie. Only its SHA-256 hash is stored in `browser_chat_sessions`; forged, expired, or revoked cookies resolve to a new database subject.
+- Conversations now have an immutable, database-constrained owner: exactly one `agent_key_id` or `browser_chat_session_id`. The sole exception is preserved, soft-deleted legacy ownerless rows. Migration `0012_conversation_owners` marks previously active ownerless rows revoked and unresumable without deleting them.
+- Compatible API continuations require the exact active Agent API key that created the Conversation, even when another key belongs to the same Agent. Browser continuations require the exact browser subject. Both checks happen before Agent runtime execution.
+- Browser Tool Session/admin/API-key credential context remains available solely to authorize Tool credentials and is separate from Conversation identity.
+- Response Agent metadata is read only after owner validation. Ownership mismatches share the non-enumerating `agent.conversation_not_found` boundary.
+- Local history is namespaced by the bootstrap `subject_id`; cookie rotation therefore selects a fresh namespace while leaving old local data untouched. Cookies, bearer keys, and Tool Session tokens are never stored locally.
+- History parsing now explicitly accepts only unversioned/v1, v2, and v3 records. Unknown versions are isolated from the UI and preserved without field/value loss through subsequent local saves rather than interpreted as legacy or dropped.
+
 ## TDD evidence
 
 - Backend authoritative-Agent response RED: `1 failed` (`agent_id` absent); GREEN: `1 passed`.
@@ -22,15 +33,21 @@
 - History v3/legacy authoritative backfill RED: `1 failed` (v2 Skill history remained); GREEN: `1 passed`.
 - Inactive historical Agent error RED: `1 failed` (raw `agent.unavailable`); GREEN: `1 passed` with localized text.
 - No-enabled-Agent guard RED: `1 failed` (Send remained enabled); GREEN: `1 passed`.
+- Public bootstrap RED: `2 failed` (404); GREEN: `2 passed` with anonymous/non-admin coverage and field allowlisting.
+- Forged/expired browser session RED: forged cookie resumed another subject's Conversation; GREEN: `2 passed`, including rotation and restoration of the original cookie subject.
+- Exact same-Agent API-key isolation RED: foreign key reached the runtime; GREEN: denied before runtime, with revoked/deleted owner-key continuation coverage (`3 passed`).
+- Frontend subject namespace RED: bootstrap and subject-specific history tests failed; GREEN: public bootstrap/no-admin and cross-subject history isolation passed.
+- Unknown history version coverage preserves a v4 payload unchanged and keeps it out of the rendered history.
 
 ## Verification
 
 - Focused frontend Chat/Markdown/locale: `3 files, 19 tests passed`.
-- Full frontend: `9 files, 70 tests passed`.
+- Full frontend: `9 files, 73 tests passed`.
 - Frontend typecheck: passed.
 - Frontend production build: passed.
-- Backend Chat contract: `11 passed`.
-- Full backend: `281 passed`.
+- Backend Chat/compatible security contracts: `64 passed`.
+- Full backend: `289 passed`.
+- Alembic schema, legacy ownerless-row handling, downgrade/re-upgrade, and migration round-trip tests: passed as part of the backend suite.
 - Ruff on changed backend source/tests: `All checks passed!`.
 - `git diff --check`: clean (Git emitted only line-ending notices).
 - Production frontend scans: no `candidate_skill_ids`, `SkillMultiSelect`, candidate-Skill UI labels/classes, or Chat credential/token references.

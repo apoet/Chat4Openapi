@@ -110,6 +110,17 @@ export interface AgentConfig {
 
 export type AgentConfigWrite = Omit<AgentConfig, 'id' | 'is_default' | 'created_at' | 'updated_at' | 'deleted_at' | 'skill_ids'>
 
+export interface ChatAgentSummary {
+  id: number
+  name: string
+  is_default: boolean
+}
+
+export interface ChatBootstrapResponse {
+  subject_id: string
+  agents: ChatAgentSummary[]
+}
+
 export interface AgentApiKey {
   id: number
   agent_id: number

@@ -58,6 +58,12 @@ def test_agent_runtime_migration_creates_persistence_schema(tmp_path: Path) -> N
     skill_columns = {column["name"] for column in inspector.get_columns("skills")}
     agent_skill_columns = {column["name"] for column in inspector.get_columns("agent_skills")}
     agent_key_columns = {column["name"] for column in inspector.get_columns("agent_api_keys")}
+    browser_session_columns = {
+        column["name"] for column in inspector.get_columns("browser_chat_sessions")
+    }
+    conversation_checks = {
+        constraint["name"] for constraint in inspector.get_check_constraints("conversations")
+    }
     with engine.connect() as connection:
         default_agents = connection.execute(
             text("SELECT id, is_default FROM agents ORDER BY id")
@@ -68,6 +74,7 @@ def test_agent_runtime_migration_creates_persistence_schema(tmp_path: Path) -> N
         "agents",
         "agent_skills",
         "agent_api_keys",
+        "browser_chat_sessions",
         "tool_parameter_overrides",
     } <= table_names
     assert "agent_config" not in table_names
@@ -80,6 +87,8 @@ def test_agent_runtime_migration_creates_persistence_schema(tmp_path: Path) -> N
         "candidate_scope_source",
         "latest_failure_summary",
         "agent_id",
+        "agent_key_id",
+        "browser_chat_session_id",
     } <= conversation_columns
     agent_columns = {column["name"] for column in inspector.get_columns("agents")}
     agent_checks = {constraint["name"] for constraint in inspector.get_check_constraints("agents")}
@@ -99,6 +108,15 @@ def test_agent_runtime_migration_creates_persistence_schema(tmp_path: Path) -> N
         "deleted_at",
     } <= agent_key_columns
     assert {"ck_agent_mode", "ck_agent_max_iterations"} <= agent_checks
+    assert "ck_conversation_exactly_one_active_owner" in conversation_checks
+    assert {
+        "token_hash",
+        "public_subject_id",
+        "expires_at",
+        "created_at",
+        "last_seen_at",
+        "revoked_at",
+    } <= browser_session_columns
     assert {"provider_id", "model"}.isdisjoint(skill_columns)
     assert conversation_agent_column["nullable"] is False
     assert default_agents == [(1, 1)]

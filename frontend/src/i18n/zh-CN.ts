@@ -122,7 +122,10 @@ export default {
       delete_failed: '无法删除 Agent。', keys_failed: '无法更新 API 密钥。',
     },
     agent_keys: { not_found: '此 API 密钥已不可用。' },
-    chat: { agentUnavailable: '此会话使用的 Agent 已不可用。' },
+    chat: {
+      agentUnavailable: '此会话使用的 Agent 已不可用。',
+      historyUnavailable: '此历史会话已无法继续，请新建会话后重试。',
+    },
     unknown: '发生错误，请重试。',
   },
 }

@@ -16,6 +16,7 @@ from chat4openapi.models import (
     Agent,
     AgentSkill,
     ApiSource,
+    BrowserChatSession,
     ChatMessage,
     Conversation,
     GlobalToolAuthConfig,
@@ -90,6 +91,7 @@ def turn(
     agent_id: int = TEST_AGENT_ID,
     **kwargs,
 ) -> RuntimeTurnRequest:
+    kwargs.setdefault("browser_chat_session_id", 1)
     return RuntimeTurnRequest(
         agent_id=agent_id,
         user_content=user_content,
@@ -100,6 +102,14 @@ def turn(
 
 
 def seed_runtime(session, cipher: SecretCipher) -> tuple[Skill, Tool]:
+    session.add(
+        BrowserChatSession(
+            id=1,
+            token_hash="runtime-test-browser-token-hash",
+            public_subject_id="runtime-test-browser-subject",
+            expires_at=datetime(2099, 1, 1),
+        )
+    )
     provider = LlmProvider(
         name="Primary",
         provider_type="openai",
@@ -1345,6 +1355,7 @@ async def test_existing_conversation_records_provider_configuration_failure(
         skill, _tool = seed_runtime(session, cipher)
         conversation = Conversation(
             agent_id=1,
+            browser_chat_session_id=1,
             candidate_skill_ids=[skill.id],
             candidate_scope_source="explicit",
             loaded_skill_ids=[],
@@ -1530,6 +1541,7 @@ async def test_new_turn_clears_previous_failure_before_llm_and_on_completion(
         skill, _tool = seed_runtime(session, cipher)
         conversation = Conversation(
             agent_id=1,
+            browser_chat_session_id=1,
             candidate_skill_ids=[skill.id],
             candidate_scope_source="explicit",
             loaded_skill_ids=[],

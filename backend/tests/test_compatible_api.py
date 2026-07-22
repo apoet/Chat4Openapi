@@ -9,6 +9,7 @@ from cryptography.fernet import Fernet
 from fastapi import FastAPI
 from sqlalchemy import select
 
+import chat4openapi.chat.api as chat_api_module
 from chat4openapi.api.tool_sessions import get_tool_secret_cipher
 from chat4openapi.chat.api import get_llm_client
 from chat4openapi.llm.client import CanonicalResponse, CanonicalToolCall, LlmProviderError
@@ -837,6 +838,110 @@ async def test_successful_authentication_updates_last_used(
 
 
 @pytest.mark.asyncio
+async def test_different_api_key_for_same_agent_cannot_resume_before_runtime(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_session_factory,
+    monkeypatch,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    llm = FinalAnswerLlm()
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: llm
+    seed(db_session_factory, cipher)
+    created = await client.post(
+        "/v1/chat/completions",
+        json={"model": "agent-default", "messages": [{"role": "user", "content": "Hi"}]},
+    )
+    conversation_id = created.json()["chat4openapi_conversation_id"]
+    second_secret = "c4o_second_same_agent_key_000000000000000000000"
+    with db_session_factory() as session:
+        session.add(
+            AgentApiKey(
+                agent_id=1,
+                label="Second same Agent",
+                key_prefix=second_secret[:12],
+                key_hash=hashlib.sha256(second_secret.encode()).hexdigest(),
+            )
+        )
+        session.commit()
+
+    runtime_calls = []
+
+    class RecordingRuntime:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        async def run(self, request):
+            runtime_calls.append(request)
+            raise AssertionError("foreign conversation reached runtime")
+
+    monkeypatch.setattr(chat_api_module, "AgentRuntime", RecordingRuntime)
+    denied = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "agent-default",
+            "conversation_id": conversation_id,
+            "messages": [{"role": "user", "content": "Continue"}],
+        },
+        headers={"Authorization": f"Bearer {second_secret}"},
+    )
+
+    assert denied.status_code == 404
+    assert denied.json() == {
+        "error": {"code": "agent.conversation_not_found", "params": {}}
+    }
+    assert runtime_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "expected_code"),
+    [("revoked", "auth.api_key_revoked"), ("deleted", "auth.api_key_invalid")],
+)
+async def test_revoked_or_deleted_owner_key_cannot_continue_conversation(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_session_factory,
+    state: str,
+    expected_code: str,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    llm = FinalAnswerLlm()
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: llm
+    seed(db_session_factory, cipher)
+    created = await client.post(
+        "/v1/chat/completions",
+        json={"model": "agent-default", "messages": [{"role": "user", "content": "Hi"}]},
+    )
+    conversation_id = created.json()["chat4openapi_conversation_id"]
+    now = datetime.now(UTC).replace(tzinfo=None)
+    with db_session_factory() as session:
+        key = session.scalar(select(AgentApiKey))
+        assert key is not None
+        key.enabled = False
+        if state == "revoked":
+            key.revoked_at = now
+        else:
+            key.deleted_at = now
+        session.commit()
+
+    denied = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "agent-default",
+            "conversation_id": conversation_id,
+            "messages": [{"role": "user", "content": "Continue"}],
+        },
+    )
+
+    assert denied.status_code == 401
+    assert denied.json()["error"]["code"] == expected_code
+    assert len(llm.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_key_selects_its_agent_and_only_lists_bound_skill_models(
     client: httpx.AsyncClient,
     app: FastAPI,
@@ -1172,6 +1277,8 @@ async def test_foreign_missing_and_deleted_conversations_share_not_found_boundar
     skill = seed(db_session_factory, cipher)
     now = datetime.now(UTC).replace(tzinfo=None)
     with db_session_factory() as session:
+        key = session.scalar(select(AgentApiKey))
+        assert key is not None
         session.add(
             Agent(
                 id=2,
@@ -1189,11 +1296,13 @@ async def test_foreign_missing_and_deleted_conversations_share_not_found_boundar
                 Conversation(
                     id="foreign-conversation",
                     agent_id=2,
+                    agent_key_id=key.id,
                     candidate_skill_ids=[skill.id],
                 ),
                 Conversation(
                     id="deleted-conversation",
                     agent_id=1,
+                    agent_key_id=key.id,
                     candidate_skill_ids=[skill.id],
                     deleted_at=now,
                 ),

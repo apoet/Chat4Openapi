@@ -2,11 +2,11 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import type { AgentConfig } from '../api/contracts'
+import type { ChatAgentSummary } from '../api/contracts'
 
 const props = withDefaults(defineProps<{
   modelValue: number | null
-  agents: AgentConfig[]
+  agents: ChatAgentSummary[]
   disabled?: boolean
   snapshotName?: string | null
 }>(), {

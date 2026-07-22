@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     default_locale: str = Field(default="en-US", pattern=r"^(en-US|zh-CN)$")
     admin_session_idle_minutes: int = Field(default=30, ge=1)
     admin_session_absolute_hours: int = Field(default=8, ge=1)
+    browser_chat_session_days: int = Field(default=30, ge=1)
     secure_cookies: bool = False
     encryption_key: str | None = None
     encryption_key_file: Path = DEFAULT_ENCRYPTION_KEY_FILE

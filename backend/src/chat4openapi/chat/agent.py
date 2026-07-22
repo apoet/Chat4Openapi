@@ -121,7 +121,9 @@ class AgentTurnRequest:
     conversation_id: str | None = None
     tool_session_id: str | None = None
     agent_key_id: int | None = None
+    browser_chat_session_id: int | None = None
     admin_session_id: int | None = None
+    tool_owner_agent_key_id: int | None = None
     incoming_messages: list[CanonicalMessage] = dataclass_field(default_factory=list)
     candidate_scope_source: Literal["automatic", "explicit"] = "automatic"
 
@@ -159,6 +161,8 @@ class AgentRuntime:
             if request.conversation_id is not None
             else None
         )
+        if existing is not None and not self._request_owns(existing, request):
+            raise AgentError("agent.conversation_not_found")
         try:
             agent, provider = self._configuration(request.agent_id)
         except AgentError as exc:
@@ -362,7 +366,9 @@ class AgentRuntime:
                             call.arguments,
                             request.tool_session_id,
                             agent_id=request.agent_id,
-                            agent_key_id=request.agent_key_id,
+                            agent_key_id=(
+                                request.tool_owner_agent_key_id or request.agent_key_id
+                            ),
                             admin_session_id=request.admin_session_id,
                         )
                     )
@@ -396,6 +402,7 @@ class AgentRuntime:
                 conversation is None
                 or conversation.deleted_at is not None
                 or conversation.agent_id != agent.id
+                or not self._request_owns(conversation, request)
             ):
                 raise AgentError("agent.conversation_not_found")
             candidate_ids = list(conversation.candidate_skill_ids)
@@ -445,10 +452,30 @@ class AgentRuntime:
             agent_mode=agent.mode if request.interactive else "react",
             agent_status="running",
             candidate_scope_source=request.candidate_scope_source,
+            agent_key_id=request.agent_key_id,
+            browser_chat_session_id=request.browser_chat_session_id,
         )
         self._session.add(conversation)
         self._session.commit()
         return conversation, candidate_skills
+
+    @staticmethod
+    def _request_owns(conversation: Conversation, request: AgentTurnRequest) -> bool:
+        requested_owner_count = sum(
+            owner_id is not None
+            for owner_id in (request.agent_key_id, request.browser_chat_session_id)
+        )
+        if requested_owner_count != 1:
+            return False
+        return (
+            request.agent_key_id is not None
+            and conversation.agent_key_id == request.agent_key_id
+            and conversation.browser_chat_session_id is None
+        ) or (
+            request.browser_chat_session_id is not None
+            and conversation.browser_chat_session_id == request.browser_chat_session_id
+            and conversation.agent_key_id is None
+        )
 
     def _load_skills(
         self,

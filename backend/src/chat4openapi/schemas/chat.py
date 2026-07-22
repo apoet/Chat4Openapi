@@ -21,3 +21,14 @@ class ChatTurnResponse(BaseModel):
     message: str
     loaded_skill_ids: list[int]
     pending: dict[str, Any] | None = None
+
+
+class ChatAgentSummary(BaseModel):
+    id: AgentId
+    name: str
+    is_default: bool
+
+
+class ChatBootstrapResponse(BaseModel):
+    subject_id: str
+    agents: list[ChatAgentSummary]

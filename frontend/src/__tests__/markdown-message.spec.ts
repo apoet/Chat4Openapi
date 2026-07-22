@@ -80,7 +80,9 @@ describe('MarkdownMessage', () => {
     }]))
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
       if (input === '/api/tool-session/config') return Promise.resolve(response({ enabled: false }))
-      if (input === '/api/admin/agents') return Promise.resolve(response([]))
+      if (input === '/api/chat/bootstrap') {
+        return Promise.resolve(response({ subject_id: 'test-browser-subject', agents: [] }))
+      }
       return Promise.resolve(response([]))
     }))
 

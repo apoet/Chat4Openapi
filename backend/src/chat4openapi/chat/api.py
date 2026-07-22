@@ -1,9 +1,11 @@
 import json
 import time
 import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -18,13 +20,98 @@ from chat4openapi.api.tool_sessions import (
 from chat4openapi.chat.agent import AgentError, AgentRuntime, AgentTurnRequest, AgentTurnResult
 from chat4openapi.db.session import get_db_session
 from chat4openapi.llm.client import CanonicalMessage, LlmClient, LlmProviderError
-from chat4openapi.models import Agent, AgentSkill, Conversation, Skill
-from chat4openapi.schemas.chat import ChatTurnRequest, ChatTurnResponse
+from chat4openapi.config import get_settings
+from chat4openapi.models import Agent, AgentSkill, BrowserChatSession, Conversation, LlmProvider, Skill
+from chat4openapi.schemas.chat import ChatBootstrapResponse, ChatTurnRequest, ChatTurnResponse
 from chat4openapi.security.agent_keys import AgentKeyContext, require_agent_api_key
 from chat4openapi.security.encryption import SecretCipher
+from chat4openapi.security.session_tokens import hash_token, new_token
 from chat4openapi.tools.executor import ToolExecutor
 
 router = APIRouter(tags=["compatible-chat"])
+BROWSER_CHAT_COOKIE = "chat4openapi_browser_chat"
+
+
+@dataclass(frozen=True, slots=True)
+class BrowserChatContext:
+    session: BrowserChatSession
+    token: str | None
+
+
+def _browser_chat_context(request: Request, db: Session) -> BrowserChatContext:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    token = request.cookies.get(BROWSER_CHAT_COOKIE)
+    browser_session = (
+        db.scalar(
+            select(BrowserChatSession).where(
+                BrowserChatSession.token_hash == hash_token(token),
+                BrowserChatSession.revoked_at.is_(None),
+                BrowserChatSession.expires_at > now,
+            )
+        )
+        if token
+        else None
+    )
+    if browser_session is not None:
+        browser_session.last_seen_at = now
+        db.commit()
+        return BrowserChatContext(session=browser_session, token=None)
+
+    token = new_token()
+    settings = get_settings()
+    browser_session = BrowserChatSession(
+        token_hash=hash_token(token),
+        expires_at=now + timedelta(days=settings.browser_chat_session_days),
+        last_seen_at=now,
+    )
+    db.add(browser_session)
+    db.commit()
+    db.refresh(browser_session)
+    return BrowserChatContext(session=browser_session, token=token)
+
+
+def _set_browser_chat_cookie(response: Response, context: BrowserChatContext) -> None:
+    if context.token is None:
+        return
+    settings = get_settings()
+    response.set_cookie(
+        BROWSER_CHAT_COOKIE,
+        context.token,
+        max_age=settings.browser_chat_session_days * 24 * 60 * 60,
+        httponly=True,
+        secure=settings.secure_cookies,
+        samesite="lax",
+        path="/",
+    )
+
+
+@router.get("/api/chat/bootstrap", response_model=ChatBootstrapResponse)
+def chat_bootstrap(request: Request, response: Response, db: Session = Depends(get_db_session)):
+    context = _browser_chat_context(request, db)
+    _set_browser_chat_cookie(response, context)
+    agents = db.scalars(
+        select(Agent)
+        .join(LlmProvider, LlmProvider.id == Agent.provider_id)
+        .join(AgentSkill, AgentSkill.agent_id == Agent.id)
+        .join(Skill, Skill.id == AgentSkill.skill_id)
+        .where(
+            Agent.enabled.is_(True),
+            Agent.deleted_at.is_(None),
+            LlmProvider.enabled.is_(True),
+            LlmProvider.deleted_at.is_(None),
+            Skill.running.is_(True),
+            Skill.deleted_at.is_(None),
+        )
+        .distinct()
+        .order_by(Agent.is_default.desc(), Agent.id)
+    ).all()
+    return {
+        "subject_id": context.session.public_subject_id,
+        "agents": [
+            {"id": agent.id, "name": agent.name, "is_default": agent.is_default}
+            for agent in agents
+        ],
+    }
 
 
 def get_llm_client() -> LlmClient:
@@ -232,13 +319,20 @@ def _validate_compatibility_scope(
     )
 
 
-def _browser_agent_id(db: Session, payload: ChatTurnRequest) -> int:
+def _browser_agent_id(
+    db: Session, payload: ChatTurnRequest, browser_chat_session_id: int
+) -> int:
     if payload.conversation_id is None:
         if payload.agent_id is None:
             raise ApiError(422, "validation.invalid", fields=["body.agent_id"])
         return payload.agent_id
     conversation = db.get(Conversation, payload.conversation_id)
     if conversation is None or conversation.deleted_at is not None:
+        raise ApiError(404, "agent.conversation_not_found")
+    if (
+        conversation.browser_chat_session_id != browser_chat_session_id
+        or conversation.agent_key_id is not None
+    ):
         raise ApiError(404, "agent.conversation_not_found")
     if payload.agent_id is not None and payload.agent_id != conversation.agent_id:
         raise ApiError(409, "chat.agent_locked")
@@ -281,6 +375,8 @@ async def _run(
             conversation is None
             or conversation.deleted_at is not None
             or conversation.agent_id != key_context.agent.id
+            or conversation.agent_key_id != key_context.api_key.id
+            or conversation.browser_chat_session_id is not None
         ):
             raise ApiError(404, "agent.conversation_not_found")
     candidate_skill_ids = _candidate_skill_ids(body, key_context, conversation)
@@ -328,6 +424,7 @@ async def _run(
 async def browser_turn(
     payload: ChatTurnRequest,
     request: Request,
+    response: Response,
     chat4openapi_tool_session_header: str | None = Header(
         default=None, alias="X-Chat4Openapi-Tool-Session"
     ),
@@ -337,7 +434,9 @@ async def browser_turn(
     executor: ToolExecutor = Depends(get_tool_executor),
     owner=Depends(get_optional_tool_session_owner),
 ) -> ChatTurnResponse:
-    agent_id = _browser_agent_id(db, payload)
+    browser_context = _browser_chat_context(request, db)
+    _set_browser_chat_cookie(response, browser_context)
+    agent_id = _browser_agent_id(db, payload, browser_context.session.id)
     result = await _run_agent(
         AgentTurnRequest(
             agent_id=agent_id,
@@ -350,9 +449,14 @@ async def browser_turn(
                 or request.cookies.get(TOOL_SESSION_COOKIE)
             ),
             candidate_scope_source="automatic",
-            agent_key_id=(owner.api_key.id if isinstance(owner, AgentKeyContext) else None),
+            browser_chat_session_id=browser_context.session.id,
+            tool_owner_agent_key_id=(
+                owner.api_key.id if isinstance(owner, AgentKeyContext) else None
+            ),
             admin_session_id=(
-                owner.admin_session.id if owner is not None and hasattr(owner, "admin_session") else None
+                owner.admin_session.id
+                if owner is not None and hasattr(owner, "admin_session")
+                else None
             ),
         ),
         db,

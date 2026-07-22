@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime
 
 import pytest
 from alembic import command
@@ -12,6 +13,7 @@ from chat4openapi.chat.agent import DEFAULT_AGENT_PROMPT
 from chat4openapi.models import (
     Agent,
     ApiSource,
+    BrowserChatSession,
     Conversation,
     LlmProvider,
     Skill,
@@ -91,7 +93,16 @@ def test_migration_preserves_existing_installation_as_agent_configuration(
         assert not hasattr(skill, "provider_id")
         assert not hasattr(skill, "model")
 
-        conversation = Conversation(agent_id=agent.id)
+        browser_session = BrowserChatSession(
+            token_hash="agent-model-test-token",
+            public_subject_id="agent-model-test-subject",
+            expires_at=datetime(2099, 1, 1),
+        )
+        session.add(browser_session)
+        session.flush()
+        conversation = Conversation(
+            agent_id=agent.id, browser_chat_session_id=browser_session.id
+        )
         session.add(conversation)
         session.flush()
         assert conversation.candidate_skill_ids == []

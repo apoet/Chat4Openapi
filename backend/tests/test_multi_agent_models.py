@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime
 
 from alembic import command
 from alembic.config import Config
@@ -7,7 +8,14 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from chat4openapi.db.session import create_engine_for_url
-from chat4openapi.models import Agent, AgentApiKey, AgentSkill, Conversation, Skill
+from chat4openapi.models import (
+    Agent,
+    AgentApiKey,
+    AgentSkill,
+    BrowserChatSession,
+    Conversation,
+    Skill,
+)
 
 
 def sqlite_url(path: Path) -> str:
@@ -118,6 +126,15 @@ def test_existing_singleton_becomes_default_agent(tmp_path: Path) -> None:
                 FROM conversations WHERE id = 'deleted'
                 """
             )
+            ).one()
+        isolated_ownerless = connection.execute(
+            text(
+                """
+                SELECT agent_status, latest_failure_summary, deleted_at IS NOT NULL,
+                       agent_key_id, browser_chat_session_id
+                FROM conversations WHERE id = 'active'
+                """
+            )
         ).one()
 
     engine.dispose()
@@ -139,6 +156,13 @@ def test_existing_singleton_becomes_default_agent(tmp_path: Path) -> None:
     assert conversation_agents == [("active", 1), ("deleted", 1)]
     assert bindings == [(10, 0), (20, 1)]
     assert preserved_failure == ("failed", "preserve me", 1)
+    assert isolated_ownerless == (
+        "revoked",
+        "Conversation predates owner isolation and cannot be resumed.",
+        1,
+        None,
+        None,
+    )
 
 
 def test_persisted_conversation_agent_is_immutable(tmp_path: Path) -> None:
@@ -148,14 +172,19 @@ def test_persisted_conversation_agent_is_immutable(tmp_path: Path) -> None:
     engine = create_engine_for_url(sqlite_url(database_path))
 
     with Session(engine) as session:
+        browser_session = BrowserChatSession(
+            token_hash="immutable-agent-token",
+            public_subject_id="immutable-agent-subject",
+            expires_at=datetime(2099, 1, 1),
+        )
         second = Agent(
             name="Second Agent",
             system_prompt="Use the second policy.",
             provider_id=None,
         )
-        session.add(second)
+        session.add_all([second, browser_session])
         session.flush()
-        conversation = Conversation(agent_id=1)
+        conversation = Conversation(agent_id=1, browser_chat_session_id=browser_session.id)
         session.add(conversation)
         session.commit()
         conversation_id = conversation.id
@@ -179,6 +208,11 @@ def test_persisted_conversation_agent_relationship_is_immutable(tmp_path: Path) 
     engine = create_engine_for_url(sqlite_url(database_path))
 
     with Session(engine) as session:
+        browser_session = BrowserChatSession(
+            token_hash="immutable-relationship-token",
+            public_subject_id="immutable-relationship-subject",
+            expires_at=datetime(2099, 1, 1),
+        )
         default_agent = session.get(Agent, 1)
         assert default_agent is not None
         second = Agent(
@@ -186,7 +220,11 @@ def test_persisted_conversation_agent_relationship_is_immutable(tmp_path: Path) 
             system_prompt="Use the second policy.",
             provider_id=None,
         )
-        conversation = Conversation(agent=default_agent)
+        session.add(browser_session)
+        session.flush()
+        conversation = Conversation(
+            agent=default_agent, browser_chat_session_id=browser_session.id
+        )
         session.add_all([second, conversation])
         session.commit()
         conversation_id = conversation.id
@@ -229,8 +267,8 @@ def test_0008_downgrade_and_reupgrade_preserves_default_configuration(
                 """
                 INSERT INTO conversations
                     (id, agent_id, candidate_skill_ids, loaded_skill_ids,
-                     agent_status, candidate_scope_source)
-                VALUES ('history', 1, '[]', '[]', 'failed', 'automatic')
+                     agent_status, candidate_scope_source, deleted_at)
+                VALUES ('history', 1, '[]', '[]', 'failed', 'automatic', CURRENT_TIMESTAMP)
                 """
             )
         )

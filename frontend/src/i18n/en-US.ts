@@ -122,7 +122,10 @@ export default {
       delete_failed: 'Unable to delete the Agent.', keys_failed: 'Unable to update API keys.',
     },
     agent_keys: { not_found: 'This API key is no longer available.' },
-    chat: { agentUnavailable: "This conversation's Agent is no longer available." },
+    chat: {
+      agentUnavailable: "This conversation's Agent is no longer available.",
+      historyUnavailable: 'This saved conversation can no longer be resumed. Start a new chat to continue.',
+    },
     unknown: 'Something went wrong. Please try again.',
   },
 }

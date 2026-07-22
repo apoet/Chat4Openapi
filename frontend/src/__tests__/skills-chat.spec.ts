@@ -27,20 +27,25 @@ function deferred<T>(): {
 const defaultAgent = {
   id: 1,
   name: 'Research Agent',
-  enabled: true,
   is_default: true,
-  deleted_at: null,
 }
+
+const CHAT_SUBJECT = 'test-browser-subject'
+const CHAT_STORAGE_KEY = `chat4openapi.chat.sessions.v3.${CHAT_SUBJECT}`
 
 function chatFetch(options: {
   agents?: unknown[]
   skills?: unknown[]
   turns?: Array<Response | Promise<Response>>
+  subjectId?: string
 } = {}) {
   const turns = [...(options.turns ?? [])]
   return vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
     if (input === '/api/tool-session/config') return Promise.resolve(response({ enabled: false }))
-    if (input === '/api/admin/agents') return Promise.resolve(response(options.agents ?? [defaultAgent]))
+    if (input === '/api/chat/bootstrap') return Promise.resolve(response({
+      subject_id: options.subjectId ?? CHAT_SUBJECT,
+      agents: options.agents ?? [defaultAgent],
+    }))
     if (input === '/api/skills') return Promise.resolve(response(options.skills ?? []))
     if (input === '/api/chat/turns') {
       const next = turns.shift()
@@ -58,6 +63,63 @@ beforeEach(() => {
 })
 
 describe('Skills and chat', () => {
+  it('loads the public browser bootstrap without requesting the admin Agent catalog', async () => {
+    const fetchMock = chatFetch()
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === '/api/chat/bootstrap')).toBe(true))
+    expect(fetchMock.mock.calls.some(([url]) => url === '/api/admin/agents')).toBe(false)
+    expect(await screen.findByRole('option', { name: 'Research Agent — Default' })).toBeTruthy()
+  })
+
+  it('loads history only from the current browser subject namespace', async () => {
+    const session = (id: string, title: string) => ({
+      version: 3, id, conversationId: `conversation-${id}`, title,
+      agentId: 1, agentName: 'Research Agent', loadedSkillIds: [], status: 'completed', pending: null,
+      messages: [{ role: 'user', content: title, kind: 'message' }], updatedAt: '2026-07-22T00:00:00.000Z',
+    })
+    const firstKey = 'chat4openapi.chat.sessions.v3.subject-a'
+    const secondKey = 'chat4openapi.chat.sessions.v3.subject-b'
+    localStorage.setItem(firstKey, JSON.stringify([session('a', 'Subject A history')]))
+    localStorage.setItem(secondKey, JSON.stringify([session('b', 'Subject B history')]))
+    vi.stubGlobal('fetch', chatFetch({ subjectId: 'subject-b' }))
+
+    render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+
+    expect(await screen.findByRole('button', { name: 'Subject B history' })).toBeTruthy()
+    expect(screen.queryByText('Subject A history')).toBeNull()
+    expect(JSON.parse(localStorage.getItem(firstKey) ?? '[]')[0].title).toBe('Subject A history')
+    expect(JSON.parse(localStorage.getItem(secondKey) ?? '[]')[0].title).toBe('Subject B history')
+  })
+
+  it('isolates an unknown history version without rewriting or dropping its payload', async () => {
+    const future = {
+      version: 4,
+      id: 'future-session',
+      conversationId: 'future-conversation',
+      title: 'Future history',
+      messages: [{ role: 'user', content: 'future content', kind: 'hologram' }],
+      futureSecretShape: { nested: [1, 2, 3] },
+      updatedAt: '2027-01-01T00:00:00.000Z',
+    }
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify([future]))
+    vi.stubGlobal('fetch', chatFetch())
+
+    render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+
+    await screen.findByRole('combobox', { name: 'Agent' })
+    expect(screen.queryByText('Future history')).toBeNull()
+    expect(JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) ?? '[]')).toEqual([future])
+    expect(Object.keys(localStorage).some((key) => /cookie|token/i.test(key))).toBe(false)
+  })
   it('tests an existing provider connection without exposing its API key', async () => {
     const fetchMock = vi
       .fn()
@@ -217,13 +279,12 @@ describe('Skills and chat', () => {
   it('selects the default Agent, sends it on creation, and locks while the turn is pending', async () => {
     const turn = deferred<Response>()
     const agents = [
-      { id: 1, name: 'Operations', enabled: true, is_default: false, deleted_at: null },
-      { id: 2, name: 'Research', enabled: true, is_default: true, deleted_at: null },
-      { id: 3, name: 'Stopped', enabled: false, is_default: false, deleted_at: null },
+      { id: 1, name: 'Operations', is_default: false },
+      { id: 2, name: 'Research', is_default: true },
     ]
     const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
       if (input === '/api/tool-session/config') return Promise.resolve(response({ enabled: false }))
-      if (input === '/api/admin/agents') return Promise.resolve(response(agents))
+      if (input === '/api/chat/bootstrap') return Promise.resolve(response({ subject_id: CHAT_SUBJECT, agents }))
       if (input === '/api/skills') return Promise.resolve(response([]))
       if (input === '/api/chat/turns') return turn.promise
       return Promise.resolve(response([]))
@@ -257,15 +318,13 @@ describe('Skills and chat', () => {
   })
 
   it('prevents a new turn when no enabled Agent is available', async () => {
-    const fetchMock = chatFetch({ agents: [
-      { id: 3, name: 'Stopped', enabled: false, is_default: true, deleted_at: null },
-    ] })
+    const fetchMock = chatFetch({ agents: [] })
     vi.stubGlobal('fetch', fetchMock)
     render(ChatView, {
       global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
     })
 
-    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === '/api/admin/agents')).toBe(true))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === '/api/chat/bootstrap')).toBe(true))
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
     expect(screen.queryByRole('option', { name: 'Stopped' })).toBeNull()
   })
@@ -287,9 +346,10 @@ describe('Skills and chat', () => {
     ]))
     const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
       if (input === '/api/tool-session/config') return Promise.resolve(response({ enabled: false }))
-      if (input === '/api/admin/agents') return Promise.resolve(response([
-        { id: 1, name: 'Current default', enabled: true, is_default: true, deleted_at: null },
-      ]))
+      if (input === '/api/chat/bootstrap') return Promise.resolve(response({
+        subject_id: CHAT_SUBJECT,
+        agents: [{ id: 1, name: 'Current default', is_default: true }],
+      }))
       if (input === '/api/skills') return Promise.resolve(response([]))
       if (input === '/api/chat/turns') return Promise.resolve(response({
         status: 'completed', conversation_id: 'conversation-abca4', agent_id: 9, agent_name: 'Retired research',
@@ -308,7 +368,7 @@ describe('Skills and chat', () => {
     const selector = await screen.findByRole('combobox', { name: 'Agent' }) as HTMLSelectElement
     expect(selector.disabled).toBe(true)
     expect(selector.value).toBe('')
-    const stored = JSON.parse(localStorage.getItem('chat4openapi.chat.sessions.v1') ?? '[]')
+    const stored = JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) ?? '[]')
     expect(stored).toHaveLength(1)
     expect(stored[0]).toMatchObject({
       version: 3,
@@ -335,7 +395,7 @@ describe('Skills and chat', () => {
       message: 'Continue',
       conversation_id: 'conversation-abca4',
     })
-    const resumed = JSON.parse(localStorage.getItem('chat4openapi.chat.sessions.v1') ?? '[]')[0]
+    const resumed = JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) ?? '[]')[0]
     expect(resumed).toMatchObject({ agentId: 9, agentName: 'Retired research' })
     expect((screen.getByRole('combobox', { name: 'Agent' }) as HTMLSelectElement).value).toBe('9')
     expect(screen.getByRole('option', { name: 'Retired research' })).toBeTruthy()
@@ -366,7 +426,7 @@ describe('Skills and chat', () => {
     expect(await screen.findByText('Which reference genome?')).toBeTruthy()
     expect(restored.container.querySelector('.message.clarification')).toBeTruthy()
     expect((screen.getByLabelText('Message') as HTMLTextAreaElement).placeholder).toBe('Answer the clarification…')
-    const stored = JSON.parse(localStorage.getItem('chat4openapi.chat.sessions.v1') ?? '[]')
+    const stored = JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) ?? '[]')
     expect(stored[0]).toMatchObject({ version: 3, agentId: null, agentName: null })
     expect(stored[0].pending).toEqual({ fields: ['reference'] })
     expect(stored[0].messages).toEqual([
@@ -399,7 +459,7 @@ describe('Skills and chat', () => {
     expect(screen.getByText('Clarification needed')).toBeTruthy()
     expect(await screen.findByText('Loaded: Varcards2-Gene')).toBeTruthy()
 
-    let stored = JSON.parse(localStorage.getItem('chat4openapi.chat.sessions.v1') ?? '[]')
+    let stored = JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) ?? '[]')
     expect(stored[0]).toMatchObject({
       version: 3,
       conversationId: 'conversation-abca4',
@@ -437,7 +497,7 @@ describe('Skills and chat', () => {
       message: 'GRCh38',
       conversation_id: 'conversation-abca4',
     })
-    stored = JSON.parse(localStorage.getItem('chat4openapi.chat.sessions.v1') ?? '[]')
+    stored = JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) ?? '[]')
     expect(stored[0]).toMatchObject({ status: 'completed', pending: null })
     expect(stored[0].messages.map((message: { kind: string }) => message.kind)).toEqual([
       'message', 'clarification', 'message', 'message',
@@ -475,7 +535,7 @@ describe('Skills and chat', () => {
     expect(screen.getByText('What can your APIs do?')).toBeTruthy()
     await fireEvent.click(screen.getByRole('button', { name: 'Find Milo' }))
     expect(await screen.findByText('Milo is ready.')).toBeTruthy()
-    const stored = JSON.parse(localStorage.getItem('chat4openapi.chat.sessions.v1') ?? '[]')
+    const stored = JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) ?? '[]')
     expect(stored.find((session: { title: string }) => session.title === 'Find Milo')).toMatchObject({
       conversationId: 'conversation-1',
       messages: [
@@ -502,7 +562,7 @@ describe('Skills and chat', () => {
     render(ChatView, {
       global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
     })
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Agent' })).toBeTruthy())
+    await screen.findByRole('button', { name: 'Other' })
 
     await fireEvent.update(screen.getByLabelText('Message'), 'Fail this turn')
     await fireEvent.click(screen.getByRole('button', { name: 'Send' }))
@@ -518,12 +578,12 @@ describe('Skills and chat', () => {
 
   it('unlocks New Chat and reselects the current default Agent', async () => {
     const agents = [
-      { id: 1, name: 'Operations', enabled: true, is_default: false, deleted_at: null },
-      { id: 2, name: 'Research', enabled: true, is_default: true, deleted_at: null },
+      { id: 1, name: 'Operations', is_default: false },
+      { id: 2, name: 'Research', is_default: true },
     ]
     const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
       if (input === '/api/tool-session/config') return Promise.resolve(response({ enabled: false }))
-      if (input === '/api/admin/agents') return Promise.resolve(response(agents))
+      if (input === '/api/chat/bootstrap') return Promise.resolve(response({ subject_id: CHAT_SUBJECT, agents }))
       if (input === '/api/skills') return Promise.resolve(response([]))
       if (input === '/api/chat/turns') return Promise.resolve(response({
         status: 'completed', conversation_id: 'conversation-1', agent_id: 1, agent_name: 'Operations',
@@ -560,7 +620,8 @@ describe('Skills and chat', () => {
       global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
     })
 
-    const selector = await screen.findByRole('combobox', { name: 'Agent' }) as HTMLSelectElement
+    await screen.findByRole('button', { name: 'Archived work' })
+    const selector = screen.getByRole('combobox', { name: 'Agent' }) as HTMLSelectElement
     expect(selector.value).toBe('9')
     expect(selector.disabled).toBe(true)
     expect(screen.getByRole('option', { name: 'Stopped research' })).toBeTruthy()

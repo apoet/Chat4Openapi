@@ -1,15 +1,26 @@
+import hashlib
+from cryptography.fernet import Fernet
+from datetime import UTC, datetime
+
 import httpx
 import pytest
-from cryptography.fernet import Fernet
 from fastapi import FastAPI
 from sqlalchemy import select
 
 import chat4openapi.chat.api as chat_api_module
 from chat4openapi.api.tool_sessions import get_tool_secret_cipher
 from chat4openapi.chat.agent import AgentTurnRequest, AgentTurnResult
-from chat4openapi.chat.api import get_llm_client
+from chat4openapi.chat.api import BROWSER_CHAT_COOKIE, get_llm_client
 from chat4openapi.llm.client import CanonicalResponse, CanonicalToolCall
-from chat4openapi.models import Agent, AgentSkill, Conversation, LlmProvider, Skill
+from chat4openapi.models import (
+    Agent,
+    AgentApiKey,
+    AgentSkill,
+    BrowserChatSession,
+    Conversation,
+    LlmProvider,
+    Skill,
+)
 from chat4openapi.security.encryption import SecretCipher
 
 
@@ -65,6 +76,192 @@ def seed_agent(factory, cipher: SecretCipher) -> tuple[Skill, Skill]:
         )
         session.commit()
         return first, second
+
+
+@pytest.mark.asyncio
+async def test_chat_bootstrap_is_public_and_exposes_only_runnable_agent_summaries(
+    client: httpx.AsyncClient, db_session_factory
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    _first, second = seed_agent(db_session_factory, cipher)
+    with db_session_factory() as session:
+        provider = session.scalar(select(LlmProvider))
+        stopped = Skill(name="Stopped", system_prompt="Stopped", running=False)
+        session.add_all(
+            [
+                Agent(
+                    id=2,
+                    name="Disabled",
+                    enabled=False,
+                    is_default=False,
+                    system_prompt="must-not-leak",
+                    provider_id=provider.id,
+                    mode="react",
+                    max_iterations=8,
+                ),
+                Agent(
+                    id=3,
+                    name="Deleted",
+                    enabled=True,
+                    is_default=False,
+                    system_prompt="must-not-leak",
+                    provider_id=provider.id,
+                    mode="react",
+                    max_iterations=8,
+                    deleted_at=datetime.now(UTC).replace(tzinfo=None),
+                ),
+                Agent(
+                    id=4,
+                    name="No runnable Skills",
+                    enabled=True,
+                    is_default=False,
+                    system_prompt="must-not-leak",
+                    provider_id=provider.id,
+                    mode="react",
+                    max_iterations=8,
+                ),
+                stopped,
+            ]
+        )
+        session.flush()
+        session.add_all(
+            [
+                AgentSkill(agent_id=2, skill_id=second.id, position=0),
+                AgentSkill(agent_id=3, skill_id=second.id, position=0),
+                AgentSkill(agent_id=4, skill_id=stopped.id, position=0),
+            ]
+        )
+        session.commit()
+
+    response = await client.get("/api/chat/bootstrap")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"subject_id", "agents"}
+    assert isinstance(body["subject_id"], str) and len(body["subject_id"]) >= 20
+    assert body["agents"] == [{"id": 1, "name": "Chat4Openapi Agent", "is_default": False}]
+    assert "prompt" not in response.text.lower()
+    assert "provider" not in response.text.lower()
+    assert "key" not in response.text.lower()
+    assert "HttpOnly" in response.headers["set-cookie"]
+    assert "SameSite=lax" in response.headers["set-cookie"]
+
+
+@pytest.mark.asyncio
+async def test_chat_bootstrap_accepts_non_admin_bearer_without_expanding_payload(
+    client: httpx.AsyncClient, db_session_factory
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    seed_agent(db_session_factory, cipher)
+
+    response = await client.get(
+        "/api/chat/bootstrap",
+        headers={"Authorization": "Bearer not-an-admin-session"},
+    )
+
+    assert response.status_code == 200
+    assert list(response.json()["agents"][0]) == ["id", "name", "is_default"]
+
+
+@pytest.mark.asyncio
+async def test_forged_browser_cookie_cannot_resume_conversation_or_observe_agent_metadata(
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    seed_agent(db_session_factory, cipher)
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    llm = SequencedLlm(
+        [CanonicalResponse(content="Owned answer."), CanonicalResponse(content="must not run")]
+    )
+    app.dependency_overrides[get_llm_client] = lambda: llm
+
+    bootstrap = await client.get("/api/chat/bootstrap")
+    original_subject = bootstrap.json()["subject_id"]
+    original_cookie = client.cookies.get(BROWSER_CHAT_COOKIE)
+    created = await client.post(
+        "/api/chat/turns", json={"agent_id": 1, "message": "Create"}
+    )
+    conversation_id = created.json()["conversation_id"]
+
+    client.cookies.clear()
+    client.cookies.set(BROWSER_CHAT_COOKIE, "forged-browser-session")
+    denied = await client.post(
+        "/api/chat/turns",
+        json={"conversation_id": conversation_id, "message": "Steal"},
+    )
+
+    assert denied.status_code == 404
+    assert denied.json() == {
+        "error": {"code": "agent.conversation_not_found", "params": {}}
+    }
+    assert "agent_name" not in denied.text
+    assert len(llm.responses) == 1
+    rotated = await client.get("/api/chat/bootstrap")
+    assert rotated.json()["subject_id"] != original_subject
+
+    client.cookies.clear()
+    client.cookies.set(BROWSER_CHAT_COOKIE, original_cookie)
+    restored = await client.get("/api/chat/bootstrap")
+    assert restored.json()["subject_id"] == original_subject
+
+
+@pytest.mark.asyncio
+async def test_expired_browser_cookie_rotates_to_a_new_subject(
+    client: httpx.AsyncClient, db_session_factory
+) -> None:
+    first = await client.get("/api/chat/bootstrap")
+    first_subject = first.json()["subject_id"]
+    with db_session_factory() as session:
+        browser_session = session.scalar(
+            select(BrowserChatSession).where(
+                BrowserChatSession.public_subject_id == first_subject
+            )
+        )
+        assert browser_session is not None
+        browser_session.expires_at = datetime(2000, 1, 1)
+        session.commit()
+
+    rotated = await client.get("/api/chat/bootstrap")
+
+    assert rotated.status_code == 200
+    assert rotated.json()["subject_id"] != first_subject
+    assert BROWSER_CHAT_COOKIE in rotated.headers["set-cookie"]
+
+
+@pytest.mark.asyncio
+async def test_agent_key_used_for_browser_tool_credentials_is_not_conversation_identity(
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    seed_agent(db_session_factory, cipher)
+    secret = "c4o_browser_tool_owner_000000000000000000000000"
+    with db_session_factory() as session:
+        session.add(
+            AgentApiKey(
+                agent_id=1,
+                label="Browser Tool credentials",
+                key_prefix=secret[:12],
+                key_hash=hashlib.sha256(secret.encode()).hexdigest(),
+            )
+        )
+        session.commit()
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: SequencedLlm(
+        [CanonicalResponse(content="Done.")]
+    )
+
+    created = await client.post(
+        "/api/chat/turns",
+        json={"agent_id": 1, "message": "Use my browser Tool credentials"},
+        headers={"Authorization": f"Bearer {secret}"},
+    )
+
+    assert created.status_code == 200
+    with db_session_factory() as session:
+        conversation = session.get(Conversation, created.json()["conversation_id"])
+        assert conversation is not None
+        assert conversation.agent_key_id is None
+        assert conversation.browser_chat_session_id is not None
 
 
 @pytest.mark.asyncio
@@ -312,7 +509,11 @@ async def test_browser_turn_forwards_tool_session_and_maps_agent_result(
             return expected
 
     monkeypatch.setattr(chat_api_module, "AgentRuntime", RecordingRuntime, raising=False)
+    await client.get("/api/chat/bootstrap")
     with db_session_factory() as session:
+        browser_session = session.scalar(select(BrowserChatSession))
+        assert browser_session is not None
+        browser_session_id = browser_session.id
         session.add(
             Agent(
                 id=3,
@@ -323,7 +524,13 @@ async def test_browser_turn_forwards_tool_session_and_maps_agent_result(
                 max_iterations=8,
             )
         )
-        session.add(Conversation(id="conversation-1", agent_id=3))
+        session.add(
+            Conversation(
+                id="conversation-1",
+                agent_id=3,
+                browser_chat_session_id=browser_session_id,
+            )
+        )
         session.commit()
 
     client.cookies.set("chat4openapi_tool_session", "cookie-session")
@@ -342,6 +549,7 @@ async def test_browser_turn_forwards_tool_session_and_maps_agent_result(
             interactive=True,
             tool_session_id="header-session",
             candidate_scope_source="automatic",
+            browser_chat_session_id=browser_session_id,
         )
     ]
     assert response.json()["message"] == "Done."

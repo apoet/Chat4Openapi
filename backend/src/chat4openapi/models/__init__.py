@@ -3,6 +3,7 @@ from chat4openapi.models.admin import AdminUser
 from chat4openapi.models.admin_session import AdminSession
 from chat4openapi.models.agent import Agent, AgentApiKey, AgentSkill
 from chat4openapi.models.app_setting import AppSetting
+from chat4openapi.models.browser_chat_session import BrowserChatSession
 from chat4openapi.models.conversation import ChatMessage, Conversation
 from chat4openapi.models.llm_provider import LlmProvider
 from chat4openapi.models.skill import Skill, SkillTool
@@ -26,6 +27,7 @@ __all__ = [
     "ApiSource",
     "ApiSourceOAuthConfig",
     "AppSetting",
+    "BrowserChatSession",
     "ChatMessage",
     "Conversation",
     "GlobalToolAuthConfig",

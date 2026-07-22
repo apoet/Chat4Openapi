@@ -2,7 +2,17 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import DateTime, ForeignKey, JSON, String, Text, UniqueConstraint, func, inspect
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    inspect,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from chat4openapi.db.base import Base
@@ -13,10 +23,25 @@ if TYPE_CHECKING:
 
 class Conversation(Base):
     __tablename__ = "conversations"
+    __table_args__ = (
+        CheckConstraint(
+            "(deleted_at IS NOT NULL AND agent_key_id IS NULL AND "
+            "browser_chat_session_id IS NULL) OR "
+            "((agent_key_id IS NULL AND browser_chat_session_id IS NOT NULL) OR "
+            "(agent_key_id IS NOT NULL AND browser_chat_session_id IS NULL))",
+            name="ck_conversation_exactly_one_active_owner",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="RESTRICT"), index=True)
     agent: Mapped["Agent"] = relationship()
+    agent_key_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agent_api_keys.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    browser_chat_session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("browser_chat_sessions.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     skill_id: Mapped[int | None] = mapped_column(
         ForeignKey("skills.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -44,6 +69,13 @@ class Conversation(Base):
     def _keep_agent_relationship_immutable(self, _key: str, value: "Agent") -> "Agent":
         if inspect(self).persistent and self.agent_id != value.id:
             raise ValueError("conversation agent cannot be changed")
+        return value
+
+    @validates("agent_key_id", "browser_chat_session_id")
+    def _keep_owner_immutable(self, key: str, value: int | None) -> int | None:
+        state = inspect(self)
+        if state.persistent and getattr(self, key) != value:
+            raise ValueError("conversation owner cannot be changed")
         return value
 
 

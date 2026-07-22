@@ -3,7 +3,13 @@ import { onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { ApiError, request } from '../api/client'
-import type { AgentConfig, ChatTurnRequest, ChatTurnResponse, SkillSummary } from '../api/contracts'
+import type {
+  ChatAgentSummary,
+  ChatBootstrapResponse,
+  ChatTurnRequest,
+  ChatTurnResponse,
+  SkillSummary,
+} from '../api/contracts'
 import AgentSelect from '../components/AgentSelect.vue'
 import MarkdownMessage from '../components/MarkdownMessage.vue'
 
@@ -26,9 +32,10 @@ type LocalChatSessionV3 = {
   updatedAt: string
 }
 
-const STORAGE_KEY = 'chat4openapi.chat.sessions.v1'
+const LEGACY_STORAGE_KEY = 'chat4openapi.chat.sessions.v1'
+const STORAGE_PREFIX = 'chat4openapi.chat.sessions.v3.'
 const { t } = useI18n()
-const agents = ref<AgentConfig[]>([])
+const agents = ref<ChatAgentSummary[]>([])
 const selectedAgentId = ref<number | null>(null)
 const selectedAgentName = ref<string | null>(null)
 const skills = ref<SkillSummary[]>([])
@@ -38,8 +45,10 @@ const messages = ref<ChatMessage[]>([])
 const conversationId = ref<string | null>(null)
 const status = ref<'completed' | 'needs_input'>('completed')
 const pending = ref<Record<string, unknown> | null>(null)
-const sessions = ref<LocalChatSessionV3[]>(loadSessions())
-const activeSessionId = ref<string | null>(sessions.value[0]?.id ?? null)
+const sessions = ref<LocalChatSessionV3[]>([])
+const activeSessionId = ref<string | null>(null)
+const storageKey = ref<string | null>(null)
+let preservedFutureSessions: unknown[] = []
 const loginRequired = ref(false)
 const authenticated = ref(false)
 const username = ref('')
@@ -113,6 +122,8 @@ function parseSession(value: unknown): LocalChatSessionV3 | null {
     }
   }
 
+  if (value.version !== undefined && value.version !== 1 && value.version !== 2) return null
+
   const legacyStatus = value.version === 2 && value.status === 'needs_input'
     ? 'needs_input'
     : 'completed'
@@ -137,22 +148,38 @@ function parseSession(value: unknown): LocalChatSessionV3 | null {
   }
 }
 
-function loadSessions(): LocalChatSessionV3[] {
+function loadSessions(key: string): LocalChatSessionV3[] {
   try {
-    const value: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]')
-    const loaded = Array.isArray(value)
-      ? value.map(parseSession).filter((session): session is LocalChatSessionV3 => session !== null)
+    const sourceKey = localStorage.getItem(key) === null ? LEGACY_STORAGE_KEY : key
+    const value: unknown = JSON.parse(localStorage.getItem(sourceKey) ?? '[]')
+    preservedFutureSessions = Array.isArray(value)
+      ? value.filter((item) => isRecord(item)
+        && item.version !== undefined
+        && item.version !== 1
+        && item.version !== 2
+        && item.version !== 3)
       : []
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(loaded))
+    const loaded = Array.isArray(value)
+      ? value
+          .filter((item) => !preservedFutureSessions.includes(item))
+          .map(parseSession)
+          .filter((session): session is LocalChatSessionV3 => session !== null)
+      : []
+    localStorage.setItem(key, JSON.stringify([...loaded, ...preservedFutureSessions]))
     return loaded
   } catch {
-    localStorage.setItem(STORAGE_KEY, '[]')
+    preservedFutureSessions = []
+    localStorage.setItem(key, '[]')
     return []
   }
 }
 
 function persistSessions(): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.value))
+  if (storageKey.value === null) return
+  localStorage.setItem(
+    storageKey.value,
+    JSON.stringify([...sessions.value, ...preservedFutureSessions]),
+  )
 }
 
 function createLocalId(): string {
@@ -262,8 +289,10 @@ watch(selectedAgentId, (agentId) => {
 })
 
 function formatTurnError(error: unknown): string {
-  if (error instanceof ApiError
-    && (error.code === 'agent.unavailable' || error.code === 'agent.conversation_not_found')) {
+  if (error instanceof ApiError && error.code === 'agent.conversation_not_found') {
+    return t('error.chat.historyUnavailable')
+  }
+  if (error instanceof ApiError && error.code === 'agent.unavailable') {
     return t('error.chat.agentUnavailable')
   }
   return error instanceof ApiError
@@ -272,10 +301,19 @@ function formatTurnError(error: unknown): string {
 }
 
 onMounted(async () => {
+  const [config, bootstrap, skillList] = await Promise.all([
+    request<{ enabled: boolean }>('/api/tool-session/config'),
+    request<ChatBootstrapResponse>('/api/chat/bootstrap'),
+    request<SkillSummary[]>('/api/skills'),
+  ])
+  agents.value = bootstrap.agents
+  skills.value = skillList
+  storageKey.value = `${STORAGE_PREFIX}${encodeURIComponent(bootstrap.subject_id)}`
+  sessions.value = loadSessions(storageKey.value)
+  activeSessionId.value = sessions.value[0]?.id ?? null
   const restored = sessions.value[0]
   if (restored) openSession(restored)
 
-  const config = await request<{ enabled: boolean }>('/api/tool-session/config')
   loginRequired.value = config.enabled
   if (config.enabled) {
     try {
@@ -285,12 +323,6 @@ onMounted(async () => {
       if (!(error instanceof ApiError) || error.status !== 401) throw error
     }
   }
-  const [agentList, skillList] = await Promise.all([
-    request<AgentConfig[]>('/api/admin/agents'),
-    request<SkillSummary[]>('/api/skills'),
-  ])
-  agents.value = agentList.filter((agent) => agent.enabled && agent.deleted_at === null)
-  skills.value = skillList
   if (conversationId.value === null && selectedAgentId.value === null) {
     selectDefaultAgent()
   }
