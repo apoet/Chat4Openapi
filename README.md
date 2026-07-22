@@ -27,13 +27,35 @@ npm install
 Set-Location ..
 ```
 
-Copy `.env.example` to `.env`, review the database, cookie, session, and encryption settings, then migrate before every first start or upgrade:
+Copy `.env.example` to `.env`, then review the database, cookie, session, and encryption settings:
 
 ```powershell
-conda run -n chat4openapi alembic -c backend/alembic.ini upgrade head
+Copy-Item .env.example .env
 ```
 
-Build the frontend and start the combined application:
+### Start the development servers
+
+The root startup scripts load `.env`, apply pending Alembic migrations, select the documented Node.js version through nvm, and start both development servers:
+
+```powershell
+# Windows
+.\run.bat
+```
+
+```bash
+# Linux or macOS
+./run.sh
+```
+
+- Frontend: `http://127.0.0.1:5173`
+- Backend API: `http://127.0.0.1:8000`
+- API documentation: `http://127.0.0.1:8000/docs`
+
+`run.bat` opens one terminal window per server; close both windows to stop them. `run.sh` keeps both processes attached to the current terminal; Ctrl+C stops both. The scripts fail with an actionable message when the Conda environment or frontend dependencies are missing.
+
+To use a differently named local environment or Node version, set `CONDA_ENV_NAME` or `NODE_VERSION` before invoking the script. Application settings continue to use the `CHAT4OPENAPI_*` variables in `.env`.
+
+For a production-style combined deployment, build the frontend and start only FastAPI:
 
 ```powershell
 Set-Location frontend
@@ -42,7 +64,20 @@ Set-Location ..
 conda run -n chat4openapi uvicorn chat4openapi.main:app --app-dir backend/src --host 127.0.0.1 --port 8000
 ```
 
-For frontend development, run `npm run dev` after `nvm use 20.19.4`. Vite listens on `http://127.0.0.1:5173` and proxies application routes to `http://127.0.0.1:8000`.
+For fully manual development startup, first apply migrations and then run the two server commands in separate terminals:
+
+```powershell
+conda run -n chat4openapi alembic -c backend/alembic.ini upgrade head
+conda run --no-capture-output -n chat4openapi uvicorn chat4openapi.main:app --app-dir backend/src --host 127.0.0.1 --port 8000
+```
+
+```powershell
+nvm use 20.19.4
+Set-Location frontend
+npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
+```
+
+Vite proxies application routes to `http://127.0.0.1:8000`.
 
 ## Initialize and administer
 

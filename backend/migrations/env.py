@@ -1,3 +1,4 @@
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -8,8 +9,12 @@ from chat4openapi.db.base import Base
 from chat4openapi import models  # noqa: F401
 
 config = context.config
+database_url = os.environ.get(
+    "CHAT4OPENAPI_DATABASE_URL", config.get_main_option("sqlalchemy.url")
+)
+config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 migrate_legacy_default_files(
-    Settings(database_url=config.get_main_option("sqlalchemy.url"), _env_file=None)
+    Settings(database_url=database_url, _env_file=None)
 )
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
