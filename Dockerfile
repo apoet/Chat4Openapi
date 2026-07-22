@@ -10,7 +10,7 @@ COPY logo.png /build/logo.png
 RUN npm run build
 
 
-FROM python:3.12-slim-bookworm AS runtime
+FROM python:3.12.13-alpine3.23 AS runtime
 
 LABEL org.opencontainers.image.title="Agent4API" \
       org.opencontainers.image.description="Turn Swagger/OpenAPI operations into Tools for AI Agents" \
@@ -25,13 +25,22 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY backend/ ./backend/
-RUN python -m pip install --no-cache-dir ./backend
+RUN apk add --no-cache --virtual .build-deps \
+      cargo \
+      gcc \
+      libffi-dev \
+      linux-headers \
+      musl-dev \
+      openssl-dev \
+    && python -m pip install --no-cache-dir --upgrade pip==26.1.2 \
+    && python -m pip install --no-cache-dir ./backend \
+    && apk del .build-deps
 
 COPY --from=frontend-build /build/frontend/dist/ ./frontend/dist/
 COPY logo.png ./logo.png
 
-RUN addgroup --system agent4api \
-    && adduser --system --ingroup agent4api --home /app agent4api \
+RUN addgroup -S agent4api \
+    && adduser -S -D -H -G agent4api -h /app agent4api \
     && mkdir -p /app/data \
     && chown -R agent4api:agent4api /app
 
