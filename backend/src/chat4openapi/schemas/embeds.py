@@ -38,3 +38,19 @@ class AgentEmbedResponse(BaseModel):
 
 class AgentEmbedScriptResponse(BaseModel):
     script: str
+
+
+class EmbedSessionCreate(BaseModel):
+    parent_origin: NormalizedOrigin
+
+
+class EmbedAgentSummary(BaseModel):
+    id: int
+    name: str
+
+
+class EmbedSessionCreated(BaseModel):
+    session_id: str
+    token: str
+    parent_origin: str
+    agent: EmbedAgentSummary

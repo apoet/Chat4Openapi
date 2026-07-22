@@ -15,6 +15,7 @@ from chat4openapi.api.admin_providers import router as admin_providers_router
 from chat4openapi.api.admin_skills import router as admin_skills_router
 from chat4openapi.api.admin_settings import router as admin_settings_router
 from chat4openapi.api.errors import install_error_handlers
+from chat4openapi.api.embed_public import router as embed_public_router
 from chat4openapi.api.health import router as health_router
 from chat4openapi.api.setup import router as setup_router
 from chat4openapi.api.tool_sessions import router as tool_sessions_router
@@ -55,12 +56,14 @@ def create_app(frontend_dist: Path | None = None) -> FastAPI:
     app.include_router(tool_sessions_router)
     app.include_router(tool_oauth_router)
     app.include_router(chat_router)
+    app.include_router(embed_public_router)
     app.mount("/mcp", mcp_http_app, name="mcp")
 
     dist = frontend_dist or Path(__file__).resolve().parents[3] / "frontend" / "dist"
     index_file = dist / "index.html"
     assets = dist / "assets"
     if index_file.is_file() and assets.is_dir():
+        app.state.frontend_index = index_file
         app.mount("/assets", StaticFiles(directory=assets), name="assets")
 
         @app.get("/{path:path}", include_in_schema=False)
