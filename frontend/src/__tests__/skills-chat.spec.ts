@@ -98,6 +98,89 @@ describe('Skills and chat', () => {
     expect(JSON.parse(localStorage.getItem(secondKey) ?? '[]')[0].title).toBe('Subject B history')
   })
 
+  it('rebootstraps an expired in-page browser session without replaying the turn', async () => {
+    const subjects = ['subject-a', 'subject-b']
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (input === '/api/tool-session/config') return Promise.resolve(response({ enabled: false }))
+      if (input === '/api/skills') return Promise.resolve(response([]))
+      if (input === '/api/chat/bootstrap') {
+        return Promise.resolve(response({ subject_id: subjects.shift(), agents: [defaultAgent] }))
+      }
+      if (input === '/api/chat/turns') {
+        return Promise.resolve(response({
+          error: { code: 'chat.browser_session_expired', params: {} },
+        }, 401))
+      }
+      return Promise.resolve(response([]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await waitFor(() => expect((screen.getByRole('combobox', { name: 'Agent' }) as HTMLSelectElement).value).toBe('1'))
+
+    await fireEvent.update(screen.getByLabelText('Message'), 'Create side effect once')
+    await fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    expect(await screen.findByText('Your browser chat session changed. Start a New chat and send your message again.')).toBeTruthy()
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/chat/bootstrap')).toHaveLength(2)
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/chat/turns')).toHaveLength(1)
+    expect(screen.queryByText('Create side effect once')).toBeNull()
+    expect(localStorage.getItem('chat4openapi.chat.sessions.v3.subject-a')).toContain('Create side effect once')
+    expect(JSON.parse(localStorage.getItem('chat4openapi.chat.sessions.v3.subject-b') ?? '[]')).toEqual([])
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('claims legacy global history once so a later subject cannot import it', async () => {
+    localStorage.setItem('chat4openapi.chat.sessions.v1', JSON.stringify([{
+      id: 'legacy-once', conversationId: 'legacy-conversation', title: 'Claim me once',
+      messages: [{ role: 'user', content: 'Legacy message' }],
+      updatedAt: '2026-07-21T00:00:00.000Z',
+    }]))
+    vi.stubGlobal('fetch', chatFetch({ subjectId: 'subject-a' }))
+    const first = render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await screen.findByRole('button', { name: 'Claim me once' })
+
+    expect(localStorage.getItem('chat4openapi.chat.sessions.v1')).toBeNull()
+    expect(localStorage.getItem('chat4openapi.chat.sessions.v3.subject-a')).toContain('Claim me once')
+    first.unmount()
+
+    vi.stubGlobal('fetch', chatFetch({ subjectId: 'subject-b' }))
+    render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await waitFor(() => expect((screen.getByRole('combobox', { name: 'Agent' }) as HTMLSelectElement).value).toBe('1'))
+
+    expect(screen.queryByRole('button', { name: 'Claim me once' })).toBeNull()
+    expect(JSON.parse(localStorage.getItem('chat4openapi.chat.sessions.v3.subject-b') ?? '[]')).toEqual([])
+  })
+
+  it('keeps legacy global history when the namespaced claim cannot be written', async () => {
+    const legacyKey = 'chat4openapi.chat.sessions.v1'
+    const namespacedKey = 'chat4openapi.chat.sessions.v3.subject-a'
+    localStorage.setItem(legacyKey, JSON.stringify([{
+      id: 'legacy-retry', conversationId: 'legacy-conversation', title: 'Retry this claim',
+      messages: [{ role: 'user', content: 'Legacy message' }],
+      updatedAt: '2026-07-21T00:00:00.000Z',
+    }]))
+    const originalSetItem = Storage.prototype.setItem
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      if (key === namespacedKey) throw new DOMException('Quota exceeded', 'QuotaExceededError')
+      return originalSetItem.call(this, key, value)
+    })
+    vi.stubGlobal('fetch', chatFetch({ subjectId: 'subject-a' }))
+
+    render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await screen.findByRole('button', { name: 'Retry this claim' })
+
+    expect(localStorage.getItem(namespacedKey)).toBeNull()
+    expect(localStorage.getItem(legacyKey)).toContain('Retry this claim')
+  })
+
   it('isolates an unknown history version without rewriting or dropping its payload', async () => {
     const future = {
       version: 4,

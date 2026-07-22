@@ -125,6 +125,7 @@ export default {
     chat: {
       agentUnavailable: '此会话使用的 Agent 已不可用。',
       historyUnavailable: '此历史会话已无法继续，请新建会话后重试。',
+      browserSessionChanged: '浏览器聊天会话已变化。请新建会话并重新发送消息。',
     },
     unknown: '发生错误，请重试。',
   },

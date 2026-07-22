@@ -149,9 +149,15 @@ function parseSession(value: unknown): LocalChatSessionV3 | null {
 }
 
 function loadSessions(key: string): LocalChatSessionV3[] {
+  const namespacedValue = localStorage.getItem(key)
+  const legacyValue = namespacedValue === null
+    ? localStorage.getItem(LEGACY_STORAGE_KEY)
+    : null
+  const claimsLegacyHistory = namespacedValue === null && legacyValue !== null
+  let loaded: LocalChatSessionV3[] = []
+
   try {
-    const sourceKey = localStorage.getItem(key) === null ? LEGACY_STORAGE_KEY : key
-    const value: unknown = JSON.parse(localStorage.getItem(sourceKey) ?? '[]')
+    const value: unknown = JSON.parse(namespacedValue ?? legacyValue ?? '[]')
     preservedFutureSessions = Array.isArray(value)
       ? value.filter((item) => isRecord(item)
         && item.version !== undefined
@@ -159,19 +165,24 @@ function loadSessions(key: string): LocalChatSessionV3[] {
         && item.version !== 2
         && item.version !== 3)
       : []
-    const loaded = Array.isArray(value)
+    loaded = Array.isArray(value)
       ? value
           .filter((item) => !preservedFutureSessions.includes(item))
           .map(parseSession)
           .filter((session): session is LocalChatSessionV3 => session !== null)
       : []
-    localStorage.setItem(key, JSON.stringify([...loaded, ...preservedFutureSessions]))
-    return loaded
   } catch {
     preservedFutureSessions = []
-    localStorage.setItem(key, '[]')
-    return []
   }
+
+  try {
+    localStorage.setItem(key, JSON.stringify([...loaded, ...preservedFutureSessions]))
+  } catch {
+    return loaded
+  }
+
+  if (claimsLegacyHistory) localStorage.removeItem(LEGACY_STORAGE_KEY)
+  return loaded
 }
 
 function persistSessions(): void {
@@ -300,6 +311,22 @@ function formatTurnError(error: unknown): string {
     : (error instanceof Error ? error.message : t('error.unknown'))
 }
 
+async function recoverBrowserSession(): Promise<void> {
+  const bootstrap = await request<ChatBootstrapResponse>('/api/chat/bootstrap')
+  agents.value = bootstrap.agents
+  storageKey.value = `${STORAGE_PREFIX}${encodeURIComponent(bootstrap.subject_id)}`
+  sessions.value = loadSessions(storageKey.value)
+  sessionErrors.value = {}
+  const restored = sessions.value[0]
+  if (restored) {
+    openSession(restored)
+  } else {
+    activeSessionId.value = null
+    startNewChat()
+  }
+  errorMessage.value = t('error.chat.browserSessionChanged')
+}
+
 onMounted(async () => {
   const [config, bootstrap, skillList] = await Promise.all([
     request<{ enabled: boolean }>('/api/tool-session/config'),
@@ -362,6 +389,16 @@ async function send(): Promise<void> {
     })
     saveSessionResult(sessionId, result)
   } catch (error) {
+    if (error instanceof ApiError
+      && (error.code === 'chat.browser_session_required'
+        || error.code === 'chat.browser_session_expired')) {
+      try {
+        await recoverBrowserSession()
+      } catch (recoveryError) {
+        errorMessage.value = formatTurnError(recoveryError)
+      }
+      return
+    }
     const message = formatTurnError(error)
     sessionErrors.value = { ...sessionErrors.value, [sessionId]: message }
     if (activeSessionId.value === sessionId) errorMessage.value = message

@@ -125,6 +125,7 @@ export default {
     chat: {
       agentUnavailable: "This conversation's Agent is no longer available.",
       historyUnavailable: 'This saved conversation can no longer be resumed. Start a new chat to continue.',
+      browserSessionChanged: 'Your browser chat session changed. Start a New chat and send your message again.',
     },
     unknown: 'Something went wrong. Please try again.',
   },

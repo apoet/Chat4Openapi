@@ -70,6 +70,25 @@ def _browser_chat_context(request: Request, db: Session) -> BrowserChatContext:
     return BrowserChatContext(session=browser_session, token=token)
 
 
+def _required_browser_chat_context(request: Request, db: Session) -> BrowserChatContext:
+    token = request.cookies.get(BROWSER_CHAT_COOKIE)
+    if token is None:
+        raise ApiError(401, "chat.browser_session_required")
+    browser_session = db.scalar(
+        select(BrowserChatSession).where(
+            BrowserChatSession.token_hash == hash_token(token)
+        )
+    )
+    if browser_session is None:
+        raise ApiError(401, "chat.browser_session_required")
+    now = datetime.now(UTC).replace(tzinfo=None)
+    if browser_session.revoked_at is not None or browser_session.expires_at <= now:
+        raise ApiError(401, "chat.browser_session_expired")
+    browser_session.last_seen_at = now
+    db.commit()
+    return BrowserChatContext(session=browser_session, token=None)
+
+
 def _set_browser_chat_cookie(response: Response, context: BrowserChatContext) -> None:
     if context.token is None:
         return
@@ -424,7 +443,6 @@ async def _run(
 async def browser_turn(
     payload: ChatTurnRequest,
     request: Request,
-    response: Response,
     chat4openapi_tool_session_header: str | None = Header(
         default=None, alias="X-Chat4Openapi-Tool-Session"
     ),
@@ -434,8 +452,7 @@ async def browser_turn(
     executor: ToolExecutor = Depends(get_tool_executor),
     owner=Depends(get_optional_tool_session_owner),
 ) -> ChatTurnResponse:
-    browser_context = _browser_chat_context(request, db)
-    _set_browser_chat_cookie(response, browser_context)
+    browser_context = _required_browser_chat_context(request, db)
     agent_id = _browser_agent_id(db, payload, browser_context.session.id)
     result = await _run_agent(
         AgentTurnRequest(

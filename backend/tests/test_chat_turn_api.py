@@ -164,7 +164,30 @@ async def test_chat_bootstrap_accepts_non_admin_bearer_without_expanding_payload
 
 
 @pytest.mark.asyncio
-async def test_forged_browser_cookie_cannot_resume_conversation_or_observe_agent_metadata(
+async def test_browser_turn_without_session_requires_bootstrap_without_creating_subject(
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    seed_agent(db_session_factory, cipher)
+    llm = SequencedLlm([CanonicalResponse(content="must not run")])
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: llm
+
+    denied = await client.post(
+        "/api/chat/turns", json={"agent_id": 1, "message": "No bootstrap"}
+    )
+
+    assert denied.status_code == 401
+    assert denied.json() == {
+        "error": {"code": "chat.browser_session_required", "params": {}}
+    }
+    assert len(llm.responses) == 1
+    with db_session_factory() as session:
+        assert session.query(BrowserChatSession).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_forged_browser_cookie_requires_bootstrap_without_rotating_on_turn(
     client: httpx.AsyncClient, app: FastAPI, db_session_factory
 ) -> None:
     cipher = SecretCipher(Fernet.generate_key())
@@ -182,6 +205,8 @@ async def test_forged_browser_cookie_cannot_resume_conversation_or_observe_agent
         "/api/chat/turns", json={"agent_id": 1, "message": "Create"}
     )
     conversation_id = created.json()["conversation_id"]
+    with db_session_factory() as session:
+        subject_count = session.query(BrowserChatSession).count()
 
     client.cookies.clear()
     client.cookies.set(BROWSER_CHAT_COOKIE, "forged-browser-session")
@@ -190,12 +215,15 @@ async def test_forged_browser_cookie_cannot_resume_conversation_or_observe_agent
         json={"conversation_id": conversation_id, "message": "Steal"},
     )
 
-    assert denied.status_code == 404
+    assert denied.status_code == 401
     assert denied.json() == {
-        "error": {"code": "agent.conversation_not_found", "params": {}}
+        "error": {"code": "chat.browser_session_required", "params": {}}
     }
     assert "agent_name" not in denied.text
+    assert "set-cookie" not in denied.headers
     assert len(llm.responses) == 1
+    with db_session_factory() as session:
+        assert session.query(BrowserChatSession).count() == subject_count
     rotated = await client.get("/api/chat/bootstrap")
     assert rotated.json()["subject_id"] != original_subject
 
@@ -229,6 +257,41 @@ async def test_expired_browser_cookie_rotates_to_a_new_subject(
 
 
 @pytest.mark.asyncio
+async def test_expired_browser_cookie_rejects_turn_without_rotating_or_running(
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    seed_agent(db_session_factory, cipher)
+    llm = SequencedLlm([CanonicalResponse(content="must not run")])
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: llm
+    bootstrap = await client.get("/api/chat/bootstrap")
+    with db_session_factory() as session:
+        browser_session = session.scalar(
+            select(BrowserChatSession).where(
+                BrowserChatSession.public_subject_id == bootstrap.json()["subject_id"]
+            )
+        )
+        assert browser_session is not None
+        browser_session.expires_at = datetime(2000, 1, 1)
+        session.commit()
+        subject_count = session.query(BrowserChatSession).count()
+
+    denied = await client.post(
+        "/api/chat/turns", json={"agent_id": 1, "message": "Expired"}
+    )
+
+    assert denied.status_code == 401
+    assert denied.json() == {
+        "error": {"code": "chat.browser_session_expired", "params": {}}
+    }
+    assert "set-cookie" not in denied.headers
+    assert len(llm.responses) == 1
+    with db_session_factory() as session:
+        assert session.query(BrowserChatSession).count() == subject_count
+
+
+@pytest.mark.asyncio
 async def test_agent_key_used_for_browser_tool_credentials_is_not_conversation_identity(
     client: httpx.AsyncClient, app: FastAPI, db_session_factory
 ) -> None:
@@ -249,6 +312,7 @@ async def test_agent_key_used_for_browser_tool_credentials_is_not_conversation_i
     app.dependency_overrides[get_llm_client] = lambda: SequencedLlm(
         [CanonicalResponse(content="Done.")]
     )
+    assert (await client.get("/api/chat/bootstrap")).status_code == 200
 
     created = await client.post(
         "/api/chat/turns",
@@ -302,6 +366,7 @@ async def test_browser_turn_pauses_and_resumes_with_structured_contract(
         ]
     )
     app.dependency_overrides[get_llm_client] = lambda: llm
+    assert (await client.get("/api/chat/bootstrap")).status_code == 200
 
     paused = await client.post(
         "/api/chat/turns",
@@ -379,6 +444,7 @@ async def test_browser_conversation_rejects_explicit_agent_change(
             CanonicalResponse(content="Changed answer."),
         ]
     )
+    assert (await client.get("/api/chat/bootstrap")).status_code == 200
     created = await client.post(
         "/api/chat/turns",
         json={"agent_id": 1, "message": "Hello"},
@@ -412,6 +478,7 @@ async def test_browser_new_conversation_requires_agent_id(
     app.dependency_overrides[get_llm_client] = lambda: SequencedLlm(
         [CanonicalResponse(content="First.")]
     )
+    assert (await client.get("/api/chat/bootstrap")).status_code == 200
     response = await client.post("/api/chat/turns", json={"message": "Hello"})
 
     assert response.status_code == 422
@@ -428,6 +495,7 @@ async def test_browser_agent_id_can_be_omitted_on_continuation(
     app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
     llm = SequencedLlm([CanonicalResponse(content="First."), CanonicalResponse(content="Second.")])
     app.dependency_overrides[get_llm_client] = lambda: llm
+    assert (await client.get("/api/chat/bootstrap")).status_code == 200
     created = await client.post(
         "/api/chat/turns",
         json={"agent_id": 1, "message": "Hello"},
@@ -456,6 +524,7 @@ async def test_browser_automatic_scope_does_not_add_later_agent_bindings(
     app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
     llm = SequencedLlm([CanonicalResponse(content="First."), CanonicalResponse(content="Second.")])
     app.dependency_overrides[get_llm_client] = lambda: llm
+    assert (await client.get("/api/chat/bootstrap")).status_code == 200
     created = await client.post("/api/chat/turns", json={"agent_id": 1, "message": "Hello"})
     conversation_id = created.json()["conversation_id"]
     with db_session_factory() as session:
