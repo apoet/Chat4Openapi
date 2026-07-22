@@ -11,6 +11,7 @@ from chat4openapi.models import (
     Agent,
     AgentApiKey,
     ApiSource,
+    EmbedSession,
     GlobalToolAuthConfig,
     Tool,
     ToolSessionCredential,
@@ -352,13 +353,23 @@ class ToolSessionService:
                 or (key.expires_at is not None and key.expires_at <= now)
             ):
                 raise ToolSessionNotFound("Tool Session was not found")
-        else:
+        elif row.admin_session_id is not None:
             admin_session = self._session.get(AdminSession, row.admin_session_id)
             if (
                 admin_session is None
                 or admin_session.revoked_at is not None
                 or admin_session.idle_expires_at <= now
                 or admin_session.absolute_expires_at <= now
+            ):
+                raise ToolSessionNotFound("Tool Session was not found")
+        else:
+            embed_session = self._session.get(EmbedSession, row.embed_session_id)
+            if (
+                embed_session is None
+                or embed_session.agent_id != row.agent_id
+                or embed_session.revoked_at is not None
+                or embed_session.idle_expires_at <= now
+                or embed_session.absolute_expires_at <= now
             ):
                 raise ToolSessionNotFound("Tool Session was not found")
 
@@ -540,6 +551,110 @@ class ToolSessionService:
             credential.status = "revoked"
             credential.encrypted_credentials = self._cipher.encrypt_json({})
         self._session.commit()
+
+    async def resolve_for_embed(
+        self,
+        embed_session_id: int,
+        agent_id: int,
+        api_source_id: int,
+        *,
+        force_refresh: bool = False,
+    ) -> ResolvedToolSession:
+        now = self._now()
+        row = self._session.scalar(
+            select(ToolUserSession)
+            .join(
+                ToolSessionCredential,
+                ToolSessionCredential.tool_session_id == ToolUserSession.id,
+            )
+            .where(
+                ToolUserSession.embed_session_id == embed_session_id,
+                ToolUserSession.agent_id == agent_id,
+                ToolUserSession.agent_key_id.is_(None),
+                ToolUserSession.admin_session_id.is_(None),
+                ToolUserSession.status == "ready",
+                ToolUserSession.revoked_at.is_(None),
+                ToolSessionCredential.api_source_id == api_source_id,
+                ToolSessionCredential.status == "ready",
+            )
+            .order_by(ToolUserSession.id.desc())
+            .limit(1)
+        )
+        if row is None:
+            raise ToolSessionNotFound("Tool Session was not found")
+        self._validate_owner(row, now)
+        if row.idle_expires_at <= now or row.absolute_expires_at <= now:
+            self._expire(row)
+            raise ToolSessionExpired("Tool Session has expired")
+        credential = self._session.scalar(
+            select(ToolSessionCredential).where(
+                ToolSessionCredential.tool_session_id == row.id,
+                ToolSessionCredential.api_source_id == api_source_id,
+            )
+        )
+        if credential is None:
+            raise ToolSessionNotFound("Tool Session was not found")
+        if (
+            force_refresh
+            or (credential.expires_at is not None and credential.expires_at <= now)
+        ):
+            try:
+                await self._refresh_oauth(row, credential)
+            except Exception as exc:
+                from chat4openapi.tool_sessions.oauth import OAuthFlowError
+
+                if not isinstance(exc, OAuthFlowError):
+                    raise
+                self._expire(row)
+                raise ToolSessionExpired(
+                    "Tool Session credentials have expired"
+                ) from exc
+            self._session.refresh(row)
+            self._session.refresh(credential)
+        auth = auth_from_json(self._cipher.decrypt_json(credential.encrypted_credentials))
+        row.last_used_at = now
+        row.idle_expires_at = min(
+            now + timedelta(minutes=30), row.absolute_expires_at
+        )
+        credential.last_used_at = now
+        self._session.commit()
+        return ResolvedToolSession(
+            row.id,
+            auth,
+            row.idle_expires_at,
+            row.absolute_expires_at,
+            api_source_id=api_source_id,
+        )
+
+    async def execute_for_embed(
+        self,
+        tool: Tool,
+        arguments: Mapping[str, Any],
+        *,
+        embed_session_id: int,
+        agent_id: int,
+    ) -> ToolExecutionResult:
+        try:
+            source = resolve_tool_execution_policy(self._session, tool).source
+        except ToolUnavailableError:
+            raise ToolExecutionError("source_not_found", "Tool API Source was not found")
+        resolved = await self.resolve_for_embed(
+            embed_session_id,
+            agent_id,
+            source.id,
+        )
+        try:
+            return await self._executor.execute(tool, source, arguments, resolved.auth)
+        except ToolExecutionError as exc:
+            if exc.status_code != 401:
+                raise
+        refreshed = await self.resolve_for_embed(
+            embed_session_id,
+            agent_id,
+            source.id,
+            force_refresh=True,
+        )
+        return await self._executor.execute(tool, source, arguments, refreshed.auth)
 
     async def execute(
         self,

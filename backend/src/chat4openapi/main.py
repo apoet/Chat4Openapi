@@ -17,6 +17,7 @@ from chat4openapi.api.admin_settings import router as admin_settings_router
 from chat4openapi.api.errors import install_error_handlers
 from chat4openapi.api.embed_public import router as embed_public_router
 from chat4openapi.api.embed_agent import router as embed_agent_router
+from chat4openapi.api.embed_auth import router as embed_auth_router
 from chat4openapi.api.health import router as health_router
 from chat4openapi.api.setup import router as setup_router
 from chat4openapi.api.tool_sessions import router as tool_sessions_router
@@ -58,6 +59,7 @@ def create_app(frontend_dist: Path | None = None) -> FastAPI:
     app.include_router(tool_oauth_router)
     app.include_router(chat_router)
     app.include_router(embed_agent_router)
+    app.include_router(embed_auth_router)
     app.include_router(embed_public_router)
     app.mount("/mcp", mcp_http_app, name="mcp")
 

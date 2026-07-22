@@ -65,6 +65,9 @@ class AguiRuntime:
             )
             yield tool_call_end(tool_call_id)
 
+        if result.status == "authorization_required" and result.pending is not None:
+            yield custom_event("authorization_required", result.pending)
+
         yield run_finished(payload.thread_id, payload.run_id)
 
     @classmethod

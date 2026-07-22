@@ -16,6 +16,7 @@ from chat4openapi.db.serialized_write import serialized_write
 from chat4openapi.models import (
     ApiSource,
     ApiSourceOAuthConfig,
+    EmbedSession,
     ToolOAuthAuthorization,
     ToolSessionCredential,
     ToolUserSession,
@@ -52,6 +53,9 @@ class OAuthStatus:
     user_code: str | None = None
     verification_uri: str | None = None
     verification_uri_complete: str | None = None
+    tool_session_db_id: int | None = None
+    embed_session_id: int | None = None
+    parent_origin: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -447,10 +451,34 @@ class ToolOAuthService:
     ) -> PKCEStart:
         if getattr(context, "admin_session", None) is None:
             raise OAuthFlowError("oauth.pkce_browser_required")
+        return await self._start_pkce(context, source_id, agent_id=agent_id)
+
+    async def start_embed_pkce(
+        self,
+        owner: EmbedSession,
+        source_id: int,
+        *,
+        redirect_uri: str,
+    ) -> PKCEStart:
+        return await self._start_pkce(
+            owner,
+            source_id,
+            agent_id=owner.agent_id,
+            redirect_uri_override=redirect_uri,
+        )
+
+    async def _start_pkce(
+        self,
+        context: Any,
+        source_id: int,
+        *,
+        agent_id: int,
+        redirect_uri_override: str | None = None,
+    ) -> PKCEStart:
         source = self._source(source_id)
         _, config = self._config(source.id)
         authorization_url = config.get("authorization_url")
-        redirect_uri = config.get("redirect_uri")
+        redirect_uri = config.get("redirect_uri") or redirect_uri_override
         if not authorization_url or not redirect_uri:
             raise OAuthFlowError("oauth.pkce_not_configured")
         await self._network_validator(
@@ -463,16 +491,58 @@ class ToolOAuthService:
         state = new_token()
         now = self._now()
         expires_at = now + timedelta(minutes=10)
-        token, row, _credential = self._pending_session(
-            context, source.id, expires_at, agent_id=agent_id
-        )
+        if isinstance(context, EmbedSession):
+            if (
+                context.revoked_at is not None
+                or context.absolute_expires_at <= now
+                or context.agent_id != agent_id
+            ):
+                raise OAuthFlowError("oauth.session_not_found")
+            expires_at = min(expires_at, context.absolute_expires_at)
+            token = new_token()
+            row = ToolUserSession(
+                token_hash=hash_token(token),
+                agent_id=context.agent_id,
+                embed_session_id=context.id,
+                status="pending",
+                idle_expires_at=min(now + timedelta(minutes=30), expires_at),
+                absolute_expires_at=expires_at,
+                last_used_at=now,
+            )
+            self._session.add(row)
+            self._session.flush()
+            self._session.add(
+                ToolSessionCredential(
+                    tool_session_id=row.id,
+                    api_source_id=source.id,
+                    encrypted_credentials=self._cipher.encrypt_json({}),
+                    status="pending",
+                    expires_at=expires_at,
+                    last_used_at=now,
+                )
+            )
+            binding_data = {
+                "embed_session_id": context.id,
+                "parent_origin": context.parent_origin,
+                "redirect_uri": redirect_uri,
+            }
+        else:
+            token, row, _credential = self._pending_session(
+                context, source.id, expires_at, agent_id=agent_id
+            )
+            binding_data = {"redirect_uri": redirect_uri}
         flow = ToolOAuthAuthorization(
             tool_session_id=row.id,
             api_source_id=source.id,
             flow_type="pkce",
             state_hash=hash_token(state),
             encrypted_flow_data=self._cipher.encrypt_json(
-                {"code_verifier": verifier, "tool_session_token": token}
+                {
+                    "kind": "oauth",
+                    "code_verifier": verifier,
+                    "tool_session_token": token,
+                    **binding_data,
+                }
             ),
             status="pending",
             expires_at=expires_at,
@@ -514,6 +584,15 @@ class ToolOAuthService:
                 flow.encrypted_flow_data = self._cipher.encrypt_json({})
                 self._session.commit()
             raise OAuthFlowError("oauth.state_expired")
+        try:
+            unclaimed_flow_data = self._cipher.decrypt_json(flow.encrypted_flow_data)
+        except Exception:
+            unclaimed_flow_data = None
+        if (
+            isinstance(unclaimed_flow_data, dict)
+            and unclaimed_flow_data.get("kind") == "swagger"
+        ):
+            raise OAuthFlowError("oauth.state_invalid")
         claimed = self._session.execute(
             update(ToolOAuthAuthorization)
             .where(
@@ -540,7 +619,8 @@ class ToolOAuthService:
                 {
                     "grant_type": "authorization_code",
                     "code": code,
-                    "redirect_uri": config["redirect_uri"],
+                    "redirect_uri": flow_data.get("redirect_uri")
+                    or config.get("redirect_uri"),
                     "code_verifier": flow_data["code_verifier"],
                 }
             )
@@ -549,12 +629,40 @@ class ToolOAuthService:
             row = self._session.get(ToolUserSession, row_id)
             if row is None or response.status_code >= 400:
                 raise OAuthFlowError("oauth.exchange_failed")
-            self._store_token(row, flow, payload)
+            embed_session_id = flow_data.get("embed_session_id")
+            self._store_token(
+                row,
+                flow,
+                payload,
+                commit=not isinstance(embed_session_id, int),
+            )
+            if isinstance(embed_session_id, int):
+                owner = self._session.get(EmbedSession, embed_session_id)
+                if owner is None or owner.id != row.embed_session_id:
+                    raise OAuthFlowError("oauth.session_not_found")
+                row.absolute_expires_at = min(
+                    row.absolute_expires_at, owner.absolute_expires_at
+                )
+                row.idle_expires_at = min(row.idle_expires_at, row.absolute_expires_at)
+                credential = self._session.scalar(
+                    select(ToolSessionCredential).where(
+                        ToolSessionCredential.tool_session_id == row.id,
+                        ToolSessionCredential.api_source_id == source.id,
+                    )
+                )
+                if credential is not None and credential.expires_at is not None:
+                    credential.expires_at = min(
+                        credential.expires_at, row.absolute_expires_at
+                    )
+                self._session.commit()
             return OAuthStatus(
                 flow_data["tool_session_token"],
                 "ready",
                 source.id,
                 row.absolute_expires_at,
+                tool_session_db_id=row.id,
+                embed_session_id=flow_data.get("embed_session_id"),
+                parent_origin=flow_data.get("parent_origin"),
             )
         except BaseException as exc:
             self._fail_claimed_pkce(flow_id, row_id)

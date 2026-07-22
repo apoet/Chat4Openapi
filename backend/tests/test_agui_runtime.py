@@ -18,6 +18,7 @@ from chat4openapi.models import (
     AgentEmbed,
     AgentSkill,
     ApiSource,
+    ApiSourceOAuthConfig,
     Conversation,
     EmbedSession,
     LlmProvider,
@@ -366,3 +367,58 @@ async def test_agui_adapter_emits_client_tool_and_continues_from_tool_message(
             event.get("delta") == "Selected row 42." for event in second_events
         )
         assert executor.calls == []
+
+
+@pytest.mark.asyncio
+async def test_embed_protected_backend_tool_emits_authorization_event(
+    db_session_factory,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as session:
+        skill, embed_session = _seed(session, cipher)
+        source = session.scalar(select(ApiSource))
+        assert source is not None
+        session.add(
+            ApiSourceOAuthConfig(
+                api_source_id=source.id,
+                encrypted_config=cipher.encrypt_json({"client_secret": "never-expose"}),
+                enabled=True,
+            )
+        )
+        session.commit()
+        llm = SequencedLlm(
+            [
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[
+                        CanonicalToolCall("load", "load_skills", {"skill_ids": [skill.id]})
+                    ],
+                ),
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[
+                        CanonicalToolCall("gene", "get_gene", {"symbol": "ABCA4"})
+                    ],
+                ),
+            ]
+        )
+        runtime = AguiRuntime(AgentRuntime(session, cipher, llm, RecordingExecutor()))
+        payload = AguiRunInput.model_validate(
+            {
+                "threadId": "thread-auth",
+                "runId": "run-auth",
+                "messages": [{"id": "user-auth", "role": "user", "content": "Find ABCA4"}],
+            }
+        )
+
+        events = [event async for event in runtime.run(payload, embed_session)]
+
+        required = next(
+            event for event in events if event.get("name") == "authorization_required"
+        )
+        assert required["value"] == {
+            "api_source_id": source.id,
+            "api_source_name": "Gene API",
+        }
+        assert "never-expose" not in str(events)
+        assert len(llm.calls) == 2

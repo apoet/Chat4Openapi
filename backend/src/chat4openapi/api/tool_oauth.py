@@ -1,8 +1,10 @@
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+import json
 
 import httpx
 from fastapi import APIRouter, Depends, Query, Response
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -16,6 +18,7 @@ from chat4openapi.api.tool_sessions import (
 )
 from chat4openapi.config import Settings, get_settings
 from chat4openapi.db.session import get_db_session
+from chat4openapi.embed.grants import create_auth_grant
 from chat4openapi.security.agent_keys import AgentKeyContext, require_agent_api_key
 from chat4openapi.security.encryption import SecretCipher, SecretDecryptionError
 from chat4openapi.tool_sessions.oauth import (
@@ -238,11 +241,40 @@ async def pkce_callback(
     code: str = Query(min_length=1, max_length=4096),
     service: ToolOAuthService = Depends(get_tool_oauth_service),
     settings: Settings = Depends(get_settings),
-) -> OAuthReadyResponse:
+):
     try:
         completed = await service.complete_pkce(state, code)
     except Exception as exc:
         raise _oauth_error(exc) from exc
+    if (
+        completed.embed_session_id is not None
+        and completed.tool_session_db_id is not None
+        and completed.parent_origin is not None
+    ):
+        grant = create_auth_grant(
+            service._session,
+            completed.embed_session_id,
+            completed.tool_session_db_id,
+            completed.api_source_id,
+        )
+        service._session.commit()
+        payload = json.dumps(
+            {"type": "chat4openapi:auth-grant", "grant": grant},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        target_origin = json.dumps(completed.parent_origin)
+        return HTMLResponse(
+            "<!doctype html><script>"
+            f"window.opener.postMessage({payload},{target_origin});window.close()"
+            "</script>",
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Security-Policy": "default-src 'none'",
+                "Referrer-Policy": "no-referrer",
+                "X-Frame-Options": "DENY",
+            },
+        )
     response.set_cookie(
         TOOL_SESSION_COOKIE,
         completed.tool_session_id,

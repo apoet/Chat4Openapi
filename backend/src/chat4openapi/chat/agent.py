@@ -142,7 +142,12 @@ class AgentTurnRequest:
 @dataclass(frozen=True, slots=True)
 class AgentTurnResult:
     conversation_id: str
-    status: Literal["completed", "needs_input", "client_tool_required"]
+    status: Literal[
+        "completed",
+        "needs_input",
+        "client_tool_required",
+        "authorization_required",
+    ]
     content: str
     loaded_skill_ids: list[int]
     pending: dict[str, Any] | None
@@ -416,8 +421,41 @@ class AgentRuntime:
                                 request.tool_owner_agent_key_id or request.agent_key_id
                             ),
                             admin_session_id=request.admin_session_id,
+                            embed_session_id=request.embed_session_id,
                         )
                     )
+            if (
+                request.embed_session_id is not None
+                and isinstance(observation, dict)
+                and observation.get("error")
+                in {"tool_authorization_required", "tool_reauthorization_required"}
+            ):
+                self._persist_message(
+                    conversation.id,
+                    "tool",
+                    {"text": observation, "tool_call_id": call.id, "name": call.name},
+                )
+                tool = tool_map.models.get(call.name)
+                source = (
+                    self._session.get(ApiSource, tool.api_source_id)
+                    if tool is not None
+                    else None
+                )
+                pending = {
+                    "api_source_id": source.id if source is not None else None,
+                    "api_source_name": source.name if source is not None else call.name,
+                }
+                conversation.agent_status = "authorization_required"
+                self._session.commit()
+                return AgentTurnResult(
+                    conversation_id=conversation.id,
+                    status="authorization_required",
+                    content=response.content,
+                    loaded_skill_ids=list(conversation.loaded_skill_ids),
+                    pending=pending,
+                    input_tokens=0,
+                    output_tokens=0,
+                )
             self._persist_message(
                 conversation.id,
                 "tool",
@@ -661,6 +699,7 @@ class AgentRuntime:
         agent_id: int,
         agent_key_id: int | None,
         admin_session_id: int | None,
+        embed_session_id: int | None = None,
     ) -> Any:
         try:
             policy = resolve_tool_execution_policy(self._session, tool)
@@ -674,6 +713,15 @@ class AgentRuntime:
                     agent_id=agent_id,
                     agent_key_id=agent_key_id,
                     admin_session_id=admin_session_id,
+                )
+            elif embed_session_id is not None and policy.authorization_required:
+                result = await ToolSessionService(
+                    self._session, self._cipher, self._tool_runner
+                ).execute_for_embed(
+                    tool,
+                    arguments,
+                    embed_session_id=embed_session_id,
+                    agent_id=agent_id,
                 )
             elif policy.authorization_required:
                 return {"error": "tool_authorization_required", "tool": tool.name}
