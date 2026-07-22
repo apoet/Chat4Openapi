@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-labelledby="title desc" xml:lang="zh-CN">
+  <title id="title">Chat4Openapi 主流程</title>
+  <desc id="desc">Swagger 或 OpenAPI 文档导入为 Tools，Skills 引用 Tools，Agent 绑定 Skills，Chat 与 Agent 发起会话。</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8faff"/>
+      <stop offset="1" stop-color="#eef3ff"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b35c7"/>
+      <stop offset="1" stop-color="#345cff"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="7" stdDeviation="8" flood-color="#17306f" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#244bd6"/>
+    </marker>
+  </defs>
+
+  <rect x="1" y="1" width="1198" height="298" rx="28" fill="url(#background)" stroke="#d9e2ff" stroke-width="2"/>
+
+  <g fill="none" stroke="#244bd6" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)">
+    <path d="M204 150 H255"/>
+    <path d="M444 150 H495"/>
+    <path d="M684 150 H735"/>
+    <path d="M924 150 H975" marker-start="url(#arrow)"/>
+  </g>
+
+  <g font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="13" font-weight="600" fill="#53658f" text-anchor="middle">
+    <text x="230" y="132">导入</text>
+    <text x="470" y="132">引用</text>
+    <text x="710" y="132">绑定</text>
+    <text x="950" y="132">会话</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <g transform="translate(24 45)">
+      <rect width="180" height="210" rx="20" fill="#ffffff" stroke="#dbe3fb"/>
+      <circle cx="90" cy="69" r="38" fill="url(#accent)"/>
+      <g fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M75 47h23l10 10v34H75z"/>
+        <path d="M98 47v11h10"/>
+        <path d="M82 69h19M82 78h19"/>
+      </g>
+      <text x="90" y="137" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="17" font-weight="700" fill="#14234b" text-anchor="middle">Swagger / OpenAPI</text>
+      <text x="90" y="164" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="14" fill="#65749a" text-anchor="middle">接口描述文档</text>
+    </g>
+
+    <g transform="translate(264 45)">
+      <rect width="180" height="210" rx="20" fill="#ffffff" stroke="#dbe3fb"/>
+      <circle cx="90" cy="69" r="38" fill="url(#accent)"/>
+      <g fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="72" cy="69" r="8"/>
+        <circle cx="108" cy="54" r="8"/>
+        <circle cx="108" cy="84" r="8"/>
+        <path d="M80 66l20-9M80 72l20 9"/>
+      </g>
+      <text x="90" y="137" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="19" font-weight="700" fill="#14234b" text-anchor="middle">Tools</text>
+      <text x="90" y="164" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="14" fill="#65749a" text-anchor="middle">可调用接口</text>
+    </g>
+
+    <g transform="translate(504 45)">
+      <rect width="180" height="210" rx="20" fill="#ffffff" stroke="#dbe3fb"/>
+      <circle cx="90" cy="69" r="38" fill="url(#accent)"/>
+      <g fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="70" y="48" width="40" height="29" rx="5"/>
+        <path d="M78 84h24M78 92h17"/>
+        <path d="M82 57h16M82 65h20"/>
+      </g>
+      <text x="90" y="137" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="19" font-weight="700" fill="#14234b" text-anchor="middle">Skills</text>
+      <text x="90" y="164" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="14" fill="#65749a" text-anchor="middle">可复用能力</text>
+    </g>
+
+    <g transform="translate(744 45)">
+      <rect width="180" height="210" rx="20" fill="#ffffff" stroke="#dbe3fb"/>
+      <circle cx="90" cy="69" r="38" fill="url(#accent)"/>
+      <g fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="68" y="51" width="44" height="36" rx="10"/>
+        <path d="M90 43v8M79 65h.1M101 65h.1M80 77h20"/>
+      </g>
+      <text x="90" y="137" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="19" font-weight="700" fill="#14234b" text-anchor="middle">Agent</text>
+      <text x="90" y="164" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="14" fill="#65749a" text-anchor="middle">智能体</text>
+    </g>
+
+    <g transform="translate(984 45)">
+      <rect width="180" height="210" rx="20" fill="#ffffff" stroke="#dbe3fb"/>
+      <circle cx="90" cy="69" r="38" fill="url(#accent)"/>
+      <g fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M65 49h50v34H88L75 92v-9H65z"/>
+        <path d="M77 62h26M77 71h18"/>
+      </g>
+      <text x="90" y="137" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="19" font-weight="700" fill="#14234b" text-anchor="middle">Chat</text>
+      <text x="90" y="164" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="14" fill="#65749a" text-anchor="middle">对话会话</text>
+    </g>
+  </g>
+</svg>

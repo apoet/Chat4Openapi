@@ -14,6 +14,10 @@ Chat4Openapi turns Swagger/OpenAPI operations into managed Tools and lets indepe
 
 It is a single FastAPI/Vue application backed by SQLite, with an English and Simplified Chinese administration interface. For architecture, features, compatible APIs, authentication, operations, and security details, see the [GitHub Wiki](https://github.com/apoet/Chat4Openapi/wiki).
 
+<p align="center">
+  <img src="docs/images/workflow.svg" alt="Swagger and OpenAPI definitions become Tools, Skills reference Tools, Agents use Skills, and Chat starts Agent conversations" width="100%">
+</p>
+
 ## Quick start
 
 ### 1. Install the required runtimes
