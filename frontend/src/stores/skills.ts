@@ -15,7 +15,7 @@ export const useSkillsStore = defineStore('skills', () => {
   const skills = ref<SkillSummary[]>([])
 
   async function loadTools(): Promise<void> {
-    tools.value = await request<ToolSummary[]>('/api/admin/skills/eligible-tools')
+    tools.value = await request<ToolSummary[]>('/api/admin/tools')
   }
   async function loadSources(): Promise<void> {
     sources.value = await request<ApiSourceSummary[]>('/api/admin/sources')

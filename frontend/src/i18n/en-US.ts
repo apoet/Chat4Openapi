@@ -71,7 +71,15 @@ export default {
       revoke: 'Revoke', revokeNamed: 'Revoke {name}', deleteNamed: 'Delete {name}', empty: 'No API keys for this Agent.',
     },
   },
-  skills: { eyebrow: 'Orchestration', title: 'Skills', subtitle: 'Combine instructions with an ordered allow-list of Tools.', name: 'Skill name', description: 'Description', prompt: 'System prompt', bound: '{count} Tool bound | {count} Tools bound', save: 'Save Skill', edit: 'Edit', cancel: 'Cancel', quickReference: 'Quick reference', enabledTools: 'Enabled Tools', quickHint: "Type {'@'} in the prompt or click a Tool below to bind and reference it.", mentionTool: 'Mention {name}', untagged: 'Untagged', noTools: 'Enable a Tool to reference it here.', start: 'Start', stop: 'Stop' },
+  skills: {
+    eyebrow: 'Orchestration', title: 'Skills', subtitle: 'Combine instructions with an ordered allow-list of Tools.', name: 'Skill name', description: 'Description', prompt: 'System prompt', bound: '{count} Tool bound | {count} Tools bound', save: 'Save Skill', edit: 'Edit', cancel: 'Cancel', quickReference: 'Quick reference', enabledTools: 'Enabled Tools', quickHint: "Type {'@'} in the prompt or use the catalog to bind and reference a Tool.", mentionTool: 'Mention {name}', untagged: 'Untagged', noTools: 'Enable a Tool to reference it here.', start: 'Start', stop: 'Stop',
+    catalog: {
+      title: 'Tool catalog', search: 'Search Tool catalog', searchHint: 'Name, description, path, tag, or source',
+      source: 'API source', allSources: 'All API sources', tag: 'Swagger tag', allTags: 'All Swagger tags', state: 'Enabled state',
+      bind: 'Bind {name}', reference: 'Reference {name}', suggestions: 'Tool reference suggestions', resize: 'Resize Tool catalog',
+      showing: 'Showing {shown} of {total} Tools', empty: 'No Tools match these catalog filters.',
+    },
+  },
   chat: {
     title: 'Chat',
     eyebrow: 'Ready to work',

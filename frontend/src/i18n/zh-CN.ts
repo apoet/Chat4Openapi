@@ -71,7 +71,15 @@ export default {
       revoke: '撤销', revokeNamed: '撤销 {name}', deleteNamed: '删除 {name}', empty: '此 Agent 尚无 API 密钥。',
     },
   },
-  skills: { eyebrow: '能力编排', title: 'Skills', subtitle: '组合指令和有序的 Tool 白名单。', name: 'Skill 名称', description: '描述', prompt: '系统提示词', bound: '已绑定 {count} 个 Tool', save: '保存 Skill', edit: '编辑', cancel: '取消', quickReference: '快捷引用', enabledTools: '已启用 Tools', quickHint: "在提示词中输入 {'@'}，或点击下方 Tool，即可绑定并引用。", mentionTool: '引用 {name}', untagged: '未分组', noTools: '请先启用 Tool，再到此处引用。', start: '启动', stop: '停止' },
+  skills: {
+    eyebrow: '能力编排', title: 'Skills', subtitle: '组合指令和有序的 Tool 白名单。', name: 'Skill 名称', description: '描述', prompt: '系统提示词', bound: '已绑定 {count} 个 Tool', save: '保存 Skill', edit: '编辑', cancel: '取消', quickReference: '快捷引用', enabledTools: '已启用 Tools', quickHint: "在提示词中输入 {'@'}，或使用目录绑定并引用 Tool。", mentionTool: '引用 {name}', untagged: '未分组', noTools: '请先启用 Tool，再到此处引用。', start: '启动', stop: '停止',
+    catalog: {
+      title: 'Tool 目录', search: '搜索 Tool 目录', searchHint: '按名称、描述、路径、标签或来源搜索',
+      source: 'API 来源', allSources: '全部 API 来源', tag: 'Swagger 标签', allTags: '全部 Swagger 标签', state: '启用状态',
+      bind: '绑定 {name}', reference: '引用 {name}', suggestions: 'Tool 引用建议', resize: '调整 Tool 目录大小',
+      showing: '显示 {shown}/{total} 个 Tools', empty: '没有符合目录筛选条件的 Tool。',
+    },
+  },
   chat: {
     title: '对话',
     eyebrow: '已准备好',

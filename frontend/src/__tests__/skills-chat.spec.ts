@@ -230,7 +230,7 @@ describe('Skills and chat', () => {
       if (input === '/api/admin/providers') {
         return Promise.resolve(response([{ id: 1, name: 'Primary', provider_type: 'openai', base_url: 'https://llm.test/v1', default_model: 'gpt-test', enabled: true, has_api_key: true }]))
       }
-      if (input === '/api/admin/skills/eligible-tools' || input === '/api/admin/sources') {
+      if (input === '/api/admin/tools' || input === '/api/admin/sources') {
         return Promise.resolve(response([]))
       }
       if (input === '/api/admin/skills' && init?.method === 'POST') {
@@ -294,7 +294,10 @@ describe('Skills and chat', () => {
 
     render(SkillsView, { global: { plugins: [i18n] } })
     const quickTool = await screen.findByRole('button', { name: /get_pet/ })
-    expect(screen.queryByText('delete_pet')).toBeNull()
+    const disabledTool = screen.getByText('delete_pet')
+    expect(disabledTool).toBeTruthy()
+    expect((screen.getByRole('checkbox', { name: 'Bind delete_pet' }) as HTMLInputElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'Reference delete_pet' }) as HTMLButtonElement).disabled).toBe(true)
     await fireEvent.click(quickTool)
 
     const prompt = screen.getByLabelText('System prompt') as HTMLTextAreaElement
@@ -314,11 +317,11 @@ describe('Skills and chat', () => {
     render(SkillsView, { global: { plugins: [i18n] } })
     const prompt = await screen.findByLabelText('System prompt') as HTMLTextAreaElement
     await fireEvent.update(prompt, 'Use @get')
-    await fireEvent.click(await screen.findByRole('button', { name: 'Mention get_pet' }))
+    await fireEvent.click(await screen.findByRole('option', { name: 'Mention get_pet' }))
 
     expect(prompt.value).toBe('Use {{tool:get_pet}}')
     expect(screen.getByText('1 Tool bound')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Mention list_orders' })).toBeNull()
+    expect(screen.queryByRole('option', { name: 'Mention list_orders' })).toBeNull()
   })
 
   it('groups quick references by API source and Swagger tag', async () => {
@@ -339,7 +342,7 @@ describe('Skills and chat', () => {
     expect(screen.getByRole('heading', { name: 'Order API' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Pet operations' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Order operations' })).toBeTruthy()
-    expect(container.querySelectorAll('details.reference-source-group')).toHaveLength(2)
+    expect(container.querySelectorAll('details.catalog-source-group')).toHaveLength(2)
   })
 
   it('deletes a managed Skill from its row actions', async () => {
@@ -357,6 +360,25 @@ describe('Skills and chat', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5))
     expect(fetchMock.mock.calls[3][0]).toBe('/api/admin/skills/5')
+  })
+
+  it('starts a managed Skill through its lifecycle endpoint', async () => {
+    const stopped = { id: 5, name: 'Pet helper', description: null, system_prompt: 'Help', running: false, tools: [] }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response([]))
+      .mockResolvedValueOnce(response([]))
+      .mockResolvedValueOnce(response([stopped]))
+      .mockResolvedValueOnce(response({ ...stopped, running: true }))
+      .mockResolvedValueOnce(response([{ ...stopped, running: true }]))
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(SkillsView, { global: { plugins: [i18n] } })
+    await fireEvent.click(await screen.findByRole('button', { name: 'Start' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5))
+    expect(fetchMock.mock.calls[3][0]).toBe('/api/admin/skills/5/start')
+    expect(fetchMock.mock.calls[3][1]).toMatchObject({ method: 'POST' })
   })
 
   it('selects the default Agent, sends it on creation, and locks while the turn is pending', async () => {
