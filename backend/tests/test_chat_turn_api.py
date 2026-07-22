@@ -120,6 +120,8 @@ async def test_browser_turn_pauses_and_resumes_with_structured_contract(
     assert paused_body == {
         "status": "needs_input",
         "conversation_id": paused_body["conversation_id"],
+        "agent_id": 1,
+        "agent_name": "Chat4Openapi Agent",
         "message": "**请选择参考基因组**：GRCh37 还是 GRCh38？",
         "loaded_skill_ids": [first.id],
         "pending": {
@@ -143,6 +145,8 @@ async def test_browser_turn_pauses_and_resumes_with_structured_contract(
     assert completed.json() == {
         "status": "completed",
         "conversation_id": paused_body["conversation_id"],
+        "agent_id": 1,
+        "agent_name": "Chat4Openapi Agent",
         "message": "已使用 **GRCh38** 完成查询。",
         "loaded_skill_ids": [first.id],
         "pending": None,
@@ -242,6 +246,8 @@ async def test_browser_agent_id_can_be_omitted_on_continuation(
 
     assert continued.status_code == 200
     assert continued.json()["message"] == "Second."
+    assert continued.json()["agent_id"] == 1
+    assert continued.json()["agent_name"] == "Chat4Openapi Agent"
 
 
 @pytest.mark.asyncio
@@ -284,7 +290,7 @@ async def test_browser_automatic_scope_does_not_add_later_agent_bindings(
 
 @pytest.mark.asyncio
 async def test_browser_turn_forwards_tool_session_and_maps_agent_result(
-    client: httpx.AsyncClient, monkeypatch
+    client: httpx.AsyncClient, monkeypatch, db_session_factory
 ) -> None:
     requests: list[AgentTurnRequest] = []
     expected = AgentTurnResult(
@@ -306,6 +312,19 @@ async def test_browser_turn_forwards_tool_session_and_maps_agent_result(
             return expected
 
     monkeypatch.setattr(chat_api_module, "AgentRuntime", RecordingRuntime, raising=False)
+    with db_session_factory() as session:
+        session.add(
+            Agent(
+                id=3,
+                name="Tool Agent",
+                enabled=True,
+                system_prompt="Use Tools.",
+                mode="react",
+                max_iterations=8,
+            )
+        )
+        session.add(Conversation(id="conversation-1", agent_id=3))
+        session.commit()
 
     client.cookies.set("chat4openapi_tool_session", "cookie-session")
     response = await client.post(
@@ -326,6 +345,8 @@ async def test_browser_turn_forwards_tool_session_and_maps_agent_result(
         )
     ]
     assert response.json()["message"] == "Done."
+    assert response.json()["agent_id"] == 3
+    assert response.json()["agent_name"] == "Tool Agent"
 
 
 @pytest.mark.asyncio

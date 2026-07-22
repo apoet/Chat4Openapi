@@ -62,11 +62,12 @@ describe('MarkdownMessage', () => {
 
   it('keeps user content plain while rendering assistant and clarification Markdown', async () => {
     localStorage.setItem('chat4openapi.chat.sessions.v1', JSON.stringify([{
-      version: 2,
+      version: 3,
       id: 'markdown-history',
       conversationId: 'conversation-markdown',
       title: 'Markdown history',
-      skillIds: [],
+      agentId: 7,
+      agentName: 'Research Agent',
       loadedSkillIds: [],
       status: 'needs_input',
       pending: { fields: ['reference'] },
@@ -77,9 +78,11 @@ describe('MarkdownMessage', () => {
       ],
       updatedAt: '2026-07-21T00:00:00.000Z',
     }]))
-    vi.stubGlobal('fetch', vi.fn()
-      .mockResolvedValueOnce(response({ enabled: false }))
-      .mockResolvedValueOnce(response([])))
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      if (input === '/api/tool-session/config') return Promise.resolve(response({ enabled: false }))
+      if (input === '/api/admin/agents') return Promise.resolve(response([]))
+      return Promise.resolve(response([]))
+    }))
 
     const { container } = render(ChatView, {
       global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },

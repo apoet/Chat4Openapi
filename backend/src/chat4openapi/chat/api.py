@@ -18,7 +18,7 @@ from chat4openapi.api.tool_sessions import (
 from chat4openapi.chat.agent import AgentError, AgentRuntime, AgentTurnRequest, AgentTurnResult
 from chat4openapi.db.session import get_db_session
 from chat4openapi.llm.client import CanonicalMessage, LlmClient, LlmProviderError
-from chat4openapi.models import AgentSkill, Conversation, Skill
+from chat4openapi.models import Agent, AgentSkill, Conversation, Skill
 from chat4openapi.schemas.chat import ChatTurnRequest, ChatTurnResponse
 from chat4openapi.security.agent_keys import AgentKeyContext, require_agent_api_key
 from chat4openapi.security.encryption import SecretCipher
@@ -360,9 +360,17 @@ async def browser_turn(
         llm,
         executor,
     )
+    conversation = db.get(Conversation, result.conversation_id)
+    if conversation is None:
+        raise ApiError(404, "agent.conversation_not_found")
+    agent = db.get(Agent, conversation.agent_id)
+    if agent is None:
+        raise ApiError(404, "agent.unavailable")
     return ChatTurnResponse(
         status=result.status,
         conversation_id=result.conversation_id,
+        agent_id=agent.id,
+        agent_name=agent.name,
         message=result.content,
         loaded_skill_ids=result.loaded_skill_ids,
         pending=result.pending,

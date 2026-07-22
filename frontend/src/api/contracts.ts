@@ -139,12 +139,14 @@ export interface SkillSummary {
 export interface ChatTurnRequest {
   message: string
   conversation_id: string | null
-  candidate_skill_ids: number[]
+  agent_id?: number
 }
 
 export interface ChatTurnResponse {
   status: 'completed' | 'needs_input'
   conversation_id: string
+  agent_id: number
+  agent_name: string
   message: string
   loaded_skill_ids: number[]
   pending: Record<string, unknown> | null

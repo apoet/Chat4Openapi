@@ -16,6 +16,8 @@ class ChatTurnRequest(BaseModel):
 class ChatTurnResponse(BaseModel):
     status: Literal["completed", "needs_input"]
     conversation_id: str
+    agent_id: AgentId
+    agent_name: str
     message: str
     loaded_skill_ids: list[int]
     pending: dict[str, Any] | None = None

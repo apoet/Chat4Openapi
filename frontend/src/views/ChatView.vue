@@ -1,23 +1,24 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { ApiError, request } from '../api/client'
-import type { ChatTurnRequest, ChatTurnResponse, SkillSummary } from '../api/contracts'
+import type { AgentConfig, ChatTurnRequest, ChatTurnResponse, SkillSummary } from '../api/contracts'
+import AgentSelect from '../components/AgentSelect.vue'
 import MarkdownMessage from '../components/MarkdownMessage.vue'
-import SkillMultiSelect from '../components/SkillMultiSelect.vue'
 
 type ChatMessage = {
   role: 'user' | 'assistant'
   content: string
   kind: 'message' | 'clarification'
 }
-type LocalChatSessionV2 = {
-  version: 2
+type LocalChatSessionV3 = {
+  version: 3
   id: string
   conversationId: string | null
   title: string
-  skillIds: number[]
+  agentId: number | null
+  agentName: string | null
   loadedSkillIds: number[]
   status: 'completed' | 'needs_input'
   pending: Record<string, unknown> | null
@@ -27,15 +28,17 @@ type LocalChatSessionV2 = {
 
 const STORAGE_KEY = 'chat4openapi.chat.sessions.v1'
 const { t } = useI18n()
+const agents = ref<AgentConfig[]>([])
+const selectedAgentId = ref<number | null>(null)
+const selectedAgentName = ref<string | null>(null)
 const skills = ref<SkillSummary[]>([])
-const selectedSkillIds = ref<number[]>([])
 const loadedSkillIds = ref<number[]>([])
 const input = ref('')
 const messages = ref<ChatMessage[]>([])
 const conversationId = ref<string | null>(null)
 const status = ref<'completed' | 'needs_input'>('completed')
 const pending = ref<Record<string, unknown> | null>(null)
-const sessions = ref<LocalChatSessionV2[]>(loadSessions())
+const sessions = ref<LocalChatSessionV3[]>(loadSessions())
 const activeSessionId = ref<string | null>(sessions.value[0]?.id ?? null)
 const loginRequired = ref(false)
 const authenticated = ref(false)
@@ -80,26 +83,28 @@ function parseMessages(
   }))
 }
 
-function parseSession(value: unknown): LocalChatSessionV2 | null {
+function parseSession(value: unknown): LocalChatSessionV3 | null {
   if (!isRecord(value)
     || typeof value.id !== 'string'
     || !(value.conversationId === null || typeof value.conversationId === 'string')
     || typeof value.title !== 'string'
     || typeof value.updatedAt !== 'string') return null
 
-  if (value.version === 2) {
-    if (!isIdList(value.skillIds)
-      || !isIdList(value.loadedSkillIds)
+  if (value.version === 3) {
+    if (!isIdList(value.loadedSkillIds)
+      || !(value.agentId === null || (Number.isInteger(value.agentId) && (value.agentId as number) > 0))
+      || !(value.agentName === null || typeof value.agentName === 'string')
       || (value.status !== 'completed' && value.status !== 'needs_input')
       || !(value.pending === null || isRecord(value.pending))) return null
     const messages = parseMessages(value.messages, value.status)
     if (!messages) return null
     return {
-      version: 2,
+      version: 3,
       id: value.id,
       conversationId: value.conversationId,
       title: value.title,
-      skillIds: [...value.skillIds],
+      agentId: value.agentId as number | null,
+      agentName: value.agentName as string | null,
       loadedSkillIds: [...value.loadedSkillIds],
       status: value.status,
       pending: value.pending ? { ...value.pending } : null,
@@ -108,28 +113,35 @@ function parseSession(value: unknown): LocalChatSessionV2 | null {
     }
   }
 
-  if (!Number.isInteger(value.skillId) || (value.skillId as number) <= 0) return null
-  const messages = parseMessages(value.messages, 'completed')
+  const legacyStatus = value.version === 2 && value.status === 'needs_input'
+    ? 'needs_input'
+    : 'completed'
+  if (value.version === 2
+    && (!isIdList(value.loadedSkillIds)
+      || (value.status !== 'completed' && value.status !== 'needs_input')
+      || !(value.pending === null || isRecord(value.pending)))) return null
+  const messages = parseMessages(value.messages, legacyStatus)
   if (!messages) return null
   return {
-    version: 2,
+    version: 3,
     id: value.id,
     conversationId: value.conversationId,
     title: value.title,
-    skillIds: [value.skillId as number],
-    loadedSkillIds: [],
-    status: 'completed',
-    pending: null,
+    agentId: null,
+    agentName: null,
+    loadedSkillIds: value.version === 2 ? [...value.loadedSkillIds as number[]] : [],
+    status: legacyStatus,
+    pending: value.version === 2 && value.pending ? { ...value.pending as Record<string, unknown> } : null,
     messages,
     updatedAt: value.updatedAt,
   }
 }
 
-function loadSessions(): LocalChatSessionV2[] {
+function loadSessions(): LocalChatSessionV3[] {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]')
     const loaded = Array.isArray(value)
-      ? value.map(parseSession).filter((session): session is LocalChatSessionV2 => session !== null)
+      ? value.map(parseSession).filter((session): session is LocalChatSessionV3 => session !== null)
       : []
     localStorage.setItem(STORAGE_KEY, JSON.stringify(loaded))
     return loaded
@@ -147,8 +159,13 @@ function createLocalId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
+function selectDefaultAgent(): void {
+  const defaultAgent = agents.value.find((agent) => agent.is_default) ?? agents.value[0]
+  selectedAgentId.value = defaultAgent?.id ?? null
+  selectedAgentName.value = defaultAgent?.name ?? null
+}
+
 function skillNames(ids: number[]): string {
-  if (ids.length === 0) return t('chat.autoSelect')
   return ids.map((id) => skills.value.find((skill) => skill.id === id)?.name ?? t('chat.unknownSkill')).join(', ')
 }
 
@@ -158,11 +175,12 @@ function saveActiveSession(): void {
   let session = sessions.value.find((item) => item.id === activeSessionId.value)
   if (!session) {
     session = {
-      version: 2,
+      version: 3,
       id: activeSessionId.value ?? createLocalId(),
       conversationId: conversationId.value,
       title: messages.value.find((message) => message.role === 'user')?.content.slice(0, 48) || t('chat.untitled'),
-      skillIds: [],
+      agentId: selectedAgentId.value,
+      agentName: agents.value.find((agent) => agent.id === selectedAgentId.value)?.name ?? selectedAgentName.value,
       loadedSkillIds: [],
       status: 'completed',
       pending: null,
@@ -173,7 +191,8 @@ function saveActiveSession(): void {
     sessions.value.unshift(session)
   }
   session.conversationId = conversationId.value
-  session.skillIds = [...selectedSkillIds.value]
+  session.agentId = selectedAgentId.value
+  session.agentName = agents.value.find((agent) => agent.id === selectedAgentId.value)?.name ?? selectedAgentName.value
   session.loadedSkillIds = [...loadedSkillIds.value]
   session.status = status.value
   session.pending = pending.value ? { ...pending.value } : null
@@ -183,10 +202,11 @@ function saveActiveSession(): void {
   persistSessions()
 }
 
-function openSession(session: LocalChatSessionV2): void {
+function openSession(session: LocalChatSessionV3): void {
   activeSessionId.value = session.id
   conversationId.value = session.conversationId
-  selectedSkillIds.value = [...session.skillIds]
+  selectedAgentId.value = session.agentId
+  selectedAgentName.value = session.agentName
   loadedSkillIds.value = [...session.loadedSkillIds]
   status.value = session.status
   pending.value = session.pending ? { ...session.pending } : null
@@ -204,12 +224,15 @@ function startNewChat(): void {
   messages.value = []
   input.value = ''
   errorMessage.value = ''
+  selectDefaultAgent()
 }
 
 function saveSessionResult(sessionId: string, result: ChatTurnResponse): void {
   const session = sessions.value.find((item) => item.id === sessionId)
   if (!session) return
   session.conversationId = result.conversation_id
+  session.agentId = result.agent_id
+  session.agentName = result.agent_name
   session.loadedSkillIds = [...result.loaded_skill_ids]
   session.status = result.status
   session.pending = result.pending ? { ...result.pending } : null
@@ -224,6 +247,8 @@ function saveSessionResult(sessionId: string, result: ChatTurnResponse): void {
 
   if (activeSessionId.value === sessionId) {
     conversationId.value = session.conversationId
+    selectedAgentId.value = session.agentId
+    selectedAgentName.value = session.agentName
     loadedSkillIds.value = [...session.loadedSkillIds]
     status.value = session.status
     pending.value = session.pending ? { ...session.pending } : null
@@ -231,7 +256,16 @@ function saveSessionResult(sessionId: string, result: ChatTurnResponse): void {
   }
 }
 
+watch(selectedAgentId, (agentId) => {
+  const selected = agents.value.find((agent) => agent.id === agentId)
+  if (selected) selectedAgentName.value = selected.name
+})
+
 function formatTurnError(error: unknown): string {
+  if (error instanceof ApiError
+    && (error.code === 'agent.unavailable' || error.code === 'agent.conversation_not_found')) {
+    return t('error.chat.agentUnavailable')
+  }
   return error instanceof ApiError
     ? (typeof error.params.reason === 'string' ? error.params.reason : error.code)
     : (error instanceof Error ? error.message : t('error.unknown'))
@@ -251,7 +285,15 @@ onMounted(async () => {
       if (!(error instanceof ApiError) || error.status !== 401) throw error
     }
   }
-  skills.value = await request<SkillSummary[]>('/api/skills')
+  const [agentList, skillList] = await Promise.all([
+    request<AgentConfig[]>('/api/admin/agents'),
+    request<SkillSummary[]>('/api/skills'),
+  ])
+  agents.value = agentList.filter((agent) => agent.enabled && agent.deleted_at === null)
+  skills.value = skillList
+  if (conversationId.value === null && selectedAgentId.value === null) {
+    selectDefaultAgent()
+  }
 })
 
 async function login(): Promise<void> {
@@ -264,13 +306,13 @@ async function login(): Promise<void> {
 }
 
 async function send(): Promise<void> {
-  if (!input.value.trim() || sending.value) return
+  if (!input.value.trim() || sending.value || (conversationId.value === null && selectedAgentId.value === null)) return
   const content = input.value.trim()
   const body: ChatTurnRequest = {
     message: content,
     conversation_id: conversationId.value,
-    candidate_skill_ids: [...selectedSkillIds.value],
   }
+  if (conversationId.value === null && selectedAgentId.value !== null) body.agent_id = selectedAgentId.value
   messages.value.push({ role: 'user', content, kind: 'message' })
   input.value = ''
   errorMessage.value = ''
@@ -323,7 +365,7 @@ async function send(): Promise<void> {
           :class="['history-item', { active: session.id === activeSessionId }]"
           @click="openSession(session)"
         >
-          <span>{{ session.title }}</span><small>{{ skillNames(session.skillIds) }}</small>
+          <span>{{ session.title }}</span><small>{{ session.agentName || t('chat.conversationAgent') }}</small>
         </button>
       </aside>
       <div class="conversation">
@@ -356,10 +398,18 @@ async function send(): Promise<void> {
             rows="3"
             @keydown.ctrl.enter="send"
           />
-          <button :disabled="sending" @click="send">{{ sending ? t('chat.sending') : t('chat.send') }}</button>
-          <div class="skill-dock">
-            <SkillMultiSelect v-model="selectedSkillIds" :skills="skills" :disabled="messages.length > 0" />
-            <span>{{ messages.length > 0 ? t('chat.scopeLocked') : t('chat.skillHint') }}</span>
+          <button
+            :disabled="sending || (conversationId === null && selectedAgentId === null)"
+            @click="send"
+          >{{ sending ? t('chat.sending') : t('chat.send') }}</button>
+          <div class="agent-dock">
+            <AgentSelect
+              v-model="selectedAgentId"
+              :agents="agents"
+              :snapshot-name="selectedAgentName"
+              :disabled="sending || conversationId !== null"
+            />
+            <span>{{ conversationId !== null ? t('chat.agentLocked') : t('chat.agentHint') }}</span>
           </div>
         </div>
       </div>
