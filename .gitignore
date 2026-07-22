@@ -11,3 +11,4 @@ frontend/dist/
 output/playwright/
 .playwright-cli/
 .worktrees/
+output/

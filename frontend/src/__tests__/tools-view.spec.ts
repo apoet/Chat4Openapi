@@ -29,7 +29,7 @@ beforeEach(() => {
 })
 
 describe('Tool administration views', () => {
-  it('presents Tool tags and parameter documentation', async () => {
+  it('presents a prominent Tool description and parameter documentation', async () => {
     const tools = [
       {
         id: 1,
@@ -65,7 +65,8 @@ describe('Tool administration views', () => {
     render(ToolsView, { global: { plugins: [i18n] } })
 
     expect(await screen.findByRole('heading', { name: 'Pets' })).toBeTruthy()
-    expect(screen.getByText('Public')).toBeTruthy()
+    expect(screen.getByText('Get a pet').classList.contains('tool-card-description')).toBe(true)
+    expect(screen.queryByText('Public')).toBeNull()
     expect(screen.getByText('Unique pet identifier')).toBeTruthy()
     expect(screen.getByText('Tenant identifier')).toBeTruthy()
     expect(screen.getByText('Path')).toBeTruthy()

@@ -191,6 +191,8 @@ def test_preserves_a_single_body_argument_as_the_raw_json_body() -> None:
     }
 
 
+
+
 @pytest.mark.asyncio
 async def test_candidate_names_are_deterministic_and_unique_without_operation_ids() -> None:
     spec = load_openapi(fixture_bytes("openapi3.yaml"))

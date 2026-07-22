@@ -477,16 +477,17 @@ watch(() => store.tools.map((tool) => tool.id), (toolIds) => {
         <div class="tool-grid">
         <article v-for="tool in tagGroup.tools" :key="tool.id" class="tool-card">
           <div class="tool-card-head"><label class="tool-select"><input type="checkbox" :checked="isToolSelected(tool.id)" :disabled="deleteConfirmationOpen || pendingToolIds.has(tool.id) || (!isToolSelected(tool.id) && selectedTools.length >= MAX_BATCH_TOOLS)" :aria-label="t('tools.bulk.selectTool', { name: tool.name })" @change="setToolSelected(tool.id, ($event.target as HTMLInputElement).checked)" /></label><code>{{ tool.operation_key.split(' ')[0] }}</code><span :class="['status-pill', tool.enabled ? 'enabled' : 'disabled']">{{ tool.enabled ? t('tools.enabled') : t('tools.disabled') }}</span></div>
-          <div v-if="tool.tags?.length" class="tool-tags"><span v-for="tag in tool.tags" :key="tag">{{ tag }}</span></div>
-          <h2>{{ tool.name }}</h2>
-          <div v-if="editingDescriptionId === tool.id" class="tool-description-editor">
-            <label><span>{{ t('tools.descriptionLabel') }}</span><textarea v-model="descriptionDraft" rows="3" maxlength="4000" :disabled="isToolMutationLocked(tool.id)" /></label>
-            <div><button class="primary-action" :disabled="isToolMutationLocked(tool.id)" @click="saveDescription(tool)">{{ t('tools.saveDescription') }}</button><button class="secondary-action" @click="cancelDescriptionEdit">{{ t('tools.cancelDescription') }}</button></div>
-          </div>
+          <template v-if="editingDescriptionId === tool.id">
+            <div class="tool-description-editor">
+              <label><span>{{ t('tools.descriptionLabel') }}</span><textarea v-model="descriptionDraft" rows="3" maxlength="4000" :disabled="isToolMutationLocked(tool.id)" /></label>
+              <div><button class="primary-action" :disabled="isToolMutationLocked(tool.id)" @click="saveDescription(tool)">{{ t('tools.saveDescription') }}</button><button class="secondary-action" @click="cancelDescriptionEdit">{{ t('tools.cancelDescription') }}</button></div>
+            </div>
+          </template>
           <template v-else>
-            <p>{{ tool.description || tool.operation_key }}</p>
+            <p class="tool-card-description">{{ tool.description || tool.operation_key }}</p>
             <button class="description-edit-action" :disabled="isToolMutationLocked(tool.id)" @click="startDescriptionEdit(tool)">{{ t('tools.editDescription') }}</button>
           </template>
+          <h2>{{ tool.name }}</h2>
           <details v-if="tool.parameters.length" class="tool-parameters">
             <summary>{{ t('tools.parameters', { count: tool.parameters.length }) }}</summary>
             <div class="parameter-list">
