@@ -33,6 +33,8 @@ describe('locale coverage', () => {
         'agent.boundSkills',
         'agent.keys.title',
         'agent.keys.oneTimeWarning',
+        'embed.welcome',
+        'embed.unavailable',
         'error.agents.default_cannot_disable',
         'error.agents.default_cannot_delete',
         'error.agents.provider_unavailable',

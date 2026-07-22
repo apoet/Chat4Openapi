@@ -11,6 +11,12 @@ export function createAppRouter(): Router {
       { path: '/setup', name: 'setup', component: () => import('../views/SetupView.vue') },
       { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
       {
+        path: '/embed/:publicId',
+        name: 'embed-chat',
+        component: () => import('../views/EmbedChatView.vue'),
+        meta: { publicEmbed: true },
+      },
+      {
         path: '/admin',
         component: () => import('../layouts/AdminLayout.vue'),
         meta: { requiresAdmin: true },
@@ -28,6 +34,7 @@ export function createAppRouter(): Router {
   })
 
   router.beforeEach(async (to) => {
+    if (to.meta.publicEmbed) return true
     const auth = useAuthStore()
     if (auth.initialized === null) await auth.loadState()
     if (!auth.initialized && to.name !== 'setup') return { name: 'setup' }

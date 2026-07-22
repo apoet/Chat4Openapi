@@ -1,10 +1,11 @@
-import { HttpAgent } from '@ag-ui/client'
+import { HttpAgent, type HttpAgentFetchFn } from '@ag-ui/client'
 
 export type EmbedAgentConfig = {
   url: string
   agentId: string
   threadId: string
   token: string
+  fetch?: HttpAgentFetchFn
 }
 
 export function createEmbedAgent(config: EmbedAgentConfig): HttpAgent {
@@ -13,5 +14,6 @@ export function createEmbedAgent(config: EmbedAgentConfig): HttpAgent {
     agentId: config.agentId,
     threadId: config.threadId,
     headers: { Authorization: `Bearer ${config.token}` },
+    fetch: config.fetch,
   })
 }

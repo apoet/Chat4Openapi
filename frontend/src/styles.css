@@ -12,6 +12,7 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; background: #f3f1ec; }
+body:has(.embed-chat-panel) { min-width: 0; background: #fbfaf7; }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 h1, h2, strong { font-family: 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif; }

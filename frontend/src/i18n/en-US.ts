@@ -116,6 +116,12 @@ export default {
       task: 'Help me with {detail}.',
     },
   },
+  embed: {
+    starting: 'Starting chat…', subtitle: 'Powered by Chat4Openapi', assistant: 'Assistant',
+    welcome: 'Chat with {agent}', welcomeHint: 'Ask a question or request an action.',
+    you: 'You', placeholder: 'Type a message…', send: 'Send', cancel: 'Cancel', close: 'Close chat',
+    unavailable: 'This chat is unavailable.', failed: 'The request could not be completed. Please try again.',
+  },
   action: { continue: 'Continue' },
   error: {
     setup: { already_initialized: 'This Chat4Openapi instance is already initialized.' },

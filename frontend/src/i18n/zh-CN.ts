@@ -116,6 +116,12 @@ export default {
       task: '请帮我{detail}。',
     },
   },
+  embed: {
+    starting: '正在启动对话…', subtitle: '由 Chat4Openapi 提供支持', assistant: '智能助手',
+    welcome: '与 {agent} 对话', welcomeHint: '输入问题，或让它帮你完成操作。',
+    you: '你', placeholder: '输入消息…', send: '发送', cancel: '取消', close: '关闭对话',
+    unavailable: '此对话当前不可用。', failed: '请求未能完成，请重试。',
+  },
   action: { continue: '继续' },
   error: {
     setup: { already_initialized: '此 Chat4Openapi 实例已经完成初始化。' },

@@ -40,4 +40,14 @@ describe('router guards', () => {
 
     expect(router.currentRoute.value.fullPath).toBe('/admin')
   })
+
+  it('keeps public Embed Chat outside setup and administrator guards', async () => {
+    const auth = useAuthStore()
+    auth.initialized = false
+    const router = createAppRouter()
+
+    await router.push('/embed/public-id')
+
+    expect(router.currentRoute.value.fullPath).toBe('/embed/public-id')
+  })
 })
