@@ -28,6 +28,7 @@ export function createAppRouter(): Router {
           { path: 'providers', name: 'providers', component: () => import('../views/ProvidersView.vue') },
           { path: 'skills', name: 'skills', component: () => import('../views/SkillsView.vue') },
           { path: 'agent', name: 'agent', component: () => import('../views/AgentView.vue') },
+          { path: 'settings', name: 'settings', component: () => import('../views/SettingsView.vue') },
         ],
       },
     ],

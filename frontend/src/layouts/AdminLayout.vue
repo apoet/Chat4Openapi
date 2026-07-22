@@ -35,6 +35,7 @@ async function logout(): Promise<void> {
         <RouterLink to="/admin/tool-auth" class="nav-link">⎋ <span>{{ t('toolAuth.nav') }}</span></RouterLink>
         <RouterLink to="/admin/skills" class="nav-link">✦ <span>{{ t('overview.skills') }}</span></RouterLink>
         <RouterLink to="/admin/agent" class="nav-link">◉ <span>{{ t('agent.nav') }}</span></RouterLink>
+        <RouterLink to="/admin/settings" class="nav-link">⚙ <span>{{ t('settings.nav') }}</span></RouterLink>
         <RouterLink to="/chat" class="nav-link">◫ <span>{{ t('chat.title') }}</span></RouterLink>
       </nav>
       <div class="sidebar-footer">

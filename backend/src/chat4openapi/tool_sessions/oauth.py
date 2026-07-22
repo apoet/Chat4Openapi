@@ -110,6 +110,12 @@ class ToolOAuthService:
 
     def configure_source(self, source_id: int, supplied: Mapping[str, Any]) -> None:
         source = self._source(source_id)
+        row = self._session.get(ApiSourceOAuthConfig, source.id)
+        existing_secret: str | None = None
+        if row is not None:
+            existing = self._cipher.decrypt_json(row.encrypted_config)
+            if isinstance(existing, dict) and isinstance(existing.get("client_secret"), str):
+                existing_secret = existing["client_secret"]
         client_id = supplied.get("client_id")
         if not isinstance(client_id, str) or not client_id.strip():
             raise OAuthFlowError("oauth.config_invalid")
@@ -120,7 +126,7 @@ class ToolOAuthService:
             raise OAuthFlowError("oauth.config_invalid")
         config = {
             "client_id": client_id.strip(),
-            "client_secret": supplied.get("client_secret") or None,
+            "client_secret": supplied.get("client_secret") or existing_secret,
             "authorization_url": _safe_url(supplied.get("authorization_url"), required=False),
             "token_url": _safe_url(supplied.get("token_url")),
             "device_authorization_url": _safe_url(
@@ -131,7 +137,6 @@ class ToolOAuthService:
         }
         if config["client_secret"] is not None and not isinstance(config["client_secret"], str):
             raise OAuthFlowError("oauth.config_invalid")
-        row = self._session.get(ApiSourceOAuthConfig, source.id)
         if row is None:
             row = ApiSourceOAuthConfig(api_source_id=source.id, encrypted_config=b"")
             self._session.add(row)

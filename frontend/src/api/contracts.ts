@@ -139,6 +139,35 @@ export interface ChatAgentSummary {
   skill_ids?: number[]
 }
 
+export interface AppSettings {
+  base_url: string | null
+}
+
+export interface OAuthConfigSummary {
+  api_source_id: number
+  enabled: boolean
+  client_id: string
+  has_client_secret: boolean
+  authorization_url: string | null
+  token_url: string
+  device_authorization_url: string | null
+  redirect_uri: string | null
+  scopes: string[]
+  recommended_redirect_uri: string | null
+  effective_redirect_uri: string | null
+}
+
+export interface OAuthConfigWrite {
+  enabled: boolean
+  client_id: string
+  client_secret: string | null
+  authorization_url: string | null
+  token_url: string
+  device_authorization_url: string | null
+  redirect_uri: string | null
+  scopes: string[]
+}
+
 export interface ChatBootstrapResponse {
   subject_id: string
   agents: ChatAgentSummary[]
@@ -160,6 +189,25 @@ export interface AgentApiKey {
 export interface AgentApiKeyCreated extends AgentApiKey {
   secret: string
 }
+
+export interface AgentEmbedConfig {
+  id: number
+  agent_id: number
+  name: string
+  public_id: string
+  enabled: boolean
+  allowed_origins: string[]
+  position: 'bottom_right' | 'bottom_left'
+  created_at: string
+  updated_at: string
+  deleted_at: string | null
+  script: string | null
+}
+
+export type AgentEmbedWrite = Pick<
+  AgentEmbedConfig,
+  'name' | 'enabled' | 'allowed_origins' | 'position'
+>
 
 export interface SkillSummary {
   id: number

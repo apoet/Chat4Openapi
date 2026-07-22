@@ -1216,6 +1216,29 @@ async def test_device_api_uses_agent_key_and_never_accepts_endpoint_urls(
     assert "api-device-secret" not in clean.text
 
 
+def test_updating_oauth_config_keeps_an_existing_secret_when_omitted(
+    db_session_factory,
+) -> None:
+    _secret, _agent_id, _key_id, source_id = _seed(db_session_factory)
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as db:
+        service = ToolOAuthService(db, cipher)
+        _configure(service, source_id)
+        service.configure_source(
+            source_id,
+            {
+                "client_id": "updated-client",
+                "client_secret": None,
+                "authorization_url": "https://issuer.example.test/authorize",
+                "token_url": "https://issuer.example.test/token",
+                "scopes": ["openid"],
+            },
+        )
+        row = db.get(ApiSourceOAuthConfig, source_id)
+        assert row is not None
+        assert cipher.decrypt_json(row.encrypted_config)["client_secret"] == "super-secret"
+
+
 @pytest.mark.asyncio
 async def test_admin_oauth_config_and_pkce_callback_are_secret_free_and_csrf_safe(
     client: httpx.AsyncClient, app, db_session_factory
@@ -1230,6 +1253,12 @@ async def test_admin_oauth_config_and_pkce_callback_are_secret_free_and_csrf_saf
         "/api/admin/auth/login", json={"username": "admin", "password": "admin123"}
     )
     csrf = login.json()["csrf_token"]
+    settings = await client.put(
+        "/api/admin/settings",
+        headers={"X-CSRF-Token": csrf},
+        json={"base_url": "https://chat.example.test/"},
+    )
+    assert settings.status_code == 200
     cipher = SecretCipher(Fernet.generate_key())
     posted: list[httpx.Request] = []
 
@@ -1264,6 +1293,10 @@ async def test_admin_oauth_config_and_pkce_callback_are_secret_free_and_csrf_saf
     assert missing_csrf.status_code == 403
     assert configured.status_code == 200
     assert configured.json()["has_client_secret"] is True
+    assert configured.json()["recommended_redirect_uri"] == (
+        "https://chat.example.test/api/tool-sessions/oauth/pkce/callback"
+    )
+    assert configured.json()["effective_redirect_uri"] == config_payload["redirect_uri"]
     assert "client-secret-never-return" not in configured.text
 
     missing_start_csrf = await client.post(

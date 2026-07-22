@@ -3,10 +3,13 @@ import { inject, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { routerKey } from 'vue-router'
 
-import type { ApiSourceSummary } from '../api/contracts'
+import { ApiError, request } from '../api/client'
+import type { ApiSourceSummary, OAuthConfigSummary, OAuthConfigWrite } from '../api/contracts'
+import { useAuthStore } from '../stores/auth'
 import { useToolsStore } from '../stores/tools'
 
 const store = useToolsStore()
+const auth = useAuthStore()
 const { t } = useI18n()
 const router = inject(routerKey, null)
 const name = ref('')
@@ -23,6 +26,17 @@ const editDocumentUrl = ref('')
 const editAllowPrivateNetworks = ref(false)
 const refreshingId = ref<number | null>(null)
 const refreshNotice = ref<{ sourceId: number; message: string } | null>(null)
+const oauthSource = ref<ApiSourceSummary | null>(null)
+const oauthSummary = ref<OAuthConfigSummary | null>(null)
+const oauthEnabled = ref(true)
+const oauthClientId = ref('')
+const oauthClientSecret = ref('')
+const oauthAuthorizationUrl = ref('')
+const oauthTokenUrl = ref('')
+const oauthDeviceUrl = ref('')
+const oauthRedirectUri = ref('')
+const oauthScopes = ref('')
+const oauthPending = ref(false)
 
 onMounted(() => void store.loadSources())
 
@@ -121,6 +135,48 @@ function viewTools(source: ApiSourceSummary): void {
     query: { source_id: String(source.id), source_name: source.name },
   })
 }
+
+function fillOAuth(summary: OAuthConfigSummary | null): void {
+  oauthSummary.value = summary
+  oauthEnabled.value = summary?.enabled ?? true
+  oauthClientId.value = summary?.client_id ?? ''
+  oauthClientSecret.value = ''
+  oauthAuthorizationUrl.value = summary?.authorization_url ?? ''
+  oauthTokenUrl.value = summary?.token_url ?? ''
+  oauthDeviceUrl.value = summary?.device_authorization_url ?? ''
+  oauthRedirectUri.value = summary?.redirect_uri ?? ''
+  oauthScopes.value = summary?.scopes.join(' ') ?? ''
+}
+
+async function openOAuth(source: ApiSourceSummary): Promise<void> {
+  oauthSource.value = source
+  try {
+    fillOAuth(await request<OAuthConfigSummary>(`/api/admin/sources/${source.id}/oauth`))
+  } catch (error) {
+    if (!(error instanceof ApiError) || !['oauth.not_configured', 'http.404'].includes(error.code)) throw error
+    fillOAuth(null)
+  }
+}
+
+async function saveOAuth(): Promise<void> {
+  if (!oauthSource.value || oauthPending.value) return
+  oauthPending.value = true
+  const payload: OAuthConfigWrite = {
+    enabled: oauthEnabled.value,
+    client_id: oauthClientId.value.trim(),
+    client_secret: oauthClientSecret.value.trim() || null,
+    authorization_url: oauthAuthorizationUrl.value.trim() || null,
+    token_url: oauthTokenUrl.value.trim(),
+    device_authorization_url: oauthDeviceUrl.value.trim() || null,
+    redirect_uri: oauthRedirectUri.value.trim() || null,
+    scopes: oauthScopes.value.split(/[\s,]+/).filter(Boolean),
+  }
+  try {
+    fillOAuth(await request<OAuthConfigSummary>(`/api/admin/sources/${oauthSource.value.id}/oauth`, {
+      method: 'PUT', body: JSON.stringify(payload),
+    }, auth.csrfToken))
+  } finally { oauthPending.value = false }
+}
 </script>
 
 <template>
@@ -156,9 +212,24 @@ function viewTools(source: ApiSourceSummary): void {
         <template v-else>
           <div><strong>{{ source.name }}</strong><p>{{ source.base_url }}</p><p v-if="source.document_url">{{ source.document_url }}</p><p v-if="refreshNotice?.sourceId === source.id" class="refresh-notice">{{ refreshNotice.message }}</p></div>
           <span :class="['status-pill', source.enabled ? 'enabled' : 'disabled']">{{ source.enabled ? t('tools.enabled') : t('tools.disabled') }}</span>
-          <footer class="row-actions"><button class="secondary-action" @click="viewTools(source)">{{ t('sources.viewTools') }}</button><button v-if="source.document_url" class="secondary-action" :disabled="refreshingId === source.id" @click="refreshSource(source)">{{ refreshingId === source.id ? t('sources.updating') : t('sources.update') }}</button><label v-else class="secondary-action source-refresh-file"><span>{{ t('sources.chooseUpdateFile') }}</span><input type="file" accept=".json,.yaml,.yml,application/json,application/yaml" :aria-label="t('sources.chooseUpdateFile')" :disabled="refreshingId === source.id" @change="refreshSourceFile(source, $event)" /></label><button class="secondary-action" @click="startEdit(source)">{{ t('skills.edit') }}</button><button class="secondary-action" @click="store.setSourceEnabled(source, !source.enabled)">{{ source.enabled ? t('tools.disable') : t('tools.enable') }}</button><button class="danger-action" @click="store.deleteSource(source)">{{ t('tools.delete') }}</button></footer>
+          <footer class="row-actions"><button class="secondary-action" @click="viewTools(source)">{{ t('sources.viewTools') }}</button><button class="secondary-action" :data-testid="`source-oauth-${source.id}`" @click="openOAuth(source)">{{ t('sources.oauth.open') }}</button><button v-if="source.document_url" class="secondary-action" :disabled="refreshingId === source.id" @click="refreshSource(source)">{{ refreshingId === source.id ? t('sources.updating') : t('sources.update') }}</button><label v-else class="secondary-action source-refresh-file"><span>{{ t('sources.chooseUpdateFile') }}</span><input type="file" accept=".json,.yaml,.yml,application/json,application/yaml" :aria-label="t('sources.chooseUpdateFile')" :disabled="refreshingId === source.id" @change="refreshSourceFile(source, $event)" /></label><button class="secondary-action" @click="startEdit(source)">{{ t('skills.edit') }}</button><button class="secondary-action" @click="store.setSourceEnabled(source, !source.enabled)">{{ source.enabled ? t('tools.disable') : t('tools.enable') }}</button><button class="danger-action" @click="store.deleteSource(source)">{{ t('tools.delete') }}</button></footer>
         </template>
       </article>
+    </section>
+    <section v-if="oauthSource" class="import-panel oauth-panel">
+      <div class="panel-heading"><div><p class="eyebrow">OAuth 2.0</p><h2>{{ t('sources.oauth.title', { name: oauthSource.name }) }}</h2></div><button type="button" class="text-button" @click="oauthSource = null">×</button></div>
+      <form class="form-grid" @submit.prevent="saveOAuth">
+        <label class="checkbox-label"><input v-model="oauthEnabled" type="checkbox" />{{ t('sources.oauth.enabled') }}</label>
+        <label>{{ t('sources.oauth.clientId') }}<input v-model="oauthClientId" required /></label>
+        <label>{{ t('sources.oauth.clientSecret') }}<input v-model="oauthClientSecret" type="password" :placeholder="oauthSummary?.has_client_secret ? t('sources.oauth.keepSecret') : ''" /></label>
+        <label>{{ t('sources.oauth.authorizationUrl') }}<input v-model="oauthAuthorizationUrl" type="url" /><small v-if="oauthAuthorizationUrl" class="muted">{{ oauthAuthorizationUrl }}</small></label>
+        <label>{{ t('sources.oauth.tokenUrl') }}<input v-model="oauthTokenUrl" type="url" required /></label>
+        <label>{{ t('sources.oauth.deviceUrl') }}<input v-model="oauthDeviceUrl" type="url" /></label>
+        <label>{{ t('sources.oauth.scopes') }}<input v-model="oauthScopes" /></label>
+        <label>{{ t('sources.oauth.redirectOverride') }}<input v-model="oauthRedirectUri" type="url" /></label>
+        <div class="oauth-callbacks"><p><strong>{{ t('sources.oauth.recommended') }}</strong> {{ oauthSummary?.recommended_redirect_uri || t('sources.oauth.baseUrlRequired') }}</p><p><strong>{{ t('sources.oauth.effective') }}</strong> {{ oauthSummary?.effective_redirect_uri || oauthRedirectUri || t('sources.oauth.baseUrlRequired') }}</p></div>
+        <button class="primary-action" :disabled="oauthPending || !oauthClientId || !oauthTokenUrl">{{ t('sources.oauth.save') }}</button>
+      </form>
     </section>
   </main>
 </template>

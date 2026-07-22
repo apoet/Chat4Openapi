@@ -19,6 +19,7 @@ from chat4openapi.api.tool_sessions import (
 from chat4openapi.config import Settings, get_settings
 from chat4openapi.db.session import get_db_session
 from chat4openapi.embed.grants import create_auth_grant
+from chat4openapi.models import AppSetting
 from chat4openapi.security.agent_keys import AgentKeyContext, require_agent_api_key
 from chat4openapi.security.encryption import SecretCipher, SecretDecryptionError
 from chat4openapi.tool_sessions.oauth import (
@@ -55,6 +56,8 @@ class OAuthConfigSummary(BaseModel):
     device_authorization_url: str | None
     redirect_uri: str | None
     scopes: list[str]
+    recommended_redirect_uri: str | None
+    effective_redirect_uri: str | None
 
 
 class OAuthStartRequest(BaseModel):
@@ -143,6 +146,25 @@ def _device_response(status: OAuthStatus) -> DeviceFlowResponse:
     )
 
 
+def _config_summary(
+    service: ToolOAuthService, db: Session, source_id: int
+) -> OAuthConfigSummary:
+    summary = service.config_summary(source_id)
+    settings = db.get(AppSetting, 1)
+    recommended = (
+        f"{settings.base_url}/api/tool-sessions/oauth/pkce/callback"
+        if settings is not None and settings.base_url is not None
+        else None
+    )
+    return OAuthConfigSummary.model_validate(
+        {
+            **summary,
+            "recommended_redirect_uri": recommended,
+            "effective_redirect_uri": summary.get("redirect_uri") or recommended,
+        }
+    )
+
+
 @router.put(
     "/api/admin/sources/{source_id}/oauth", response_model=OAuthConfigSummary
 )
@@ -155,7 +177,7 @@ def configure_oauth(
     service = ToolOAuthService(context.db, cipher)
     try:
         service.configure_source(source_id, payload.model_dump())
-        return OAuthConfigSummary.model_validate(service.config_summary(source_id))
+        return _config_summary(service, context.db, source_id)
     except Exception as exc:
         raise _oauth_error(exc) from exc
 
@@ -169,8 +191,8 @@ def oauth_config(
     cipher: SecretCipher = Depends(get_tool_secret_cipher),
 ) -> OAuthConfigSummary:
     try:
-        return OAuthConfigSummary.model_validate(
-            ToolOAuthService(context.db, cipher).config_summary(source_id)
+        return _config_summary(
+            ToolOAuthService(context.db, cipher), context.db, source_id
         )
     except Exception as exc:
         raise _oauth_error(exc) from exc
