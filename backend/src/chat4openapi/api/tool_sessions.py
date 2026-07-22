@@ -11,7 +11,6 @@ from chat4openapi.config import Settings, get_settings
 from chat4openapi.db.session import get_db_session
 from chat4openapi.models import (
     Agent,
-    ApiSource,
     GlobalToolAuthConfig,
     Tool,
     ToolSessionCredential,
@@ -39,6 +38,10 @@ from chat4openapi.tool_sessions.service import (
 )
 from chat4openapi.tools.errors import ToolExecutionError
 from chat4openapi.tools.executor import RequestAuth, ToolExecutor
+from chat4openapi.tools.execution_policy import (
+    ToolUnavailableError,
+    resolve_tool_execution_policy,
+)
 
 TOOL_SESSION_COOKIE = "chat4openapi_tool_session"
 router = APIRouter(tags=["tool-sessions"])
@@ -371,8 +374,11 @@ async def invoke_tool(
     tool = db.get(Tool, tool_id)
     if tool is None or tool.deleted_at is not None or not tool.enabled:
         raise ApiError(404, "tools.not_found")
-    config = db.get(GlobalToolAuthConfig, 1)
-    if config is not None and config.enabled and config.login_tool_id == tool.id:
+    try:
+        policy = resolve_tool_execution_policy(db, tool)
+    except ToolUnavailableError as exc:
+        raise ApiError(404, "tools.source_not_found") from exc
+    if policy.is_login_tool:
         raise ApiError(404, "tools.not_found")
     token = payload.tool_session_id or request.cookies.get(TOOL_SESSION_COOKIE)
     try:
@@ -386,15 +392,18 @@ async def invoke_tool(
                 agent_key_id=binding[1],
                 admin_session_id=binding[2],
             )
-        elif config is not None and config.enabled:
-            if not token:
-                raise ToolSessionNotFound
+        elif policy.authorization_required:
+            raise ToolSessionNotFound
         else:
-            source = db.get(ApiSource, tool.api_source_id)
-            if source is None:
-                raise ApiError(404, "tools.source_not_found")
-            result = await executor.execute(tool, source, payload.arguments, RequestAuth())
-    except (ToolSessionNotFound, ToolSessionExpired, ToolLoginDisabled) as exc:
+            result = await executor.execute(
+                tool, policy.source, payload.arguments, RequestAuth()
+            )
+    except (
+        ToolSessionNotFound,
+        ToolSessionExpired,
+        ToolSessionReauthorizationRequired,
+        ToolLoginDisabled,
+    ) as exc:
         raise _session_error(exc) from exc
     except ToolExecutionError as exc:
         raise ApiError(502, "tools.execution_failed", reason=str(exc)) from exc

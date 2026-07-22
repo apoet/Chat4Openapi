@@ -23,17 +23,26 @@ from chat4openapi.models import (
     ApiSource,
     ChatMessage,
     Conversation,
-    GlobalToolAuthConfig,
     LlmProvider,
     Skill,
     SkillTool,
     Tool,
 )
 from chat4openapi.security.encryption import SecretCipher
-from chat4openapi.tool_sessions.service import ToolSessionError, ToolSessionService
+from chat4openapi.tool_sessions.service import (
+    ToolSessionError,
+    ToolSessionExpired,
+    ToolSessionNotFound,
+    ToolSessionReauthorizationRequired,
+    ToolSessionService,
+)
 from chat4openapi.tools.effective_schema import effective_input_schema
 from chat4openapi.tools.executor import RequestAuth, ToolExecutionResult
 from chat4openapi.tools.errors import ToolExecutionError
+from chat4openapi.tools.execution_policy import (
+    ToolUnavailableError,
+    resolve_tool_execution_policy,
+)
 
 DEFAULT_AGENT_PROMPT = """You are Chat4Openapi Agent, the built-in assistant.
 
@@ -605,7 +614,7 @@ class AgentRuntime:
         admin_session_id: int | None,
     ) -> Any:
         try:
-            config = self._session.get(GlobalToolAuthConfig, 1)
+            policy = resolve_tool_execution_policy(self._session, tool)
             if tool_session_id:
                 result = await ToolSessionService(
                     self._session, self._cipher, self._tool_runner
@@ -617,22 +626,23 @@ class AgentRuntime:
                     agent_key_id=agent_key_id,
                     admin_session_id=admin_session_id,
                 )
-            elif config is not None and config.enabled:
+            elif policy.authorization_required:
                 return {"error": "tool_authorization_required", "tool": tool.name}
             else:
-                source = self._session.get(ApiSource, tool.api_source_id)
-                if source is None or source.deleted_at is not None or not source.enabled:
-                    return {"error": "tool_unavailable", "tool": tool.name}
-                result = await self._tool_runner.execute(tool, source, arguments, RequestAuth())
+                result = await self._tool_runner.execute(
+                    tool, policy.source, arguments, RequestAuth()
+                )
             return result.data
+        except ToolUnavailableError:
+            return {"error": "tool_unavailable", "tool": tool.name}
         except ToolExecutionError as exc:
             return {"error": exc.code, "message": str(exc), "tool": tool.name}
-        except ToolSessionError as exc:
-            return {
-                "error": "tool_session_error",
-                "message": str(exc),
-                "tool": tool.name,
-            }
+        except ToolSessionNotFound:
+            return {"error": "tool_authorization_required", "tool": tool.name}
+        except (ToolSessionExpired, ToolSessionReauthorizationRequired):
+            return {"error": "tool_reauthorization_required", "tool": tool.name}
+        except ToolSessionError:
+            return {"error": "tool_session_error", "tool": tool.name}
 
     def _persist_message(self, conversation_id: str, role: str, content: dict[str, Any]) -> None:
         current = self._session.scalar(

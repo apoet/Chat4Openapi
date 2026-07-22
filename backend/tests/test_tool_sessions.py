@@ -22,6 +22,7 @@ from chat4openapi.tool_sessions.auth_mapping import build_request_auth, extract_
 from chat4openapi.tool_sessions.service import (
     ToolSessionExpired,
     ToolSessionNotFound,
+    ToolSessionReauthorizationRequired,
     ToolSessionService,
 )
 from chat4openapi.tools.errors import ToolExecutionError
@@ -292,7 +293,7 @@ async def test_idle_absolute_expiry_and_revoke_delete_secrets(db_session_factory
     await service.revoke(
         active.token, context.agent.id, context.api_key.id
     )
-    with pytest.raises(ToolSessionNotFound):
+    with pytest.raises(ToolSessionReauthorizationRequired):
         await service.resolve(
             active.token, context.agent.id, context.api_key.id, protected.api_source_id
         )

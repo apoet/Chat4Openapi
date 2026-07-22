@@ -27,4 +27,4 @@ Single-item and batch endpoints call the same Tool action function:
 
 - Focused bulk tests, existing Tool API tests, full backend tests.
 - Ruff, `git diff --check`, secret/internal-error and old-route scans.
-- All Python commands use `conda run -n chatapi`.
+- All Python commands use the available project Conda environment.

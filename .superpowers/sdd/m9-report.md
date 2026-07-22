@@ -56,7 +56,7 @@
 - `git diff --check`: clean (Git emitted only line-ending notices).
 - Production scans: no frontend `candidate_skill_ids`, `SkillMultiSelect`, Chat credential/token references, `ChatOrchestrator`, or `chat.orchestrator` references.
 
-All Node commands used `D:\\nvm\\nodejs\\npm.cmd`; Python verification used the existing `chatapi` Conda environment.
+All Node commands used `D:\\nvm\\nodejs\\npm.cmd`; Python verification used the available project Conda environment.
 
 ## Scope
 

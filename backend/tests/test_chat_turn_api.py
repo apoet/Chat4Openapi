@@ -7,7 +7,7 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy import select
 
-import chat4openapi.chat.api as chat_api_module
+import chat4openapi.chat.api as compatible_chat_module
 from chat4openapi.api.tool_sessions import get_tool_secret_cipher
 from chat4openapi.chat.agent import AgentTurnRequest, AgentTurnResult
 from chat4openapi.chat.api import BROWSER_CHAT_COOKIE, get_llm_client
@@ -577,7 +577,7 @@ async def test_browser_turn_forwards_tool_session_and_maps_agent_result(
             requests.append(request)
             return expected
 
-    monkeypatch.setattr(chat_api_module, "AgentRuntime", RecordingRuntime, raising=False)
+    monkeypatch.setattr(compatible_chat_module, "AgentRuntime", RecordingRuntime, raising=False)
     await client.get("/api/chat/bootstrap")
     with db_session_factory() as session:
         browser_session = session.scalar(select(BrowserChatSession))

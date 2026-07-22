@@ -6,13 +6,14 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 from cryptography.fernet import Fernet
-from sqlalchemy import select
+from sqlalchemy import delete, select, text
 
-from chat4openapi.api.tool_sessions import get_tool_secret_cipher
+from chat4openapi.api.tool_sessions import get_tool_executor, get_tool_secret_cipher
 from chat4openapi.models import (
     Agent,
     AgentApiKey,
     ApiSource,
+    ApiSourceOAuthConfig,
     ToolSessionCredential,
     ToolUserSession,
     Tool,
@@ -25,13 +26,22 @@ from chat4openapi.tool_sessions.service import (
     ToolSessionService,
 )
 from chat4openapi.tool_sessions.credentials import CredentialValidationError
-from chat4openapi.tools.executor import RequestAuth
+from chat4openapi.tools.executor import RequestAuth, ToolExecutionResult
 from chat4openapi.tools.executor import ToolExecutor
 
 
 class UnusedExecutor:
     async def execute(self, *_args, **_kwargs):
         raise AssertionError("credential injection must not call an upstream Tool")
+
+
+class RecordingInvokeExecutor:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    async def execute(self, tool, source, arguments, auth):
+        self.calls.append((tool.id, source.id, arguments, auth))
+        return ToolExecutionResult(200, {"ok": True}, "application/json")
 
 
 def _jwt(exp: datetime) -> str:
@@ -448,7 +458,7 @@ async def test_programmatic_status_and_revoke_enforce_the_creating_key(
     assert "never-return-me" not in status.text
     assert revoked.status_code == 204
     assert after.status_code == 401
-    assert after.json()["error"]["code"] == "tool_session.required"
+    assert after.json()["error"]["code"] == "tool_reauthorization_required"
 
 
 @pytest.mark.asyncio
@@ -508,3 +518,185 @@ async def test_admin_cookie_tool_session_mutations_require_csrf(
         assert response.status_code == 403
         assert response.json()["error"]["code"] == "auth.csrf_invalid"
     assert revoked.status_code == 204
+
+
+def _seed_oauth_tool(factory, source_id: int, cipher: SecretCipher) -> int:
+    with factory() as session:
+        tool = Tool(
+            api_source_id=source_id,
+            operation_key="GET /protected",
+            name="protected_tool",
+            input_schema={"type": "object"},
+            execution_schema={"method": "GET", "path": "/protected", "parameters": []},
+            enabled=True,
+        )
+        session.add(tool)
+        session.flush()
+        session.add(
+            ApiSourceOAuthConfig(
+                api_source_id=source_id,
+                encrypted_config=cipher.encrypt_json({"client_secret": "never-return"}),
+                enabled=True,
+            )
+        )
+        session.commit()
+        return tool.id
+
+
+@pytest.mark.asyncio
+async def test_direct_oauth_tool_requires_session_before_upstream(
+    client: httpx.AsyncClient, app, db_session_factory
+) -> None:
+    secret, _agent_id, _key_id, source_id, _ = _seed_owner(db_session_factory)
+    cipher = SecretCipher(Fernet.generate_key())
+    tool_id = _seed_oauth_tool(db_session_factory, source_id, cipher)
+    executor = RecordingInvokeExecutor()
+    app.dependency_overrides[get_tool_executor] = lambda: executor
+
+    response = await client.post(
+        f"/api/tools/{tool_id}/invoke",
+        headers={"Authorization": f"Bearer {secret}"},
+        json={"arguments": {}},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "tool_session.required"
+    assert executor.calls == []
+    assert "never-return" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_direct_oauth_tool_accepts_valid_bound_session(
+    client: httpx.AsyncClient, app, db_session_factory
+) -> None:
+    secret, _agent_id, _key_id, source_id, _ = _seed_owner(db_session_factory)
+    cipher = SecretCipher(Fernet.generate_key())
+    tool_id = _seed_oauth_tool(db_session_factory, source_id, cipher)
+    executor = RecordingInvokeExecutor()
+    app.dependency_overrides[get_tool_executor] = lambda: executor
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    headers = {"Authorization": f"Bearer {secret}"}
+    created = await client.post(
+        "/api/tool-sessions/credentials",
+        headers=headers,
+        json={"api_source_id": source_id, "headers": {"Authorization": "Bearer safe"}},
+    )
+
+    response = await client.post(
+        f"/api/tools/{tool_id}/invoke",
+        headers=headers,
+        json={"arguments": {}, "tool_session_id": created.json()["tool_session_id"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"] == {"ok": True}
+    assert len(executor.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_state", ["expired", "revoked", "rejected"])
+async def test_direct_oauth_tool_maps_invalid_bound_session_to_reauthorization(
+    client: httpx.AsyncClient, app, db_session_factory, session_state: str
+) -> None:
+    secret, _agent_id, _key_id, source_id, _ = _seed_owner(db_session_factory)
+    cipher = SecretCipher(Fernet.generate_key())
+    tool_id = _seed_oauth_tool(db_session_factory, source_id, cipher)
+    executor = RecordingInvokeExecutor()
+    app.dependency_overrides[get_tool_executor] = lambda: executor
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    headers = {"Authorization": f"Bearer {secret}"}
+    created = await client.post(
+        "/api/tool-sessions/credentials",
+        headers=headers,
+        json={"api_source_id": source_id, "headers": {"Authorization": "Bearer safe"}},
+    )
+    token = created.json()["tool_session_id"]
+    with db_session_factory() as session:
+        row = session.scalar(select(ToolUserSession))
+        credential = session.scalar(select(ToolSessionCredential))
+        assert row is not None and credential is not None
+        if session_state == "expired":
+            row.idle_expires_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=1)
+        elif session_state == "revoked":
+            row.status = "revoked"
+            row.revoked_at = datetime.now(UTC).replace(tzinfo=None)
+        else:
+            credential.status = "failed"
+        session.commit()
+
+    response = await client.post(
+        f"/api/tools/{tool_id}/invoke",
+        headers=headers,
+        json={"arguments": {}, "tool_session_id": token},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "tool_reauthorization_required"
+    assert executor.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_state", ["missing", "disabled", "deleted"])
+@pytest.mark.parametrize("with_session", [False, True])
+@pytest.mark.parametrize("owner_kind", ["agent_key", "admin"])
+async def test_direct_invoke_rejects_unavailable_source_in_every_session_branch(
+    client: httpx.AsyncClient,
+    app,
+    db_session_factory,
+    source_state: str,
+    with_session: bool,
+    owner_kind: str,
+) -> None:
+    secret, agent_id, _key_id, source_id, _ = _seed_owner(db_session_factory)
+    cipher = SecretCipher(Fernet.generate_key())
+    tool_id = _seed_oauth_tool(db_session_factory, source_id, cipher)
+    executor = RecordingInvokeExecutor()
+    app.dependency_overrides[get_tool_executor] = lambda: executor
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    if owner_kind == "agent_key":
+        headers = {"Authorization": f"Bearer {secret}"}
+    else:
+        setup = await client.post(
+            "/api/setup",
+            json={"username": "admin", "password": "admin123", "locale": "en-US"},
+        )
+        assert setup.status_code == 201
+        login = await client.post(
+            "/api/admin/auth/login",
+            json={"username": "admin", "password": "admin123"},
+        )
+        assert login.status_code == 200
+        headers = {"X-CSRF-Token": login.json()["csrf_token"]}
+    token = None
+    if with_session:
+        created = await client.post(
+            "/api/tool-sessions/credentials",
+            headers=headers,
+            json={
+                "agent_id": agent_id,
+                "api_source_id": source_id,
+                "headers": {"Authorization": "Bearer safe"},
+            },
+        )
+        token = created.json()["tool_session_id"]
+    with db_session_factory() as session:
+        source = session.get(ApiSource, source_id)
+        assert source is not None
+        if source_state == "missing":
+            session.execute(text("PRAGMA foreign_keys=OFF"))
+            session.execute(delete(ApiSource).where(ApiSource.id == source_id))
+        elif source_state == "disabled":
+            source.enabled = False
+        else:
+            source.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        session.commit()
+
+    response = await client.post(
+        f"/api/tools/{tool_id}/invoke",
+        headers=headers,
+        json={"arguments": {}, **({"tool_session_id": token} if token else {})},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "tools.source_not_found"
+    assert executor.calls == []

@@ -55,7 +55,7 @@
 ## Verification
 
 The requested `chat4openapi` conda environment was not installed. Verification used the repository's
-available Python 3.12 `chatapi` conda environment.
+available Python 3.12 project Conda environment.
 
 - Focused M6/runtime/MCP tests: `50 passed`.
 - Full backend suite: `235 passed`.

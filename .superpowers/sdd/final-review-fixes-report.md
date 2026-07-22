@@ -1,54 +1,47 @@
-# Final review fixes report
+# Final Branch Review Fixes
 
-Date: 2026-07-21
-Base: `fc7422f`
+Date: 2026-07-22
+Base: `6ef657b`
 
 ## Status
 
-Implemented every Critical/Important finding from the final whole-branch review, plus the requested Agent timestamps and database constraints.
+Complete. The final Important findings are covered by shared execution policy, focused regressions, repository-wide rename enforcement, and full backend/frontend verification.
 
-## Changes
+## Authentication and execution guards
 
-- Compatibility history: OpenAI and Anthropic requests normalize and persist the complete incoming system/user/assistant transcript, including Anthropic top-level `system`. New compatibility conversations expose the full transcript to the Agent. Existing server conversations append only the non-overlapping suffix.
-- Default Agent policy: replaced the short prompt with the complete shared operating policy. Migration `0005` seeds it for fresh databases; `0007` upgrades only blank/whitespace or the exact known legacy short prompt and preserves custom prompts.
-- Schema validation: added direct `jsonschema` dependency and validates `load_skills`, `ask_user`, and business Tool arguments before execution. Invalid calls become structured observations; business runners are not invoked.
-- Candidate continuation: persists `candidate_scope_source`, retains the initial automatic catalog across later catalog changes, rejects explicit changes, filters stopped/deleted candidates on existing conversations, and drops unavailable loaded Skills and their Tools.
-- Shared Tools: unions/deduplicates by Tool ID. A Tool row shared by multiple Skills is exposed once; distinct Tool IDs with the same name produce a deterministic conflict. Migration `0007` removes the prior global Tool-name uniqueness constraint so real collisions can be represented and handled at runtime.
-- Failure state: every turn starts as `running` with a cleared failure summary. Provider, credential decryption, malformed response, unexpected runtime, configuration, name-conflict, and iteration-limit failures persist a redacted `latest_failure_summary` and raise structured `AgentError`/API envelopes.
-- Persistence/API: added Agent `created_at`/`updated_at`, Conversation `latest_failure_summary`, Agent mode/max-iteration database checks, timestamp response fields, and matching frontend contracts.
+- Added one execute-time policy resolver shared by Agent execution, direct Tool invocation, and Tool Session execution. It refreshes the Tool, reloads its API Source, rejects missing/deleted/disabled state, and determines authentication from both the enabled global login configuration and an enabled source OAuth configuration.
+- OAuth-protected Tools now return a stable authorization-required observation when the Agent has no usable Tool Session. Direct invocation requires a Tool Session before any upstream execution.
+- Agent Tool Session failures are deliberately classified without exception messages: missing/unknown sessions request authorization; expired, revoked, or rejected sessions request reauthorization; only unexpected session failures use the generic session error.
+- Direct invocation rejects unavailable sources before both session and no-session branches. Coverage exercises missing, deleted, and disabled sources for Agent-key and administrator owners, with and without a bound session, and verifies zero upstream calls.
+- Tool Session execution repeats the shared policy check immediately before credential resolution and upstream execution to reduce state-change races.
+
+## Tracked rename gate
+
+- Replaced machine-local Conda environment names in tracked briefs/reports with neutral project-environment wording.
+- Renamed two test module aliases that retained the legacy package spelling.
+- Added a `git ls-files`-driven regression test. It reads every tracked path, including hidden reports, decodes content without excluding tracked files, and enforces case-insensitive absence of legacy product/package/environment/header/extension spellings. The searched token is assembled in the test so the gate cannot match itself.
 
 ## TDD evidence
 
-- First focused RED: 11 behavior failures / 25 passes for shared Tool handling, schema validation, candidate degradation, and compatibility transcripts. One additional collision fixture exposed the pre-existing global Tool-name unique constraint and drove the `0007` schema change.
-- Second focused RED: 14 failures / 20 passes for prompt migration, timestamps, checks, automatic scope continuation, transcript delegation, and redacted failure state.
-- Additional RED/GREEN cycles covered stopped loaded Skills, existing-conversation provider configuration failure, and the frontend timestamp contract build error.
+- Initial focused RED: 14 failed and 55 passed. Failures demonstrated OAuth Tools executing without a session, undifferentiated/leaky Agent session errors, revoked/rejected direct-invoke misclassification, unavailable-source execution in both session branches, and 17 tracked legacy-identifier lines.
+- Focused GREEN: 77 passed across Agent runtime, Tool Session/direct invocation, and the tracked rename gate.
+- The expanded source/owner matrix passed 12 cases: missing/deleted/disabled source × with/without Tool Session × Agent key/administrator.
+- A pre-existing 201-row frontend test became slow under parallel full-gate load. It was split into independent over-limit rejection and exact-200 select/clear cases without increasing the timeout; focused execution passed 2/2 and the final full frontend suite passed.
 
-## Verification
+## Fresh verification
 
-- `conda run -n chat4openapi pytest backend/tests -q` — 149 passed.
-- `conda run -n chat4openapi ruff check backend/src backend/tests` — All checks passed.
-- Migration coverage includes fresh upgrade, existing `0006` upgrade, exact legacy/custom prompt behavior, `0007` downgrade/re-upgrade, database constraints, and removal of global Tool-name uniqueness.
-- `D:\nvm\nodejs\npm.cmd test` — 8 files, 59 tests passed.
-- `D:\nvm\nodejs\npm.cmd run build` — `vue-tsc --noEmit` and Vite production build succeeded.
-- `git diff --check` — clean (line-ending conversion warnings only).
+- Focused backend: 77 passed.
+- Expanded direct-source matrix: 12 passed.
+- Related compatible/chat/direct/session/OAuth/migration run: 124 passed; its sole old-contract failure was updated from revoked-as-missing to the required revoked-as-reauthorization behavior, then the affected tests passed 2/2.
+- Full backend: 336 passed.
+- Ruff over backend source, migrations, and tests: all checks passed.
+- Full frontend: 10 files, 97 tests passed.
+- Frontend typecheck: passed.
+- Frontend production build: passed; 172 modules transformed.
+- Tracked legacy-identifier scan: zero matches.
+- `git diff --check`: passed.
 
-The two existing Vitest `fireEvent.change` advisories remain unrelated and non-failing.
+## Safety notes
 
-## Follow-up review fixes
-
-- Compatibility alias continuation: `skill-<id>` validates stopped/deleted state only when creating a conversation. Existing conversations delegate availability filtering to `AgentRuntime`, so unavailable single-skill scopes fail as `agent.no_eligible_skills` while persisting `failed` and `latest_failure_summary`; future multi-candidate scopes can continue with remaining eligible Skills.
-- Browser scope locking: continuation validation now distinguishes an omitted candidate field from an explicitly supplied empty list. Explicit scopes reject `[]`, automatic scopes accept `[]`, and omitted fields inherit the persisted scope. Compatibility requests with an explicitly empty extension now persist an automatic scope.
-- Migration downgrade safety: `0007` deterministically preserves colliding Tool rows by retaining the lowest-ID original name and renaming later collisions to a bounded `__legacy_<id>` form (with a deterministic suffix if needed) before restoring the unique constraint.
-
-### Follow-up TDD evidence
-
-- Initial focused RED: 5 failures / 1 pass for stopped/deleted alias continuation, explicit-empty scope locking, omitted-field continuation, and collision-data downgrade. The omitted-field failure exposed only a test fixture lifetime issue and was corrected to share its sequenced provider.
-- Additional RED: 1 failure for an explicit empty compatibility extension being persisted as an explicit scope.
-- Focused GREEN: 6 passed, followed by 1 passed for the compatibility empty-extension case. Related runtime/API/migration coverage: 65 passed.
-
-### Final verification after follow-up
-
-- `conda run -n chat4openapi pytest backend/tests -q` — 155 passed.
-- `conda run -n chat4openapi ruff check backend/src backend/tests` — All checks passed.
-- `D:\nvm\nodejs\npm.cmd test` — 8 files, 59 tests passed.
-- `D:\nvm\nodejs\npm.cmd run build` — `vue-tsc --noEmit` and Vite production build succeeded.
+- Authorization and session observations contain only stable error codes and Tool names; session exception text and configured secrets are not returned to the model or direct caller.
+- The direct API keeps its established HTTP envelope: missing session returns the existing session-required response, expired/revoked/rejected sessions return reauthorization-required, and unavailable sources return the existing source-not-found response.

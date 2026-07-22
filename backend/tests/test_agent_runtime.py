@@ -16,6 +16,7 @@ from chat4openapi.models import (
     Agent,
     AgentSkill,
     ApiSource,
+    ApiSourceOAuthConfig,
     BrowserChatSession,
     ChatMessage,
     Conversation,
@@ -26,6 +27,12 @@ from chat4openapi.models import (
     Tool,
 )
 from chat4openapi.security.encryption import SecretCipher
+from chat4openapi.tool_sessions.service import (
+    ToolSessionError,
+    ToolSessionExpired,
+    ToolSessionNotFound,
+    ToolSessionReauthorizationRequired,
+)
 from chat4openapi.skills.defaults import (
     VARCARDS2_GENE_SYSTEM_PROMPT,
     VARCARDS2_GENE_TABLE_RULE,
@@ -1454,10 +1461,86 @@ async def test_invalid_tool_session_becomes_a_recoverable_observation(
 
         assert result.status == "completed"
         assert llm.calls[2]["messages"][-1].content == {
-            "error": "tool_session_error",
-            "message": "Tool Session was not found",
+            "error": "tool_authorization_required",
             "tool": "get_gene",
         }
+
+
+@pytest.mark.asyncio
+async def test_oauth_configured_tool_without_session_requires_authorization(
+    db_session_factory,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as session:
+        skill, tool = seed_runtime(session, cipher)
+        session.add(
+            ApiSourceOAuthConfig(
+                api_source_id=tool.api_source_id,
+                encrypted_config=cipher.encrypt_json({"client_secret": "never-observe"}),
+                enabled=True,
+            )
+        )
+        session.commit()
+        llm = SequencedLlm(
+            [
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[CanonicalToolCall(id="load", name="load_skills", arguments={"skill_ids": [skill.id]})],
+                ),
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[CanonicalToolCall(id="tool", name="get_gene", arguments={"symbol": "ABCA4"})],
+                ),
+                CanonicalResponse(content="Please authorize the Tool."),
+            ]
+        )
+        executor = RecordingExecutor()
+
+        result = await AgentRuntime(session, cipher, llm, executor).run(
+            turn("lookup", [skill.id], False)
+        )
+
+        assert result.status == "completed"
+        assert llm.calls[2]["messages"][-1].content == {
+            "error": "tool_authorization_required",
+            "tool": "get_gene",
+        }
+        assert executor.calls == []
+        assert "never-observe" not in str(llm.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        (ToolSessionNotFound("missing"), "tool_authorization_required"),
+        (ToolSessionExpired("expired"), "tool_reauthorization_required"),
+        (ToolSessionReauthorizationRequired("rejected"), "tool_reauthorization_required"),
+        (ToolSessionError("unexpected"), "tool_session_error"),
+    ],
+)
+async def test_agent_maps_tool_session_failures_without_leaking_messages(
+    db_session_factory, monkeypatch, failure, expected
+) -> None:
+    async def fail_execute(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr("chat4openapi.chat.agent.ToolSessionService.execute", fail_execute)
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as session:
+        _skill, tool = seed_runtime(session, cipher)
+        observation = await AgentRuntime(
+            session, cipher, SequencedLlm([]), RecordingExecutor()
+        )._execute_tool(
+            tool,
+            {"symbol": "ABCA4"},
+            "opaque-session",
+            agent_id=1,
+            agent_key_id=1,
+            admin_session_id=None,
+        )
+
+        assert observation == {"error": expected, "tool": "get_gene"}
 
 
 @pytest.mark.asyncio

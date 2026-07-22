@@ -43,7 +43,7 @@ All failures were observed before the corresponding production changes.
 ## Verification
 
 The requested `chat4openapi` Conda environment is not installed locally; verification used the
-repository's existing Python 3.12 `chatapi` environment without adding that legacy name to tracked
+repository's existing Python 3.12 project environment without adding a machine-local environment name to tracked
 files.
 
 - Focused OAuth/Tool Session/migration suites: `38 passed`.

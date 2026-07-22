@@ -26,6 +26,10 @@ from chat4openapi.tool_sessions.credentials import (
     validate_and_normalize_credentials,
 )
 from chat4openapi.tools.errors import ToolExecutionError
+from chat4openapi.tools.execution_policy import (
+    ToolUnavailableError,
+    resolve_tool_execution_policy,
+)
 from chat4openapi.tools.executor import RequestAuth, ToolExecutionResult
 
 
@@ -325,8 +329,12 @@ class ToolSessionService:
                 ToolUserSession.admin_session_id == admin_session_id,
             )
         )
-        if row is None or row.revoked_at is not None or row.status == "revoked":
+        if row is None:
             raise ToolSessionNotFound("Tool Session was not found")
+        if row.revoked_at is not None or row.status == "revoked":
+            raise ToolSessionReauthorizationRequired(
+                "Tool Session requires reauthorization"
+            )
         return row
 
     def _validate_owner(self, row: ToolUserSession, now: datetime) -> None:
@@ -543,8 +551,9 @@ class ToolSessionService:
         agent_key_id: int | None,
         admin_session_id: int | None = None,
     ) -> ToolExecutionResult:
-        source = self._session.get(ApiSource, tool.api_source_id)
-        if source is None or source.deleted_at is not None or not source.enabled:
+        try:
+            source = resolve_tool_execution_policy(self._session, tool).source
+        except ToolUnavailableError:
             raise ToolExecutionError("source_not_found", "Tool API Source was not found")
         resolved = await self.resolve(
             token,

@@ -9,7 +9,7 @@ from cryptography.fernet import Fernet
 from fastapi import FastAPI
 from sqlalchemy import select
 
-import chat4openapi.chat.api as chat_api_module
+import chat4openapi.chat.api as compatible_chat_module
 from chat4openapi.api.tool_sessions import get_tool_secret_cipher
 from chat4openapi.chat.api import get_llm_client
 from chat4openapi.llm.client import CanonicalResponse, CanonicalToolCall, LlmProviderError
@@ -876,7 +876,7 @@ async def test_different_api_key_for_same_agent_cannot_resume_before_runtime(
             runtime_calls.append(request)
             raise AssertionError("foreign conversation reached runtime")
 
-    monkeypatch.setattr(chat_api_module, "AgentRuntime", RecordingRuntime)
+    monkeypatch.setattr(compatible_chat_module, "AgentRuntime", RecordingRuntime)
     denied = await client.post(
         "/v1/chat/completions",
         json={

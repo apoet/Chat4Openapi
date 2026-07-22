@@ -17,7 +17,7 @@ Complete. The final documentation, migration acceptance probes, isolated browser
 Command:
 
 ```powershell
-conda run -n chatapi python -m pytest backend/tests/test_final_migration_acceptance.py -q
+python -m pytest backend/tests/test_final_migration_acceptance.py -q
 ```
 
 Result: `4 passed in 12.87s`.
@@ -66,10 +66,10 @@ No production defect required a RED/GREEN fix. Two harness corrections were reco
 Fresh after E2E and cleanup:
 
 ```text
-conda run -n chatapi python -m pytest backend/tests -q
+python -m pytest backend/tests -q
   313 passed in 64.18s
 
-conda run -n chatapi ruff check backend/src backend/migrations backend/tests
+ruff check backend/src backend/migrations backend/tests
   All checks passed!
 
 D:\nvm\nodejs\npm.cmd test -- --run --testTimeout=15000

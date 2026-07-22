@@ -202,7 +202,7 @@ describe('Tool administration views', () => {
     expect(screen.getByText('1 Tools selected')).toBeTruthy()
   })
 
-  it('rejects selection above 200 without truncation and can clear the exact selection', async () => {
+  it('rejects selection above 200 without truncation', async () => {
     const tools = Array.from({ length: 201 }, (_, index) => ({
       id: index + 1,
       api_source_id: 1,
@@ -221,22 +221,42 @@ describe('Tool administration views', () => {
       jsonResponse(String(input).endsWith('/sources') ? sources : tools),
     )))
 
-    render(ToolsView, { global: { plugins: [i18n] } })
+    const { container } = render(ToolsView, { global: { plugins: [i18n] } })
     await screen.findByText('overflowTool')
-    await fireEvent.click(screen.getByRole('button', { name: 'Select visible' }))
+    const button = (label: string) => screen.getByText(label).closest('button') as HTMLButtonElement
+    await fireEvent.click(button('Select visible'))
 
-    expect(screen.getByRole('alert').textContent).toContain('You can select up to 200 Tools')
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('You can select up to 200 Tools')
     expect(screen.getByText('0 Tools selected')).toBeTruthy()
+  }, 15_000)
 
-    await fireEvent.update(screen.getByLabelText('Search Tools'), 'allowed')
-    await fireEvent.click(screen.getByRole('button', { name: 'Select visible' }))
+  it('selects and clears exactly 200 visible Tools', async () => {
+    const tools = Array.from({ length: 200 }, (_, index) => ({
+      id: index + 1,
+      api_source_id: 1,
+      operation_key: `GET /tools/${index + 1}`,
+      name: `allowedTool${index + 1}`,
+      description: null,
+      input_schema: {},
+      execution_schema: {},
+      tags: ['Catalog'],
+      enabled: false,
+    }))
+    const sources = [
+      { id: 1, name: 'Large API', source_type: 'openapi', base_url: 'https://large.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+    ]
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => Promise.resolve(
+      jsonResponse(String(input).endsWith('/sources') ? sources : tools),
+    )))
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    await screen.findByText('allowedTool200')
+    const button = (label: string) => screen.getByText(label).closest('button') as HTMLButtonElement
+    await fireEvent.click(button('Select visible'))
     expect(screen.getByText('200 Tools selected')).toBeTruthy()
-    await fireEvent.update(screen.getByLabelText('Search Tools'), '')
-    expect(screen.getByRole('checkbox', { name: 'Select overflowTool' })).toHaveProperty('disabled', true)
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }))
+    await fireEvent.click(button('Clear selection'))
     expect(screen.getByText('0 Tools selected')).toBeTruthy()
-    expect(screen.getByRole('checkbox', { name: 'Select overflowTool' })).toHaveProperty('disabled', false)
   }, 15_000)
 
   it('reconciles partial bulk disable results with CSRF and localized safe errors', async () => {

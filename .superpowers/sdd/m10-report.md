@@ -16,14 +16,14 @@
 
 ## TDD evidence
 
-- RED: `conda run -n chatapi pytest backend/tests/test_admin_tools_bulk.py -q` — 16 expected failures; the missing route returned 405 and direct transaction tests reported the missing handler.
+- RED: `python -m pytest backend/tests/test_admin_tools_bulk.py -q` (inside the project Conda environment) — 16 expected failures; the missing route returned 405 and direct transaction tests reported the missing handler.
 - GREEN: the same focused command — 16 tests passed.
-- Existing Tool and Skill regression suite: `conda run -n chatapi pytest backend/tests/test_admin_tools_bulk.py backend/tests/test_tool_api.py backend/tests/test_skills_api.py -q` — 33 tests passed.
-- Full backend: `conda run -n chatapi pytest backend/tests -q` — 305 tests passed.
+- Existing Tool and Skill regression suite: `python -m pytest backend/tests/test_admin_tools_bulk.py backend/tests/test_tool_api.py backend/tests/test_skills_api.py -q` (inside the project Conda environment) — 33 tests passed.
+- Full backend: `python -m pytest backend/tests -q` (inside the project Conda environment) — 305 tests passed.
 - Review RED: four real-file SQLite, two-Session/thread/event races failed after a validator Session retained stale ORM objects while batch disable/delete committed first.
 - Review GREEN: focused bulk suite — 20 tests passed; bulk + existing Tool/Skill suites — 37 tests passed.
-- Review full backend: `conda run -n chatapi pytest backend/tests -q` — 309 tests passed.
-- Ruff: `conda run -n chatapi ruff check backend` — passed.
+- Review full backend: `python -m pytest backend/tests -q` (inside the project Conda environment) — 309 tests passed.
+- Ruff: `ruff check backend` (inside the project Conda environment) — passed.
 - `git diff --check` — passed (only Git line-ending notices).
 
 ## Covered behavior
@@ -41,4 +41,4 @@
 - stale `set_tool_auth` versus batch disable/delete, preventing enabled auth from referencing a disabled/deleted Tool; and
 - stale `start_skill` versus batch disable/delete, preventing a running Skill from retaining an unavailable Tool.
 
-All Python commands used the existing `chatapi` conda environment.
+All Python commands used the available project Conda environment.
