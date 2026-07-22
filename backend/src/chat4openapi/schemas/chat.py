@@ -27,6 +27,7 @@ class ChatAgentSummary(BaseModel):
     id: AgentId
     name: str
     is_default: bool
+    skill_ids: list[int]
 
 
 class ChatBootstrapResponse(BaseModel):

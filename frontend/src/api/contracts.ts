@@ -136,6 +136,7 @@ export interface ChatAgentSummary {
   id: number
   name: string
   is_default: boolean
+  skill_ids?: number[]
 }
 
 export interface ChatBootstrapResponse {

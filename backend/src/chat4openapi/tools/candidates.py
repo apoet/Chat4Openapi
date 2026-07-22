@@ -73,7 +73,15 @@ def _execution_schema(
         body_arguments = [
             name for name in input_schema.get("properties", {}) if name not in parameter_arguments
         ]
-        if body_arguments:
+        if body_arguments == ["body"]:
+            # Swagger 2 body parameters are normalized to one `body` argument by
+            # FastMCP. Send that value as the request body itself instead of
+            # wrapping it again as {"body": ...}.
+            result["request_body"] = {
+                "content_type": content_type,
+                "argument": "body",
+            }
+        elif body_arguments:
             result["request_body"] = {
                 "content_type": content_type,
                 "arguments": body_arguments,

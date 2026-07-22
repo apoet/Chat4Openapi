@@ -76,6 +76,46 @@ describe('Skills and chat', () => {
     expect(await screen.findByRole('option', { name: 'Research Agent — Default' })).toBeTruthy()
   })
 
+  it('offers two prompts from the selected Agent Skills and sends with Enter', async () => {
+    const skill = {
+      id: 7,
+      name: 'Varcards2-Gene',
+      description: 'query variant locations by gene name',
+      system_prompt: 'Query genes',
+      running: true,
+      tools: [],
+    }
+    const fetchMock = chatFetch({
+      agents: [{ ...defaultAgent, skill_ids: [skill.id] }],
+      skills: [skill],
+      turns: [response({
+        status: 'completed', conversation_id: 'conversation-1', agent_id: 1,
+        agent_name: 'Research Agent', message: 'Done.', loaded_skill_ids: [skill.id], pending: null,
+      })],
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+
+    const taskPrompt = await screen.findByRole('button', {
+      name: 'Help me with query variant locations by gene name.',
+    })
+    expect(screen.getByRole('button', { name: 'What can Varcards2-Gene help me with?' })).toBeTruthy()
+    await fireEvent.click(taskPrompt)
+    expect((screen.getByLabelText('Message') as HTMLTextAreaElement).value).toBe(
+      'Help me with query variant locations by gene name.',
+    )
+    await fireEvent.keyDown(screen.getByLabelText('Message'), { key: 'Enter' })
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === '/api/chat/turns')).toBe(true))
+    const call = fetchMock.mock.calls.find(([url]) => url === '/api/chat/turns')
+    expect(JSON.parse((call?.[1] as RequestInit).body as string).message).toBe(
+      'Help me with query variant locations by gene name.',
+    )
+  })
+
   it('loads history only from the current browser subject namespace', async () => {
     const session = (id: string, title: string) => ({
       version: 3, id, conversationId: `conversation-${id}`, title,

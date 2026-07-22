@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
+import logoUrl from '../../../logo.png'
 import { ApiError } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 
@@ -33,7 +34,7 @@ async function submit(): Promise<void> {
 <template>
   <main class="auth-page">
     <section class="auth-story auth-story-login">
-      <div class="brand-mark"><span>CA</span></div>
+      <div class="brand-mark brand-logo"><img :src="logoUrl" alt="Chat4Openapi" /></div>
       <div>
         <p class="eyebrow">{{ t('login.eyebrow') }}</p>
         <h1>{{ t('app.name') }}</h1>

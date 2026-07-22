@@ -7,6 +7,12 @@ from sqlalchemy.orm import Session
 from chat4openapi.llm.client import CanonicalMessage, CanonicalToolCall
 from chat4openapi.models import Agent, ChatMessage, Conversation, Skill
 
+CHAT_USER_EXPERIENCE_POLICY = """You are serving an end user in a chat interface.
+- Treat a natural-language request as a request to complete the business task through chat, not as a request for backend API instructions.
+- Use the available Skills and Tools silently when they can fulfill the request. Do not expose raw endpoint URLs, Tool names, request bodies, parameter schemas, or implementation details unless the user explicitly asks for technical integration documentation.
+- When a user asks how to use a Skill for a task, explain the plain-language question they can ask in chat, then offer to perform that task. Do not tell them how to invoke an underlying interface.
+- Present results and clarification questions in business language, focused on the user's goal."""
+
 
 def build_agent_context(
     session: Session,
@@ -34,6 +40,7 @@ def build_agent_context(
             ),
         )
     )
+    messages.append(CanonicalMessage(role="system", content=CHAT_USER_EXPERIENCE_POLICY))
     skills_by_id = {skill.id: skill for skill in candidate_skills}
     for skill_id in conversation.loaded_skill_ids:
         skill = skills_by_id.get(skill_id)

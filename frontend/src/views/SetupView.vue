@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
+import logoUrl from '../../../logo.png'
 import { ApiError } from '../api/client'
 import type { Locale } from '../api/contracts'
 import { setLocale } from '../i18n'
@@ -53,14 +54,14 @@ async function submit(): Promise<void> {
 <template>
   <main class="auth-page">
     <section class="auth-story">
-      <div class="brand-mark"><span>CA</span></div>
+      <div class="brand-mark brand-logo"><img :src="logoUrl" alt="Chat4Openapi" /></div>
       <div>
         <p class="eyebrow">{{ t('setup.eyebrow') }}</p>
         <h1>{{ t('app.name') }}</h1>
         <p class="story-copy">{{ t('app.tagline') }}</p>
       </div>
       <div class="story-grid" aria-hidden="true">
-        <span>OpenAPI</span><i></i><span>MCP Tools</span><i></i><span>Skills</span><i></i><span>Chat</span>
+        <span>OpenAPI</span><i></i><span>MCP Tools</span><i></i><span>Skills</span><i></i><span>Agents</span><i></i><span>Chat</span>
       </div>
       <p class="story-note">{{ t('setup.identityNote') }}</p>
     </section>

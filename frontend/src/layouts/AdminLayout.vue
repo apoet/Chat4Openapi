@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
+import logoUrl from '../../../logo.png'
 import { setLocale } from '../i18n'
 import { useAuthStore } from '../stores/auth'
 
@@ -24,7 +25,7 @@ async function logout(): Promise<void> {
 <template>
   <div class="admin-shell">
     <aside class="sidebar">
-      <div class="sidebar-brand"><span class="brand-mark small">CA</span><strong>Chat4Openapi</strong></div>
+      <div class="sidebar-brand"><span class="brand-mark brand-logo small"><img :src="logoUrl" alt="Chat4Openapi" /></span><strong>Chat4Openapi</strong></div>
       <nav>
         <RouterLink to="/admin" class="nav-link">⌂ <span>{{ t('nav.overview') }}</span></RouterLink>
         <span class="nav-section">{{ t('nav.build') }}</span>

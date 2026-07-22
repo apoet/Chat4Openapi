@@ -139,7 +139,12 @@ async def test_chat_bootstrap_is_public_and_exposes_only_runnable_agent_summarie
     body = response.json()
     assert set(body) == {"subject_id", "agents"}
     assert isinstance(body["subject_id"], str) and len(body["subject_id"]) >= 20
-    assert body["agents"] == [{"id": 1, "name": "Chat4Openapi Agent", "is_default": False}]
+    assert body["agents"] == [{
+        "id": 1,
+        "name": "Chat4Openapi Agent",
+        "is_default": False,
+        "skill_ids": [second.id, _first.id],
+    }]
     assert "prompt" not in response.text.lower()
     assert "provider" not in response.text.lower()
     assert "key" not in response.text.lower()
@@ -160,7 +165,7 @@ async def test_chat_bootstrap_accepts_non_admin_bearer_without_expanding_payload
     )
 
     assert response.status_code == 200
-    assert list(response.json()["agents"][0]) == ["id", "name", "is_default"]
+    assert list(response.json()["agents"][0]) == ["id", "name", "is_default", "skill_ids"]
 
 
 @pytest.mark.asyncio

@@ -127,7 +127,12 @@ def chat_bootstrap(request: Request, response: Response, db: Session = Depends(g
     return {
         "subject_id": context.session.public_subject_id,
         "agents": [
-            {"id": agent.id, "name": agent.name, "is_default": agent.is_default}
+            {
+                "id": agent.id,
+                "name": agent.name,
+                "is_default": agent.is_default,
+                "skill_ids": _eligible_bound_skill_ids(db, agent.id),
+            }
             for agent in agents
         ],
     }

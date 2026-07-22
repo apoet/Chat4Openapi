@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import logoUrl from '../../../logo.png'
 import { ApiError, request } from '../api/client'
 import type {
   ChatAgentSummary,
@@ -56,6 +57,18 @@ const password = ref('')
 const sending = ref(false)
 const errorMessage = ref('')
 const sessionErrors = ref<Record<string, string>>({})
+
+const suggestedQuestions = computed(() => {
+  const selected = agents.value.find((agent) => agent.id === selectedAgentId.value)
+  const skillIds = selected?.skill_ids?.length ? selected.skill_ids : loadedSkillIds.value
+  const skill = skills.value.find((item) => skillIds.includes(item.id))
+  if (!skill) return []
+  const detail = skill.description?.trim() || skill.name
+  return [
+    t('chat.suggestions.task', { detail }),
+    t('chat.suggestions.explore', { skill: skill.name }),
+  ]
+})
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -406,12 +419,22 @@ async function send(): Promise<void> {
     sending.value = false
   }
 }
+
+function handleEnter(event: KeyboardEvent): void {
+  if (event.isComposing || event.shiftKey) return
+  event.preventDefault()
+  void send()
+}
+
+function useSuggestedQuestion(question: string): void {
+  input.value = question
+}
 </script>
 
 <template>
   <main class="chat-page">
     <header class="chat-header">
-      <RouterLink to="/" class="chat-brand"><span class="brand-mark small">CA</span><strong>Chat4Openapi</strong></RouterLink>
+      <RouterLink to="/" class="chat-brand"><span class="brand-mark brand-logo small"><img :src="logoUrl" alt="Chat4Openapi" /></span><strong>Chat4Openapi</strong></RouterLink>
       <span>{{ t('chat.title') }}</span>
     </header>
     <section v-if="loginRequired && !authenticated" class="chat-login">
@@ -465,7 +488,7 @@ async function send(): Promise<void> {
             v-model="input"
             :placeholder="status === 'needs_input' ? t('chat.answerPlaceholder') : t('chat.placeholder')"
             rows="3"
-            @keydown.ctrl.enter="send"
+            @keydown.enter="handleEnter"
           />
           <button
             :disabled="sending || (conversationId === null && selectedAgentId === null)"
@@ -479,6 +502,10 @@ async function send(): Promise<void> {
               :disabled="sending || conversationId !== null"
             />
             <span>{{ conversationId !== null ? t('chat.agentLocked') : t('chat.agentHint') }}</span>
+          </div>
+          <div v-if="suggestedQuestions.length && status !== 'needs_input'" class="chat-suggestions">
+            <span>{{ t('chat.suggestions.label') }}</span>
+            <button v-for="question in suggestedQuestions" :key="question" type="button" @click="useSuggestedQuestion(question)">{{ question }}</button>
           </div>
         </div>
       </div>

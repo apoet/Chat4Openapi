@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from chat4openapi.tools.candidates import build_candidates
+from chat4openapi.tools.candidates import _execution_schema, build_candidates
 from chat4openapi.tools.openapi_loader import OpenAPIImportError, load_openapi, normalize_openapi
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -171,6 +171,24 @@ async def test_swagger_and_openapi_build_equivalent_fastmcp_candidates() -> None
     assert left.execution_schema == right.execution_schema
     assert left.execution_schema["parameters"][0]["in"] == "query"
     assert left.execution_schema["request_body"]["arguments"] == ["name"]
+
+
+def test_preserves_a_single_body_argument_as_the_raw_json_body() -> None:
+    execution = _execution_schema(
+        "/data/{id}",
+        "post",
+        {
+            "parameters": [{"name": "id", "in": "path"}],
+            "requestBody": {"content": {"application/json": {"schema": {"type": "object"}}}},
+        },
+        {"parameters": []},
+        {"type": "object", "properties": {"id": {"type": "string"}, "body": {"type": "object"}}},
+    )
+
+    assert execution["request_body"] == {
+        "content_type": "application/json",
+        "argument": "body",
+    }
 
 
 @pytest.mark.asyncio
