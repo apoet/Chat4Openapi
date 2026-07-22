@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="logo.png" alt="Chat4Openapi logo" width="180">
+  <img src="logo.png" alt="Agent4API logo" width="180">
 </p>
 
-<h1 align="center">Chat4Openapi</h1>
+<h1 align="center">Agent4API</h1>
 
 <p align="center">
   English | <a href="README.zh-CN.md">简体中文</a>
@@ -10,13 +10,15 @@
 
 ## Introduction
 
-Chat4Openapi turns Swagger/OpenAPI operations into managed Tools and lets independently configured Agents load ordered Skill catalogs to answer browser, OpenAI-compatible, and Anthropic-compatible requests.
+Agent4API turns Swagger/OpenAPI operations into managed Tools and lets independently configured Agents load ordered Skill catalogs to answer browser, OpenAI-compatible, and Anthropic-compatible requests.
 
-It is a single FastAPI/Vue application backed by SQLite, with an English and Simplified Chinese administration interface. For architecture, features, compatible APIs, authentication, operations, and security details, see the [GitHub Wiki](https://github.com/apoet/Chat4Openapi/wiki).
+It is a single FastAPI/Vue application backed by SQLite, with an English and Simplified Chinese administration interface. See the [GitHub Wiki](https://github.com/apoet/Chat4Openapi/wiki) for complete documentation.
 
 <p align="center">
   <img src="docs/images/workflow.svg" alt="Swagger and OpenAPI definitions become Tools, Skills reference Tools, Agents use Skills, and Chat starts Agent conversations" width="100%">
 </p>
+
+![Agent4API administration and chat demo](docs/images/demo.png)
 
 ## Quick start
 
@@ -105,4 +107,4 @@ npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 
 ### 4. Open the administration page
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The first-run wizard will guide you through creating the administrator account.
+Open [http://127.0.0.1:5173](http://127.0.0.1:5173). The first-run wizard will guide you through creating the administrator account.

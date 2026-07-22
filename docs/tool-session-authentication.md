@@ -1,12 +1,12 @@
 # Tool Session Authentication
 
-Tool Sessions carry the upstream business user's identity separately from Chat4Openapi access. An Agent API key authenticates a compatible client; an administrator cookie authenticates browser administration. Neither is injected into imported APIs.
+Tool Sessions carry the upstream business user's identity separately from Agent4API access. An Agent API key authenticates a compatible client; an administrator cookie authenticates browser administration. Neither is injected into imported APIs.
 
 Each Tool Session is bound to one Agent, exactly one owner (the creating Agent key or administrator session), and one or more API sources. Cross-Agent, cross-key, cross-administrator-session, and cross-source reuse is rejected. Session states are `authorization_required`, `pending`, `ready`, `expired`, `revoked`, and `failed`.
 
 ## Before choosing a mode
 
-Import and enable the API source and required Tools. For OAuth, configure the source through `PUT /api/admin/sources/{source_id}/oauth`; endpoint URLs and client material are stored encrypted. For injected credentials, the requested Header/Cookie names must be declared by the source's OpenAPI security schemes or explicit Chat4Openapi allow-list extension.
+Import and enable the API source and required Tools. For OAuth, configure the source through `PUT /api/admin/sources/{source_id}/oauth`; endpoint URLs and client material are stored encrypted. For injected credentials, the requested Header/Cookie names must be declared by the source's OpenAPI security schemes or the legacy-compatible allow-list extension.
 
 Administrator writes require the administrator cookie plus `X-CSRF-Token`. CLI/headless calls use `Authorization: Bearer <Agent API Key>`. Examples below assume:
 
