@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Python is managed by Conda; run backend commands with `conda run -n chatapi`.
+- Python is managed by Conda; run backend commands with `conda run -n chat4openapi`.
 - Node.js is managed by nvm; frontend plans use `nvm use 20.19.4` before npm commands.
 - Base URL accepts absolute HTTP/HTTPS URLs, rejects credentials/query/fragment, strips a trailing slash, and permits HTTP only for loopback development hosts.
 - An empty Embed origin list allows any secure parent; configured lists contain normalized exact origins.
@@ -71,7 +71,7 @@ def test_embed_conversation_rejects_two_owners(db, embed_session, browser_sessio
 
 - [ ] **Step 2: Run the tests and verify RED**
 
-Run: `conda run -n chatapi pytest backend/tests/test_embed_migration.py backend/tests/test_embed_models.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_embed_migration.py backend/tests/test_embed_models.py -q`
 
 Expected: failures for missing migration, tables, columns, and model imports.
 
@@ -96,7 +96,7 @@ Migration checks must encode three active conversation owners and three Tool Ses
 
 - [ ] **Step 4: Run focused and migration acceptance tests**
 
-Run: `conda run -n chatapi pytest backend/tests/test_embed_migration.py backend/tests/test_embed_models.py backend/tests/test_final_migration_acceptance.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_embed_migration.py backend/tests/test_embed_models.py backend/tests/test_final_migration_acceptance.py -q`
 
 Expected: PASS.
 
@@ -141,7 +141,7 @@ def test_normalize_base_url_rejects_unsafe_values(value):
 
 - [ ] **Step 2: Run the tests and verify RED**
 
-Run: `conda run -n chatapi pytest backend/tests/test_embed_urls.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_embed_urls.py -q`
 
 Expected: import failure for `chat4openapi.embed.urls`.
 
@@ -165,7 +165,7 @@ def frame_ancestors(origins: list[str]) -> str:
 
 - [ ] **Step 4: Run URL tests**
 
-Run: `conda run -n chatapi pytest backend/tests/test_embed_urls.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_embed_urls.py -q`
 
 Expected: PASS.
 
@@ -214,7 +214,7 @@ def test_create_embed_returns_secret_free_script(client, csrf_headers, enabled_a
 
 - [ ] **Step 2: Run API tests and verify RED**
 
-Run: `conda run -n chatapi pytest backend/tests/test_admin_settings.py backend/tests/test_admin_embeds.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_admin_settings.py backend/tests/test_admin_embeds.py -q`
 
 Expected: 404 for the new routes.
 
@@ -236,7 +236,7 @@ Normalize and deduplicate origins before persistence; reject script generation w
 
 - [ ] **Step 4: Run focused APIs and admin concurrency tests**
 
-Run: `conda run -n chatapi pytest backend/tests/test_admin_settings.py backend/tests/test_admin_embeds.py backend/tests/test_admin_write_concurrency.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_admin_settings.py backend/tests/test_admin_embeds.py backend/tests/test_admin_write_concurrency.py -q`
 
 Expected: PASS.
 
@@ -278,7 +278,7 @@ def test_iframe_has_exact_frame_ancestors(client, embed):
 
 - [ ] **Step 2: Run tests and verify RED**
 
-Run: `conda run -n chatapi pytest backend/tests/test_embed_public.py backend/tests/test_embed_sessions.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_embed_public.py backend/tests/test_embed_sessions.py -q`
 
 Expected: missing routes and session service.
 
@@ -300,7 +300,7 @@ The loader creates one shadow-DOM logo and an iframe with `allow="tools"`, sends
 
 - [ ] **Step 4: Run public/session and SPA fallback tests**
 
-Run: `conda run -n chatapi pytest backend/tests/test_embed_public.py backend/tests/test_embed_sessions.py backend/tests/test_spa.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_embed_public.py backend/tests/test_embed_sessions.py backend/tests/test_spa.py -q`
 
 Expected: PASS.
 
@@ -323,13 +323,13 @@ git commit -m "feat: serve secure Agent embed sessions"
 
 - [ ] **Step 1: Run backend formatting and lint checks**
 
-Run: `conda run -n chatapi ruff check backend`
+Run: `conda run -n chat4openapi ruff check backend`
 
 Expected: PASS.
 
 - [ ] **Step 2: Run the complete backend suite**
 
-Run: `conda run -n chatapi pytest backend/tests -q`
+Run: `conda run -n chat4openapi pytest backend/tests -q`
 
 Expected: PASS with no regression in browser Chat, API-key Chat, OAuth, or Tool Sessions.
 

@@ -17,7 +17,7 @@
 - OAuth state is bound to Embed Session, Agent, API Source, and parent origin.
 - README files contain only introduction and quick start; detailed architecture and operations go to the GitHub Wiki.
 - Node.js is managed by nvm; run `nvm use 20.19.4` before npm commands.
-- Python is managed by Conda; run backend commands with `conda run -n chatapi`.
+- Python is managed by Conda; run backend commands with `conda run -n chat4openapi`.
 - Every task follows RED → GREEN → focused regression → review → commit.
 
 ---
@@ -64,7 +64,7 @@ def test_grant_rejects_other_embed_owner(db, grant_code, other_embed_session):
 
 - [ ] **Step 2: Run tests and verify RED**
 
-Run: `conda run -n chatapi pytest backend/tests/test_embed_auth_grants.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_embed_auth_grants.py -q`
 
 Expected: missing grants module.
 
@@ -89,7 +89,7 @@ Generate 32 random bytes, store SHA-256 only, and set expiry to `min(now + five 
 
 - [ ] **Step 4: Run grant and concurrency tests**
 
-Run: `conda run -n chatapi pytest backend/tests/test_embed_auth_grants.py backend/tests/test_admin_write_concurrency.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_embed_auth_grants.py backend/tests/test_admin_write_concurrency.py -q`
 
 Expected: PASS and exactly one concurrent consumer succeeds.
 
@@ -138,7 +138,7 @@ def test_callback_returns_grant_not_tokens(client, completed_embed_callback):
 
 - [ ] **Step 2: Run tests and verify RED**
 
-Run: `conda run -n chatapi pytest backend/tests/test_embed_oauth.py backend/tests/test_embed_swagger_login.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_embed_oauth.py backend/tests/test_embed_swagger_login.py -q`
 
 Expected: missing Embed auth endpoints/owner support.
 
@@ -156,7 +156,7 @@ Create the Tool Session with only `embed_session_id`; bind encrypted PKCE state 
 
 - [ ] **Step 4: Run Embed and existing OAuth/Tool Session regressions**
 
-Run: `conda run -n chatapi pytest backend/tests/test_embed_oauth.py backend/tests/test_embed_swagger_login.py backend/tests/test_tool_oauth.py backend/tests/test_tool_sessions.py backend/tests/test_tool_session_credentials.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_embed_oauth.py backend/tests/test_embed_swagger_login.py backend/tests/test_tool_oauth.py backend/tests/test_tool_sessions.py backend/tests/test_tool_session_credentials.py -q`
 
 Expected: PASS.
 
@@ -417,7 +417,7 @@ Include the generated snippet, Base URL setup, origin allow-list behavior, ifram
 Prepare the exact sibling checkout before editing it:
 
 ```powershell
-$wikiPath = 'E:\SourceCode\git\ChatAPI.wiki'
+$wikiPath = 'E:\SourceCode\git\Chat4Openapi.wiki'
 if (Test-Path (Join-Path $wikiPath '.git')) {
   git -C $wikiPath pull --ff-only
 } else {
@@ -446,7 +446,7 @@ Expected: image exists; workflow precedes demo in both files; the detailed-secti
 ```powershell
 git add README.md README.zh-CN.md docs/images/demo.png
 git commit -m "docs: show Agent workflow demo"
-$wikiPath = 'E:\SourceCode\git\ChatAPI.wiki'
+$wikiPath = 'E:\SourceCode\git\Chat4Openapi.wiki'
 git -C $wikiPath add Home.md Embedding-Agents.md Authentication.md WebMCP.md Security-and-Operations.md _Sidebar.md
 git -C $wikiPath commit -m "docs: explain Agent embedding and authorization"
 git -C $wikiPath push origin master
@@ -466,7 +466,7 @@ Expected: both commits succeed and the Wiki push updates the existing GitHub Wik
 
 - [ ] **Step 1: Run the complete backend gate**
 
-Run: `conda run -n chatapi ruff check backend && conda run -n chatapi pytest backend/tests -q`
+Run: `conda run -n chat4openapi ruff check backend && conda run -n chat4openapi pytest backend/tests -q`
 
 Expected: PASS.
 
@@ -490,7 +490,7 @@ Expected: wildcard messaging and frontend token scans are empty; diff check pass
 
 - [ ] **Step 4: Verify migrations from empty and 0012 databases**
 
-Run: `conda run -n chatapi pytest backend/tests/test_database.py backend/tests/test_embed_migration.py backend/tests/test_final_migration_acceptance.py -q`
+Run: `conda run -n chat4openapi pytest backend/tests/test_database.py backend/tests/test_embed_migration.py backend/tests/test_final_migration_acceptance.py -q`
 
 Expected: PASS with downgrade/re-upgrade and existing owner preservation.
 

@@ -12,7 +12,7 @@
 
 - Follow the approved design at `docs/superpowers/specs/2026-07-22-agent-embed-agui-webmcp-design.md`.
 - Execute plans and tasks in the order listed below; later plans consume interfaces from earlier plans.
-- Use Conda environment `chatapi` for Python and nvm-managed Node.js 20.19.4 for frontend work.
+- Use Conda environment `chat4openapi` for Python and nvm-managed Node.js 20.19.4 for frontend work.
 - Review and commit after every task; never combine unrelated dirty workspace changes.
 - Do not publish the Wiki until implementation and release gates pass.
 
