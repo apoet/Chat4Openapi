@@ -8,7 +8,12 @@ import pytest
 from cryptography.fernet import Fernet
 from sqlalchemy import delete, select, text
 
-from chat4openapi.api.tool_sessions import get_tool_executor, get_tool_secret_cipher
+from chat4openapi.api.tool_sessions import (
+    TOOL_SESSION_COOKIE,
+    get_tool_executor,
+    get_tool_secret_cipher,
+    get_tool_session_service,
+)
 from chat4openapi.models import (
     Agent,
     AgentApiKey,
@@ -459,6 +464,144 @@ async def test_programmatic_status_and_revoke_enforce_the_creating_key(
     assert revoked.status_code == 204
     assert after.status_code == 401
     assert after.json()["error"]["code"] == "tool_reauthorization_required"
+
+
+@pytest.mark.asyncio
+async def test_programmatic_logout_replay_is_idempotent_and_keeps_secrets_erased(
+    client: httpx.AsyncClient, app, db_session_factory
+) -> None:
+    secret, _agent_id, _key_id, source_id, _ = _seed_owner(db_session_factory)
+    cipher = SecretCipher(Fernet.generate_key())
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    headers = {"Authorization": f"Bearer {secret}"}
+    created = await client.post(
+        "/api/tool-sessions/credentials",
+        headers=headers,
+        json={
+            "api_source_id": source_id,
+            "headers": {"Authorization": "Bearer erase-me"},
+        },
+    )
+    token = created.json()["tool_session_id"]
+
+    first = await client.delete(f"/v1/tool-sessions/{token}", headers=headers)
+    second = await client.delete(f"/v1/tool-sessions/{token}", headers=headers)
+
+    assert first.status_code == 204
+    assert second.status_code == 204
+    with db_session_factory() as session:
+        row = session.scalar(select(ToolUserSession))
+        credential = session.scalar(select(ToolSessionCredential))
+        assert row is not None and credential is not None
+        assert row.status == "revoked"
+        assert row.encrypted_login_data is None
+        assert row.encrypted_auth_data is None
+        assert cipher.decrypt_json(credential.encrypted_credentials) == {}
+        assert b"erase-me" not in credential.encrypted_credentials
+
+
+@pytest.mark.asyncio
+async def test_programmatic_logout_hides_cross_owner_sessions(
+    client: httpx.AsyncClient, app, db_session_factory
+) -> None:
+    first_secret, agent_id, _key_id, source_id, other_agent_id = _seed_owner(
+        db_session_factory, second=True
+    )
+    other_secret = "c4o_other_agent_key_000000000000000000000"
+    with db_session_factory() as session:
+        session.add(
+            AgentApiKey(
+                agent_id=other_agent_id,
+                label="other",
+                key_prefix=other_secret[:12],
+                key_hash=hashlib.sha256(other_secret.encode()).hexdigest(),
+            )
+        )
+        session.commit()
+    cipher = SecretCipher(Fernet.generate_key())
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    created = await client.post(
+        "/api/tool-sessions/credentials",
+        headers={"Authorization": f"Bearer {first_secret}"},
+        json={"api_source_id": source_id, "headers": {"Authorization": "Bearer safe"}},
+    )
+    token = created.json()["tool_session_id"]
+
+    hidden = await client.delete(
+        f"/v1/tool-sessions/{token}",
+        headers={"Authorization": f"Bearer {other_secret}"},
+    )
+
+    assert hidden.status_code == 204
+    with db_session_factory() as session:
+        row = session.scalar(select(ToolUserSession))
+        assert row is not None
+        assert row.agent_id == agent_id
+        assert row.status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_browser_logout_replay_clears_a_stale_cookie_idempotently(
+    client: httpx.AsyncClient, app, db_session_factory
+) -> None:
+    _secret, agent_id, _key_id, source_id, _ = _seed_owner(db_session_factory)
+    setup = await client.post(
+        "/api/setup",
+        json={"username": "admin", "password": "admin123", "locale": "en-US"},
+    )
+    assert setup.status_code == 201
+    login = await client.post(
+        "/api/admin/auth/login",
+        json={"username": "admin", "password": "admin123"},
+    )
+    csrf = login.json()["csrf_token"]
+    cipher = SecretCipher(Fernet.generate_key())
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    created = await client.post(
+        "/api/tool-sessions/credentials",
+        headers={"X-CSRF-Token": csrf},
+        json={
+            "agent_id": agent_id,
+            "api_source_id": source_id,
+            "headers": {"Authorization": "Bearer erase-browser"},
+        },
+    )
+    token = created.json()["tool_session_id"]
+    headers = {"X-CSRF-Token": csrf}
+    client.cookies.set(TOOL_SESSION_COOKIE, token)
+    first = await client.post("/api/tool-session/logout", headers=headers)
+    client.cookies.set(TOOL_SESSION_COOKIE, token)
+    second = await client.post("/api/tool-session/logout", headers=headers)
+
+    assert first.status_code == 204
+    assert second.status_code == 204
+    assert TOOL_SESSION_COOKIE in first.headers["set-cookie"]
+    assert "Max-Age=0" in first.headers["set-cookie"]
+    assert TOOL_SESSION_COOKIE in second.headers["set-cookie"]
+    assert "Max-Age=0" in second.headers["set-cookie"]
+    with db_session_factory() as session:
+        credential = session.scalar(select(ToolSessionCredential))
+        assert credential is not None
+        assert cipher.decrypt_json(credential.encrypted_credentials) == {}
+
+
+@pytest.mark.asyncio
+async def test_programmatic_logout_does_not_swallow_unexpected_service_errors(
+    client: httpx.AsyncClient, app, db_session_factory
+) -> None:
+    secret, _agent_id, _key_id, _source_id, _ = _seed_owner(db_session_factory)
+
+    class ExplodingService:
+        def binding_for_context(self, *_args, **_kwargs):
+            raise RuntimeError("database unavailable")
+
+    app.dependency_overrides[get_tool_session_service] = lambda: ExplodingService()
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await client.delete(
+            "/v1/tool-sessions/opaque-token",
+            headers={"Authorization": f"Bearer {secret}"},
+        )
 
 
 @pytest.mark.asyncio

@@ -265,7 +265,7 @@ async def browser_logout(
                 binding[1],
                 admin_session_id=binding[2],
             )
-        except ToolSessionNotFound:
+        except (ToolSessionNotFound, ToolSessionReauthorizationRequired):
             pass
     response.delete_cookie(TOOL_SESSION_COOKIE, path="/")
 
@@ -357,7 +357,7 @@ async def api_logout(
             binding[1],
             admin_session_id=binding[2],
         )
-    except ToolSessionNotFound:
+    except (ToolSessionNotFound, ToolSessionReauthorizationRequired):
         pass
 
 

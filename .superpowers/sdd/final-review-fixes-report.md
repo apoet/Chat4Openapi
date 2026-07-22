@@ -7,6 +7,8 @@ Base: `6ef657b`
 
 Complete. The final Important findings are covered by shared execution policy, focused regressions, repository-wide rename enforcement, and full backend/frontend verification.
 
+The logout re-review is also complete: Agent-key DELETE and administrator browser logout are idempotent for already-revoked or invisible sessions while unexpected service and database failures still propagate.
+
 ## Authentication and execution guards
 
 - Added one execute-time policy resolver shared by Agent execution, direct Tool invocation, and Tool Session execution. It refreshes the Tool, reloads its API Source, rejects missing/deleted/disabled state, and determines authentication from both the enabled global login configuration and an enabled source OAuth configuration.
@@ -28,13 +30,15 @@ Complete. The final Important findings are covered by shared execution policy, f
 - Focused GREEN: 77 passed across Agent runtime, Tool Session/direct invocation, and the tracked rename gate.
 - The expanded source/owner matrix passed 12 cases: missing/deleted/disabled source × with/without Tool Session × Agent key/administrator.
 - A pre-existing 201-row frontend test became slow under parallel full-gate load. It was split into independent over-limit rejection and exact-200 select/clear cases without increasing the timeout; focused execution passed 2/2 and the final full frontend suite passed.
+- Logout replay RED was 2 failed and 2 passed: the second Agent-key DELETE and the second stale-cookie browser logout raised reauthorization-required, while cross-owner non-enumeration and unexpected-error propagation already passed. The minimal GREEN catches only not-found and reauthorization-required at those two logout boundaries; focused execution then passed 4/4.
 
 ## Fresh verification
 
 - Focused backend: 77 passed.
 - Expanded direct-source matrix: 12 passed.
 - Related compatible/chat/direct/session/OAuth/migration run: 124 passed; its sole old-contract failure was updated from revoked-as-missing to the required revoked-as-reauthorization behavior, then the affected tests passed 2/2.
-- Full backend: 336 passed.
+- Related credential/session/OAuth run after the logout fix: 79 passed. OAuth has no separate revoke/delete endpoint; OAuth-backed sessions use the same covered Tool Session logout paths.
+- Full backend: 340 passed.
 - Ruff over backend source, migrations, and tests: all checks passed.
 - Full frontend: 10 files, 97 tests passed.
 - Frontend typecheck: passed.
