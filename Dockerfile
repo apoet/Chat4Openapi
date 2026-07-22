@@ -6,6 +6,7 @@ WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
+COPY logo.png /build/logo.png
 RUN npm run build
 
 
