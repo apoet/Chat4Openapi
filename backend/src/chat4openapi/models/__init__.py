@@ -5,6 +5,7 @@ from chat4openapi.models.agent import Agent, AgentApiKey, AgentSkill
 from chat4openapi.models.app_setting import AppSetting
 from chat4openapi.models.browser_chat_session import BrowserChatSession
 from chat4openapi.models.conversation import ChatMessage, Conversation
+from chat4openapi.models.embed import AgentEmbed, EmbedAuthGrant, EmbedSession
 from chat4openapi.models.llm_provider import LlmProvider
 from chat4openapi.models.skill import Skill, SkillTool
 from chat4openapi.models.tool import Tool
@@ -24,12 +25,15 @@ __all__ = [
     "Agent",
     "AgentApiKey",
     "AgentSkill",
+    "AgentEmbed",
     "ApiSource",
     "ApiSourceOAuthConfig",
     "AppSetting",
     "BrowserChatSession",
     "ChatMessage",
     "Conversation",
+    "EmbedAuthGrant",
+    "EmbedSession",
     "GlobalToolAuthConfig",
     "LlmProvider",
     "Skill",

@@ -26,9 +26,13 @@ class Conversation(Base):
     __table_args__ = (
         CheckConstraint(
             "(deleted_at IS NOT NULL AND agent_key_id IS NULL AND "
-            "browser_chat_session_id IS NULL) OR "
-            "((agent_key_id IS NULL AND browser_chat_session_id IS NOT NULL) OR "
-            "(agent_key_id IS NOT NULL AND browser_chat_session_id IS NULL))",
+            "browser_chat_session_id IS NULL AND embed_session_id IS NULL) OR "
+            "((agent_key_id IS NOT NULL AND browser_chat_session_id IS NULL AND "
+            "embed_session_id IS NULL) OR "
+            "(agent_key_id IS NULL AND browser_chat_session_id IS NOT NULL AND "
+            "embed_session_id IS NULL) OR "
+            "(agent_key_id IS NULL AND browser_chat_session_id IS NULL AND "
+            "embed_session_id IS NOT NULL))",
             name="ck_conversation_exactly_one_active_owner",
         ),
     )
@@ -41,6 +45,9 @@ class Conversation(Base):
     )
     browser_chat_session_id: Mapped[int | None] = mapped_column(
         ForeignKey("browser_chat_sessions.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    embed_session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("embed_sessions.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     skill_id: Mapped[int | None] = mapped_column(
         ForeignKey("skills.id", ondelete="SET NULL"), nullable=True, index=True
@@ -71,7 +78,7 @@ class Conversation(Base):
             raise ValueError("conversation agent cannot be changed")
         return value
 
-    @validates("agent_key_id", "browser_chat_session_id")
+    @validates("agent_key_id", "browser_chat_session_id", "embed_session_id")
     def _keep_owner_immutable(self, key: str, value: int | None) -> int | None:
         state = inspect(self)
         if state.persistent and getattr(self, key) != value:

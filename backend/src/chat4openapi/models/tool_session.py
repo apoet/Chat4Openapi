@@ -20,8 +20,12 @@ class ToolUserSession(Base):
     __tablename__ = "tool_user_sessions"
     __table_args__ = (
         CheckConstraint(
-            "(agent_key_id IS NOT NULL AND admin_session_id IS NULL) OR "
-            "(agent_key_id IS NULL AND admin_session_id IS NOT NULL)",
+            "(agent_key_id IS NOT NULL AND admin_session_id IS NULL AND "
+            "embed_session_id IS NULL) OR "
+            "(agent_key_id IS NULL AND admin_session_id IS NOT NULL AND "
+            "embed_session_id IS NULL) OR "
+            "(agent_key_id IS NULL AND admin_session_id IS NULL AND "
+            "embed_session_id IS NOT NULL)",
             name="ck_tool_session_one_owner",
         ),
         CheckConstraint(
@@ -41,6 +45,9 @@ class ToolUserSession(Base):
     )
     admin_session_id: Mapped[int | None] = mapped_column(
         ForeignKey("admin_sessions.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    embed_session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("embed_sessions.id", ondelete="CASCADE"), nullable=True, index=True
     )
     status: Mapped[str] = mapped_column(String(32), default="ready")
     encrypted_login_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
