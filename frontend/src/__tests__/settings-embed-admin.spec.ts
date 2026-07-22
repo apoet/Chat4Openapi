@@ -33,6 +33,7 @@ describe('Embed administration', () => {
     expect(wrapper.get('input[type="url"]').element).toHaveProperty(
       'value', 'https://chat.example',
     )
+    expect(wrapper.text()).toContain('HTTP or HTTPS')
     await wrapper.get('input[type="url"]').setValue('https://widget.example/base/')
     await wrapper.get('form').trigger('submit')
     await flushPromises()

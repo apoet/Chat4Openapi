@@ -9,6 +9,7 @@ from chat4openapi.embed.urls import frame_ancestors, normalize_base_url, normali
         ("https://Chat.Example.com/", "https://chat.example.com"),
         ("https://chat.example.com/app///", "https://chat.example.com/app"),
         ("https://chat.example.com:443", "https://chat.example.com"),
+        ("http://Chat.Example.com:80/app/", "http://chat.example.com/app"),
         ("http://127.0.0.1:8000/", "http://127.0.0.1:8000"),
         ("http://localhost:8000/base/", "http://localhost:8000/base"),
     ],
@@ -20,7 +21,6 @@ def test_normalize_base_url(value: str, expected: str) -> None:
 @pytest.mark.parametrize(
     "value",
     [
-        "http://chat.example.com",
         "https://user:password@chat.example.com",
         "https://chat.example.com?q=1",
         "https://chat.example.com#fragment",

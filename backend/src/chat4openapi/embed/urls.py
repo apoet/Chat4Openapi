@@ -26,8 +26,6 @@ def _validated_url(value: str, *, origin_only: bool) -> tuple[SplitResult, str, 
         port = parsed.port
     except ValueError as exc:
         raise ValueError("invalid port") from exc
-    if parsed.scheme.lower() == "http" and not _is_loopback(hostname):
-        raise ValueError("HTTPS is required except for loopback development")
     return parsed, hostname, port
 
 
@@ -46,9 +44,9 @@ def normalize_base_url(value: str) -> str:
 
 def normalize_origin(value: str, *, allow_loopback_http: bool = True) -> str:
     parsed, hostname, port = _validated_url(value, origin_only=True)
-    if parsed.scheme.lower() == "http" and not allow_loopback_http:
-        raise ValueError("HTTPS is required")
     scheme = parsed.scheme.lower()
+    if scheme == "http" and (not allow_loopback_http or not _is_loopback(hostname)):
+        raise ValueError("HTTPS is required except for loopback development")
     return f"{scheme}://{_authority(scheme, hostname, port)}"
 
 

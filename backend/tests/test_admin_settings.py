@@ -36,7 +36,7 @@ async def test_admin_can_normalize_update_and_clear_base_url(client: httpx.Async
 
 
 @pytest.mark.asyncio
-async def test_base_url_rejects_insecure_non_loopback_http(client: httpx.AsyncClient) -> None:
+async def test_base_url_accepts_non_loopback_http(client: httpx.AsyncClient) -> None:
     csrf = await _login(client)
 
     response = await client.put(
@@ -45,9 +45,8 @@ async def test_base_url_rejects_insecure_non_loopback_http(client: httpx.AsyncCl
         headers={"X-CSRF-Token": csrf},
     )
 
-    assert response.status_code == 422
-    assert response.json()["error"]["code"] == "validation.invalid"
-    assert response.json()["error"]["params"]["fields"] == ["body.base_url"]
+    assert response.status_code == 200
+    assert response.json()["base_url"] == "http://chat.example"
 
 
 @pytest.mark.asyncio

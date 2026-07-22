@@ -31,7 +31,7 @@ async function submit(): Promise<void> {
     <header class="page-heading"><div><p class="eyebrow">{{ t('settings.eyebrow') }}</p><h1>{{ t('settings.title') }}</h1><p class="muted">{{ t('settings.subtitle') }}</p></div></header>
     <section class="import-panel settings-panel">
       <form @submit.prevent="submit">
-        <label>{{ t('settings.baseUrl') }}<input v-model="baseUrl" type="url" placeholder="https://chat.example.com" /></label>
+        <label>{{ t('settings.baseUrl') }}<input v-model="baseUrl" type="url" placeholder="http://127.0.0.1:8000" /></label>
         <p class="muted">{{ t('settings.baseUrlHint') }}</p>
         <button class="primary-action" :disabled="pending">{{ t('settings.save') }}</button>
         <p v-if="saved" class="refresh-notice">{{ t('settings.saved') }} {{ store.settings.base_url }}</p>
