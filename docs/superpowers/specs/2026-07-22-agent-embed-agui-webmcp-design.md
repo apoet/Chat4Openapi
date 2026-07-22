@@ -78,6 +78,8 @@ Backend Agent execution emits lifecycle, text, error, and Tool Call events. Back
 
 The bridge performs progressive capability detection. When WebMCP is unavailable, it submits no frontend Tools and records no user-facing error. When available, it discovers only Tools that the host page has exposed to the Chat4Openapi origin.
 
+The July 2026 WebMCP draft specifies cross-document discovery through `getTools()` but its explainer still marks the script-side `executeTool()` contract as pending specification. The bridge therefore requires both a callable discovery API and a callable execution API before advertising any frontend Tool. A browser that exposes discovery without execution is treated as unsupported and ignored silently. The compatibility adapter is isolated so the experimental execution signature can be updated without changing AG-UI or backend Tool dispatch. It never substitutes DOM automation or a backend Tool.
+
 For each acceptable WebMCP Tool, the bridge:
 
 1. validates its name, description, and input schema;
