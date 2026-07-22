@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, onMounted, ref } from 'vue'
+import { computed, inject, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { routeLocationKey, routerKey } from 'vue-router'
 
@@ -135,7 +135,8 @@ const batchRequestError = ref('')
 const batchSummary = ref('')
 const batchFailures = ref<string[]>([])
 const deleteConfirmationOpen = ref(false)
-const deleteDialog = ref<HTMLElement | null>(null)
+const deleteDialog = ref<HTMLDialogElement | null>(null)
+const deleteTrigger = ref<HTMLElement | null>(null)
 const sourceId = computed(() => {
   const value = route?.query.source_id
   if (typeof value !== 'string' || !/^\d+$/.test(value)) return null
@@ -211,8 +212,16 @@ function isToolSelected(toolId: number): boolean {
   return selectedToolIds.value.has(toolId)
 }
 
+function isToolBatchPending(toolId: number): boolean {
+  return pendingToolIds.value.has(toolId)
+}
+
+function isToolMutationLocked(toolId: number): boolean {
+  return deleteConfirmationOpen.value || isToolBatchPending(toolId)
+}
+
 function setToolSelected(toolId: number, selected: boolean): void {
-  const next = new Set(selectedToolIds.value)
+  const next = new Set(selectedTools.value.map((tool) => tool.id))
   if (selected && next.size >= MAX_BATCH_TOOLS) {
     selectionError.value = t('tools.bulk.limit', { limit: MAX_BATCH_TOOLS })
     return
@@ -225,7 +234,7 @@ function setToolSelected(toolId: number, selected: boolean): void {
 
 function selectVisibleTools(): void {
   const next = new Set([
-    ...selectedToolIds.value,
+    ...selectedTools.value.map((tool) => tool.id),
     ...selectableVisibleTools.value.map((tool) => tool.id),
   ])
   if (next.size > MAX_BATCH_TOOLS) {
@@ -269,8 +278,8 @@ function batchFailureMessage(failure: ToolBatchFailed): string {
 }
 
 async function performBatchAction(action: ToolBatchAction): Promise<void> {
-  if (batchPending.value || selectedToolIds.value.size === 0) return
-  const snapshot = [...selectedToolIds.value]
+  if (batchPending.value || selectedTools.value.length === 0) return
+  const snapshot = selectedTools.value.map((tool) => tool.id)
   batchPending.value = true
   pendingToolIds.value = new Set(snapshot)
   selectionError.value = ''
@@ -296,22 +305,71 @@ async function performBatchAction(action: ToolBatchAction): Promise<void> {
   }
 }
 
-function requestBatchAction(action: ToolBatchAction): void {
+function requestBatchAction(action: ToolBatchAction, trigger?: HTMLElement): void {
   if (action === 'delete') {
+    if (selectedTools.value.length === 0) return
+    deleteTrigger.value = trigger ?? (document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null)
     deleteConfirmationOpen.value = true
-    void nextTick(() => deleteDialog.value?.focus())
+    void nextTick(() => {
+      const dialog = deleteDialog.value
+      if (!dialog) return
+      if (typeof dialog.showModal === 'function') dialog.showModal()
+      else dialog.setAttribute('open', '')
+      dialog.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
+    })
     return
   }
   void performBatchAction(action)
 }
 
 function cancelBulkDelete(): void {
-  deleteConfirmationOpen.value = false
+  if (batchPending.value) return
+  closeBulkDelete()
 }
 
-function confirmBulkDelete(): void {
+function closeBulkDelete(): void {
+  const dialog = deleteDialog.value
+  if (dialog?.open && typeof dialog.close === 'function') dialog.close()
+  else dialog?.removeAttribute('open')
   deleteConfirmationOpen.value = false
-  void performBatchAction('delete')
+  const trigger = deleteTrigger.value
+  void nextTick(() => {
+    if (trigger?.isConnected && !(trigger instanceof HTMLButtonElement && trigger.disabled)) {
+      trigger.focus()
+    }
+  })
+}
+
+async function confirmBulkDelete(): Promise<void> {
+  if (batchPending.value) return
+  await performBatchAction('delete')
+  closeBulkDelete()
+}
+
+function handleDeleteDialogKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    cancelBulkDelete()
+    return
+  }
+  if (event.key !== 'Tab') return
+  const focusable = [...(deleteDialog.value?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])]
+  if (focusable.length === 0) {
+    event.preventDefault()
+    deleteDialog.value?.focus()
+    return
+  }
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
 }
 
 function clearSourceFilter(): void {
@@ -319,6 +377,7 @@ function clearSourceFilter(): void {
 }
 
 function startDescriptionEdit(tool: ToolSummary): void {
+  if (isToolMutationLocked(tool.id)) return
   editingDescriptionId.value = tool.id
   descriptionDraft.value = tool.description || ''
 }
@@ -329,8 +388,19 @@ function cancelDescriptionEdit(): void {
 }
 
 async function saveDescription(tool: ToolSummary): Promise<void> {
+  if (isToolMutationLocked(tool.id)) return
   await store.updateToolDescription(tool, descriptionDraft.value)
   cancelDescriptionEdit()
+}
+
+function setSingleToolEnabled(tool: ToolSummary): void {
+  if (isToolMutationLocked(tool.id)) return
+  void store.setEnabled(tool, !tool.enabled)
+}
+
+function deleteSingleTool(tool: ToolSummary): void {
+  if (isToolMutationLocked(tool.id)) return
+  void store.deleteTool(tool)
 }
 
 function isEditingParameter(tool: ToolSummary, parameter: ToolParameterView): boolean {
@@ -339,6 +409,7 @@ function isEditingParameter(tool: ToolSummary, parameter: ToolParameterView): bo
 }
 
 function startParameterEdit(tool: ToolSummary, parameter: ToolParameterView): void {
+  if (isToolMutationLocked(tool.id)) return
   editingParameter.value = { toolId: tool.id, name: parameter.name }
   parameterDescriptionDraft.value = parameter.description || ''
   parameterExampleDraft.value = exampleDraft(parameter.example)
@@ -354,6 +425,7 @@ function cancelParameterEdit(): void {
 }
 
 async function saveParameter(tool: ToolSummary, parameter: ToolParameterView): Promise<void> {
+  if (isToolMutationLocked(tool.id)) return
   parameterSaving.value = true
   parameterError.value = ''
   try {
@@ -371,16 +443,22 @@ async function saveParameter(tool: ToolSummary, parameter: ToolParameterView): P
 }
 
 onMounted(() => void Promise.all([store.loadTools(), store.loadSources()]))
+
+watch(() => store.tools.map((tool) => tool.id), (toolIds) => {
+  const existingIds = new Set(toolIds)
+  const next = new Set([...selectedToolIds.value].filter((id) => existingIds.has(id)))
+  if (next.size !== selectedToolIds.value.size) selectedToolIds.value = next
+})
 </script>
 
 <template>
-  <main class="management-page">
+  <main class="management-page" :inert="deleteConfirmationOpen || undefined">
     <header class="page-heading with-actions"><div><p class="eyebrow">{{ t('tools.eyebrow') }}</p><h1>{{ t('tools.title') }}</h1><p class="muted">{{ t('tools.subtitle') }}</p></div>
       <div class="segmented"><button v-for="value in (['all','enabled','disabled'] as const)" :key="value" :class="{ active: filter === value }" @click="filter = value">{{ t(`tools.filter.${value}`) }}</button></div>
     </header>
     <label class="tool-search"><span>{{ t('tools.searchLabel') }}</span><input v-model="searchQuery" type="search" :placeholder="t('tools.searchPlaceholder')" /></label>
     <ToolBulkBar
-      :selected-count="selectedToolIds.size"
+      :selected-count="selectedTools.length"
       :visible-count="selectableVisibleTools.length"
       :pending="batchPending || deleteConfirmationOpen"
       :error="selectionError || batchRequestError"
@@ -390,16 +468,6 @@ onMounted(() => void Promise.all([store.loadTools(), store.loadSources()]))
       @clear="clearToolSelection"
       @action="requestBatchAction"
     />
-    <div v-if="deleteConfirmationOpen" class="modal-backdrop">
-      <section ref="deleteDialog" role="dialog" aria-modal="true" aria-labelledby="bulk-delete-title" class="confirmation-dialog" tabindex="-1" @keydown.esc="cancelBulkDelete">
-        <h2 id="bulk-delete-title">{{ t('tools.bulk.confirm.title') }}</h2>
-        <p>{{ t('tools.bulk.confirm.message', { tools: selectedTools.length, sources: selectedSourceCount }) }}</p>
-        <div class="confirmation-actions">
-          <button class="secondary-action" :aria-label="t('tools.bulk.confirm.cancelLabel')" @click="cancelBulkDelete">{{ t('tools.bulk.confirm.cancel') }}</button>
-          <button class="danger-action" :aria-label="t('tools.bulk.confirm.confirmLabel')" @click="confirmBulkDelete">{{ t('tools.bulk.confirm.confirm') }}</button>
-        </div>
-      </section>
-    </div>
     <div v-if="sourceId !== null" class="source-filter-banner"><span>{{ t('tools.sourceFilter', { name: sourceName }) }}</span><button class="secondary-action" @click="clearSourceFilter">{{ t('tools.showAllSources') }}</button></div>
     <div v-if="!store.loading && visibleTools.length === 0" class="empty-state">{{ t('tools.empty') }}</div>
     <details v-for="group in groupedTools" :key="group.id" class="tool-source-group" :open="!collapsedSourceIds.has(group.id)">
@@ -408,16 +476,16 @@ onMounted(() => void Promise.all([store.loadTools(), store.loadSources()]))
         <summary class="tool-tag-heading" @click.prevent="toggleTagCollapsed(group.id, tagGroup.name)"><h3>{{ tagGroup.name }}</h3><span>{{ t('tools.count', { count: tagGroup.tools.length }) }}</span></summary>
         <div class="tool-grid">
         <article v-for="tool in tagGroup.tools" :key="tool.id" class="tool-card">
-          <div class="tool-card-head"><label class="tool-select"><input type="checkbox" :checked="isToolSelected(tool.id)" :disabled="deleteConfirmationOpen || pendingToolIds.has(tool.id) || (!isToolSelected(tool.id) && selectedToolIds.size >= MAX_BATCH_TOOLS)" :aria-label="t('tools.bulk.selectTool', { name: tool.name })" @change="setToolSelected(tool.id, ($event.target as HTMLInputElement).checked)" /></label><code>{{ tool.operation_key.split(' ')[0] }}</code><span :class="['status-pill', tool.enabled ? 'enabled' : 'disabled']">{{ tool.enabled ? t('tools.enabled') : t('tools.disabled') }}</span></div>
+          <div class="tool-card-head"><label class="tool-select"><input type="checkbox" :checked="isToolSelected(tool.id)" :disabled="deleteConfirmationOpen || pendingToolIds.has(tool.id) || (!isToolSelected(tool.id) && selectedTools.length >= MAX_BATCH_TOOLS)" :aria-label="t('tools.bulk.selectTool', { name: tool.name })" @change="setToolSelected(tool.id, ($event.target as HTMLInputElement).checked)" /></label><code>{{ tool.operation_key.split(' ')[0] }}</code><span :class="['status-pill', tool.enabled ? 'enabled' : 'disabled']">{{ tool.enabled ? t('tools.enabled') : t('tools.disabled') }}</span></div>
           <div v-if="tool.tags?.length" class="tool-tags"><span v-for="tag in tool.tags" :key="tag">{{ tag }}</span></div>
           <h2>{{ tool.name }}</h2>
           <div v-if="editingDescriptionId === tool.id" class="tool-description-editor">
-            <label><span>{{ t('tools.descriptionLabel') }}</span><textarea v-model="descriptionDraft" rows="3" maxlength="4000" /></label>
-            <div><button class="primary-action" @click="saveDescription(tool)">{{ t('tools.saveDescription') }}</button><button class="secondary-action" @click="cancelDescriptionEdit">{{ t('tools.cancelDescription') }}</button></div>
+            <label><span>{{ t('tools.descriptionLabel') }}</span><textarea v-model="descriptionDraft" rows="3" maxlength="4000" :disabled="isToolMutationLocked(tool.id)" /></label>
+            <div><button class="primary-action" :disabled="isToolMutationLocked(tool.id)" @click="saveDescription(tool)">{{ t('tools.saveDescription') }}</button><button class="secondary-action" @click="cancelDescriptionEdit">{{ t('tools.cancelDescription') }}</button></div>
           </div>
           <template v-else>
             <p>{{ tool.description || tool.operation_key }}</p>
-            <button class="description-edit-action" @click="startDescriptionEdit(tool)">{{ t('tools.editDescription') }}</button>
+            <button class="description-edit-action" :disabled="isToolMutationLocked(tool.id)" @click="startDescriptionEdit(tool)">{{ t('tools.editDescription') }}</button>
           </template>
           <details v-if="tool.parameters.length" class="tool-parameters">
             <summary>{{ t('tools.parameters', { count: tool.parameters.length }) }}</summary>
@@ -426,11 +494,11 @@ onMounted(() => void Promise.all([store.loadTools(), store.loadSources()]))
                 <div class="parameter-heading"><code>{{ parameter.name }}</code><span>{{ t(`tools.location.${parameter.location}`) }}</span><span>{{ parameter.type }}</span><b :class="{ optional: !parameter.required }">{{ parameter.required ? t('tools.required') : t('tools.optional') }}</b></div>
                 <template v-if="isEditingParameter(tool, parameter)">
                   <div class="parameter-editor">
-                    <label><span>{{ t('tools.parameterDescriptionLabel') }}</span><textarea v-model="parameterDescriptionDraft" rows="3" maxlength="4000" /></label>
-                    <label><span>{{ t('tools.parameterExampleLabel') }}</span><textarea v-model="parameterExampleDraft" rows="2" /></label>
+                    <label><span>{{ t('tools.parameterDescriptionLabel') }}</span><textarea v-model="parameterDescriptionDraft" rows="3" maxlength="4000" :disabled="isToolMutationLocked(tool.id)" /></label>
+                    <label><span>{{ t('tools.parameterExampleLabel') }}</span><textarea v-model="parameterExampleDraft" rows="2" :disabled="isToolMutationLocked(tool.id)" /></label>
                     <p class="parameter-editor-hint">{{ t('tools.parameterExampleHint') }}</p>
                     <p v-if="parameterError" class="parameter-save-error" role="alert">{{ parameterError }}</p>
-                    <div class="parameter-editor-actions"><button class="primary-action" :disabled="parameterSaving" @click="saveParameter(tool, parameter)">{{ t('tools.saveParameter') }}</button><button class="secondary-action" :disabled="parameterSaving" @click="cancelParameterEdit">{{ t('tools.cancelParameter') }}</button></div>
+                    <div class="parameter-editor-actions"><button class="primary-action" :disabled="parameterSaving || isToolMutationLocked(tool.id)" @click="saveParameter(tool, parameter)">{{ t('tools.saveParameter') }}</button><button class="secondary-action" :disabled="parameterSaving" @click="cancelParameterEdit">{{ t('tools.cancelParameter') }}</button></div>
                   </div>
                 </template>
                 <template v-else>
@@ -438,16 +506,24 @@ onMounted(() => void Promise.all([store.loadTools(), store.loadSources()]))
                     <p v-if="parameter.description"><strong>{{ t('tools.parameterDescription') }}</strong><span>{{ parameter.description }}</span></p>
                     <p v-if="parameter.example !== undefined"><strong>{{ t('tools.parameterExample') }}</strong><code>{{ displayExample(parameter.example) }}</code></p>
                   </div>
-                  <button class="parameter-edit-action" @click="startParameterEdit(tool, parameter)">{{ t('tools.editParameter') }}</button>
+                  <button class="parameter-edit-action" :disabled="isToolMutationLocked(tool.id)" @click="startParameterEdit(tool, parameter)">{{ t('tools.editParameter') }}</button>
                   <p v-if="parameterSuccess?.toolId === tool.id && parameterSuccess.name === parameter.name" class="parameter-save-success" role="status">{{ t('tools.parameterSaveSuccess') }}</p>
                 </template>
               </div>
             </div>
           </details>
-          <footer><button class="secondary-action" @click="store.setEnabled(tool, !tool.enabled)">{{ tool.enabled ? t('tools.disable') : t('tools.enable') }}</button><button class="danger-action" @click="store.deleteTool(tool)">{{ t('tools.delete') }}</button></footer>
+          <footer><button class="secondary-action" :disabled="isToolMutationLocked(tool.id)" @click="setSingleToolEnabled(tool)">{{ tool.enabled ? t('tools.disable') : t('tools.enable') }}</button><button class="danger-action" :disabled="isToolMutationLocked(tool.id)" @click="deleteSingleTool(tool)">{{ t('tools.delete') }}</button></footer>
         </article>
         </div>
       </details>
     </details>
   </main>
+  <dialog v-if="deleteConfirmationOpen" ref="deleteDialog" aria-labelledby="bulk-delete-title" class="confirmation-dialog" tabindex="-1" @cancel.prevent="cancelBulkDelete" @keydown="handleDeleteDialogKeydown">
+    <h2 id="bulk-delete-title">{{ t('tools.bulk.confirm.title') }}</h2>
+    <p>{{ t('tools.bulk.confirm.message', { tools: selectedTools.length, sources: selectedSourceCount }) }}</p>
+    <div class="confirmation-actions">
+      <button class="secondary-action" :disabled="batchPending" :aria-label="t('tools.bulk.confirm.cancelLabel')" @click="cancelBulkDelete">{{ t('tools.bulk.confirm.cancel') }}</button>
+      <button class="danger-action" :disabled="batchPending" :aria-label="t('tools.bulk.confirm.confirmLabel')" @click="confirmBulkDelete">{{ t('tools.bulk.confirm.confirm') }}</button>
+    </div>
+  </dialog>
 </template>

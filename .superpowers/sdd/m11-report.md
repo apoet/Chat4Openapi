@@ -23,9 +23,17 @@ Complete.
 - RED: collapsed source/tag Tools were included by visible selection; GREEN after tracking disclosure state in the true-visible set.
 - Regression coverage also verifies CSRF/body shape, safe partial failures, endpoint failure/retry, late responses, unrelated selection preservation, successful deletion, and status updates.
 
+## Review Follow-up
+
+- RED: a Tool removed by a successful single-item delete remained in bulk selection counts; GREEN after deriving counts, limits, confirmation, and snapshots from existing Tools and pruning stale IDs whenever the store list changes.
+- RED: single-item edit/enable/delete controls for a pending batch ID remained actionable; GREEN after adding per-ID UI locks plus function-level guards while leaving unrelated Tools selectable and operable.
+- RED: delete confirmation did not inert the background, trap Tab, or restore trigger focus; GREEN after moving to native `dialog` `showModal`/`close`, explicit background inertness, focus cycling, Escape/cancel handling, and trigger focus restoration.
+- Confirmation now remains modal and non-dismissible while its delete request is pending; both dialog actions and background Tool mutations are blocked until reconciliation completes.
+
 ## Fresh Verification
 
-- `D:\nvm\nodejs\npm.cmd test -- --run`: PASS — 9 files, 83 tests.
+- `D:\nvm\nodejs\npm.cmd test -- --run src/__tests__/tools-view.spec.ts`: PASS — 1 file, 36 tests.
+- `D:\nvm\nodejs\npm.cmd test -- --run`: PASS — 9 files, 86 tests.
 - `D:\nvm\nodejs\npm.cmd run typecheck`: PASS.
 - `D:\nvm\nodejs\npm.cmd run build`: PASS — Vue typecheck plus Vite production build, 169 modules transformed.
 - `git diff --check`: PASS (only Git line-ending notices were emitted by adjacent diff commands).

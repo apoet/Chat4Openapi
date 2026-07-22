@@ -15,7 +15,7 @@ defineProps<{
 defineEmits<{
   selectVisible: []
   clear: []
-  action: [action: ToolBatchAction]
+  action: [action: ToolBatchAction, trigger: HTMLElement]
 }>()
 
 const { t } = useI18n()
@@ -31,13 +31,13 @@ const { t } = useI18n()
       <button class="secondary-action" :disabled="pending || selectedCount === 0" @click="$emit('clear')">
         {{ t('tools.bulk.clear') }}
       </button>
-      <button class="secondary-action" :disabled="pending || selectedCount === 0" @click="$emit('action', 'enable')">
+      <button class="secondary-action" :disabled="pending || selectedCount === 0" @click="$emit('action', 'enable', $event.currentTarget as HTMLElement)">
         {{ t('tools.bulk.enable') }}
       </button>
-      <button class="secondary-action" :disabled="pending || selectedCount === 0" @click="$emit('action', 'disable')">
+      <button class="secondary-action" :disabled="pending || selectedCount === 0" @click="$emit('action', 'disable', $event.currentTarget as HTMLElement)">
         {{ t('tools.bulk.disable') }}
       </button>
-      <button class="danger-action" :disabled="pending || selectedCount === 0" @click="$emit('action', 'delete')">
+      <button class="danger-action" :disabled="pending || selectedCount === 0" @click="$emit('action', 'delete', $event.currentTarget as HTMLElement)">
         {{ t('tools.bulk.delete') }}
       </button>
     </div>

@@ -129,8 +129,8 @@ blockquote { margin: 0; padding-left: 20px; border-left: 2px solid #6558e8; font
 .tool-select { display: inline-flex; align-items: center; }
 .tool-select input { width: 18px; height: 18px; margin: 0; accent-color: #6558e8; cursor: pointer; }
 .tool-select input:focus-visible { outline: 3px solid #d9d5ff; outline-offset: 3px; }
-.modal-backdrop { position: fixed; z-index: 20; inset: 0; padding: 24px; display: grid; place-items: center; background: rgba(18,20,28,.5); }
-.confirmation-dialog { width: min(480px, 100%); padding: 26px; border: 0; border-radius: 16px; background: var(--paper); box-shadow: 0 24px 70px rgba(18,20,28,.3); }
+.confirmation-dialog { width: min(480px, calc(100% - 48px)); margin: auto; padding: 26px; border: 0; border-radius: 16px; background: var(--paper); box-shadow: 0 24px 70px rgba(18,20,28,.3); }
+.confirmation-dialog::backdrop { background: rgba(18,20,28,.5); }
 .confirmation-dialog:focus { outline: 3px solid #d9d5ff; outline-offset: 3px; }
 .confirmation-dialog h2 { margin: 0 0 10px; }
 .confirmation-dialog p { color: var(--muted); line-height: 1.55; }

@@ -287,6 +287,47 @@ describe('Tool administration views', () => {
     expect(document.body.textContent).not.toContain('secret database detail')
   })
 
+  it('removes single-deleted Tools from bulk counts, confirmation, and request snapshots', async () => {
+    const tools = [
+      { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: false },
+      { id: 2, api_source_id: 2, operation_key: 'GET /genes', name: 'listGenes', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: false },
+    ]
+    const sources = [
+      { id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://pets.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+      { id: 2, name: 'Gene API', source_type: 'openapi', base_url: 'https://genes.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+    ]
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse(sources))
+      if (path.endsWith('/tools/1') && init?.method === 'DELETE') return Promise.resolve(jsonResponse(null))
+      if (path.endsWith('/batch')) {
+        return Promise.resolve(jsonResponse({
+          request_count: 1,
+          succeeded: [{ tool_id: 2, action: 'delete', status: 'deleted' }],
+          failed: [],
+        }))
+      }
+      return Promise.resolve(jsonResponse(tools))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    await fireEvent.click(await screen.findByRole('checkbox', { name: 'Select listPets' }))
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Select listGenes' }))
+    const petCard = screen.getByText('listPets').closest('article') as HTMLElement
+    await fireEvent.click(within(petCard).getByRole('button', { name: 'Delete' }))
+
+    await waitFor(() => expect(screen.queryByText('listPets')).toBeNull())
+    expect(screen.getByText('1 Tools selected')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+    expect(screen.getByRole('dialog').textContent).toContain('Delete 1 Tools from 1 API sources?')
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete Tools' }))
+
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/batch'))).toHaveLength(1))
+    const batchCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/batch'))
+    expect(JSON.parse((batchCall?.[1] as RequestInit).body as string).tool_ids).toEqual([2])
+  })
+
   it('confirms bulk delete with Tool and source counts while cancel sends no request', async () => {
     const tools = [
       { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: false },
@@ -316,13 +357,22 @@ describe('Tool administration views', () => {
     render(ToolsView, { global: { plugins: [i18n] } })
     await fireEvent.click(await screen.findByRole('checkbox', { name: 'Select listPets' }))
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Select listGenes' }))
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+    const deleteTrigger = screen.getByRole('button', { name: 'Delete selected' })
+    await fireEvent.click(deleteTrigger)
 
     const dialog = screen.getByRole('dialog', { name: 'Delete selected Tools' })
     expect(dialog.textContent).toContain('Delete 2 Tools from 2 API sources?')
-    expect(document.activeElement).toBe(dialog)
+    const cancelButton = screen.getByRole('button', { name: 'Cancel bulk delete' })
+    const confirmButton = screen.getByRole('button', { name: 'Confirm delete Tools' })
+    expect(document.querySelector('main')?.hasAttribute('inert')).toBe(true)
+    expect(document.activeElement).toBe(cancelButton)
+    await fireEvent.keyDown(cancelButton, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(confirmButton)
+    await fireEvent.keyDown(confirmButton, { key: 'Tab' })
+    expect(document.activeElement).toBe(cancelButton)
     await fireEvent.keyDown(dialog, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: 'Delete selected Tools' })).toBeNull()
+    expect(document.activeElement).toBe(deleteTrigger)
 
     await fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel bulk delete' }))
@@ -336,6 +386,48 @@ describe('Tool administration views', () => {
     expect(screen.queryByText('listPets')).toBeNull()
     expect(screen.queryByText('listGenes')).toBeNull()
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/batch'))).toHaveLength(1)
+  })
+
+  it('keeps the native delete dialog modal and non-dismissible while confirmation is pending', async () => {
+    const tool = { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: false }
+    const batch = deferred<Response>()
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse([]))
+      if (path.endsWith('/batch')) return batch.promise
+      if (path.endsWith('/tools/1') && init?.method === 'DELETE') return Promise.resolve(jsonResponse(null))
+      return Promise.resolve(jsonResponse([tool]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    await fireEvent.click(await screen.findByRole('checkbox', { name: 'Select listPets' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+    const dialog = screen.getByRole('dialog', { name: 'Delete selected Tools' })
+    const backgroundDelete = within(screen.getByText('listPets').closest('article') as HTMLElement)
+      .getByRole('button', { name: 'Delete' })
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete Tools' }))
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/batch'))).toHaveLength(1))
+
+    expect(screen.getByRole('dialog', { name: 'Delete selected Tools' })).toBe(dialog)
+    expect(screen.getByRole('button', { name: 'Cancel bulk delete' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'Confirm delete Tools' })).toHaveProperty('disabled', true)
+    expect(document.querySelector('main')?.hasAttribute('inert')).toBe(true)
+    expect(backgroundDelete).toHaveProperty('disabled', true)
+    await fireEvent.click(backgroundDelete)
+    await fireEvent.keyDown(dialog, { key: 'Escape' })
+    await fireEvent(dialog, new Event('cancel', { cancelable: true }))
+    expect(screen.getByRole('dialog', { name: 'Delete selected Tools' })).toBe(dialog)
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/tools/1'))).toHaveLength(0)
+
+    batch.resolve(jsonResponse({
+      request_count: 1,
+      succeeded: [{ tool_id: 1, action: 'delete', status: 'deleted' }],
+      failed: [],
+    }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete selected Tools' })).toBeNull())
+    expect(screen.queryByText('listPets')).toBeNull()
+    expect(document.querySelector('main')?.hasAttribute('inert')).toBe(false)
   })
 
   it('locks the request snapshot while pending and preserves later unrelated selection', async () => {
@@ -379,6 +471,60 @@ describe('Tool administration views', () => {
     expect(screen.getByRole('checkbox', { name: 'Select listGenes' })).toHaveProperty('checked', true)
     const batchCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/batch'))
     expect(JSON.parse((batchCall?.[1] as RequestInit).body as string).tool_ids).toEqual([1, 2])
+  })
+
+  it('blocks single-Tool mutations for pending batch IDs while unrelated Tools stay operable', async () => {
+    const tools = [
+      {
+        id: 1,
+        api_source_id: 1,
+        operation_key: 'GET /pets/{petId}',
+        name: 'getPet',
+        description: 'Get a pet',
+        input_schema: { type: 'object', properties: { petId: { type: 'string' } }, required: ['petId'] },
+        execution_schema: { parameters: [{ name: 'petId', in: 'path', required: true, argument: 'petId' }] },
+        tags: ['Catalog'],
+        enabled: false,
+      },
+      { id: 2, api_source_id: 1, operation_key: 'GET /genes', name: 'listGenes', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: false },
+    ]
+    const batch = deferred<Response>()
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse([]))
+      if (path.endsWith('/batch')) return batch.promise
+      if (path.endsWith('/tools/2/enabled') && init?.method === 'PATCH') {
+        return Promise.resolve(jsonResponse({ ...tools[1], enabled: true }))
+      }
+      return Promise.resolve(jsonResponse(tools))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    await fireEvent.click(await screen.findByRole('checkbox', { name: 'Select getPet' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Enable selected' }))
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/batch'))).toHaveLength(1))
+
+    const petCard = screen.getByText('getPet').closest('article') as HTMLElement
+    const geneCard = screen.getByText('listGenes').closest('article') as HTMLElement
+    const pendingActions = [
+      within(petCard).getByRole('button', { name: 'Edit description' }),
+      within(petCard).getByRole('button', { name: 'Edit parameter' }),
+      within(petCard).getByRole('button', { name: 'Enable' }),
+      within(petCard).getByRole('button', { name: 'Delete' }),
+    ]
+    for (const action of pendingActions) {
+      expect(action).toHaveProperty('disabled', true)
+      await fireEvent.click(action)
+    }
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/tools/1'))).toHaveLength(0)
+
+    expect(within(geneCard).getByRole('button', { name: 'Edit description' })).toHaveProperty('disabled', false)
+    expect(within(geneCard).getByRole('button', { name: 'Enable' })).toHaveProperty('disabled', false)
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Select listGenes' }))
+    await fireEvent.click(within(geneCard).getByRole('button', { name: 'Enable' }))
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/tools/2/enabled'))).toHaveLength(1))
+    expect(screen.getByRole('checkbox', { name: 'Select listGenes' })).toHaveProperty('checked', true)
   })
 
   it('keeps the request selection retryable when the batch endpoint fails', async () => {
