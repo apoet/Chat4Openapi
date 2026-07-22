@@ -121,6 +121,9 @@ export default {
     welcome: 'Chat with {agent}', welcomeHint: 'Ask a question or request an action.',
     you: 'You', placeholder: 'Type a message…', send: 'Send', cancel: 'Cancel', close: 'Close chat',
     unavailable: 'This chat is unavailable.', failed: 'The request could not be completed. Please try again.',
+    authorizationTitle: 'Sign in to {source}', authorizationHint: 'This protected API needs your authorization before the Agent can continue.',
+    authorize: 'Authorize', authorizing: 'Opening…', logout: 'Sign out', popupBlocked: 'The authorization popup was blocked. Allow popups and try again.',
+    authorizationCancelled: 'Authorization was cancelled. You can try again.', authorizationFailed: 'Authorization failed. Please try again.',
   },
   action: { continue: 'Continue' },
   error: {

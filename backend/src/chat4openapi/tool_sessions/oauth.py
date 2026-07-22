@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 from sqlalchemy import select, update
@@ -56,6 +56,7 @@ class OAuthStatus:
     tool_session_db_id: int | None = None
     embed_session_id: int | None = None
     parent_origin: str | None = None
+    target_origin: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -524,6 +525,10 @@ class ToolOAuthService:
             binding_data = {
                 "embed_session_id": context.id,
                 "parent_origin": context.parent_origin,
+                "target_origin": (
+                    f"{urlsplit(str(redirect_uri)).scheme}://"
+                    f"{urlsplit(str(redirect_uri)).netloc}"
+                ),
                 "redirect_uri": redirect_uri,
             }
         else:
@@ -663,6 +668,7 @@ class ToolOAuthService:
                 tool_session_db_id=row.id,
                 embed_session_id=flow_data.get("embed_session_id"),
                 parent_origin=flow_data.get("parent_origin"),
+                target_origin=flow_data.get("target_origin"),
             )
         except BaseException as exc:
             self._fail_claimed_pkce(flow_id, row_id)

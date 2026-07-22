@@ -249,7 +249,7 @@ async def pkce_callback(
     if (
         completed.embed_session_id is not None
         and completed.tool_session_db_id is not None
-        and completed.parent_origin is not None
+        and completed.target_origin is not None
     ):
         grant = create_auth_grant(
             service._session,
@@ -263,7 +263,7 @@ async def pkce_callback(
             ensure_ascii=False,
             separators=(",", ":"),
         )
-        target_origin = json.dumps(completed.parent_origin)
+        target_origin = json.dumps(completed.target_origin)
         return HTMLResponse(
             "<!doctype html><script>"
             f"window.opener.postMessage({payload},{target_origin});window.close()"

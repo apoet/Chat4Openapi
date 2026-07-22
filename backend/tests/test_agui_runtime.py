@@ -419,6 +419,7 @@ async def test_embed_protected_backend_tool_emits_authorization_event(
         assert required["value"] == {
             "api_source_id": source.id,
             "api_source_name": "Gene API",
+            "flows": ["pkce"],
         }
         assert "never-expose" not in str(events)
         assert len(llm.calls) == 2

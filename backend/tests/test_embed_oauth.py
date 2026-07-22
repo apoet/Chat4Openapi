@@ -188,7 +188,7 @@ async def test_embed_pkce_callback_returns_single_use_grant_not_tokens(
     assert callback.status_code == 200
     assert callback.headers["cache-control"] == "no-store"
     assert "chat4openapi:auth-grant" in callback.text
-    assert "https://host.example" in callback.text
+    assert "https://chat.example" in callback.text
     assert "upstream-access-token" not in callback.text
     assert "upstream-refresh-token" not in callback.text
     assert "tool_session" not in callback.text
@@ -293,6 +293,7 @@ async def test_embed_swagger_login_posts_credentials_and_returns_only_grant(
 
     assert completed.status_code == 200
     assert "chat4openapi:auth-grant" in completed.text
+    assert "https://chat.example" in completed.text
     assert "visitor" not in completed.text
     assert "secret-password" not in completed.text
     assert "swagger-access-token" not in completed.text

@@ -21,8 +21,10 @@ from chat4openapi.models import (
     Agent,
     AgentSkill,
     ApiSource,
+    ApiSourceOAuthConfig,
     ChatMessage,
     Conversation,
+    GlobalToolAuthConfig,
     LlmProvider,
     Skill,
     SkillTool,
@@ -220,7 +222,7 @@ class AgentRuntime:
             self._session.commit()
         elif request.incoming_messages:
             self._append_incoming_transcript(conversation, request.incoming_messages)
-        else:
+        elif request.user_content:
             self._persist_message(conversation.id, "user", {"text": request.user_content})
         input_tokens = 0
         output_tokens = 0
@@ -444,6 +446,7 @@ class AgentRuntime:
                 pending = {
                     "api_source_id": source.id if source is not None else None,
                     "api_source_name": source.name if source is not None else call.name,
+                    "flows": self._authorization_flows(source),
                 }
                 conversation.agent_status = "authorization_required"
                 self._session.commit()
@@ -476,6 +479,20 @@ class AgentRuntime:
         if provider is None or provider.deleted_at is not None or not provider.enabled:
             raise AgentError("agent.provider_unavailable")
         return agent, provider
+
+    def _authorization_flows(self, source: ApiSource | None) -> list[str]:
+        if source is None:
+            return []
+        flows: list[str] = []
+        oauth = self._session.get(ApiSourceOAuthConfig, source.id)
+        if oauth is not None and oauth.enabled:
+            flows.append("pkce")
+        login = self._session.get(GlobalToolAuthConfig, 1)
+        if login is not None and login.enabled and login.login_tool_id is not None:
+            login_tool = self._session.get(Tool, login.login_tool_id)
+            if login_tool is not None and login_tool.api_source_id == source.id:
+                flows.append("swagger")
+        return flows
 
     def _conversation(
         self, request: AgentTurnRequest, agent: Agent

@@ -6,6 +6,9 @@ import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 
 import EmbedChatPanel from '../components/EmbedChatPanel.vue'
+import EmbedAuthorization, {
+  type EmbedAuthorizationSource,
+} from '../components/EmbedAuthorization.vue'
 import { createEmbedAgent } from '../embed/agent'
 import {
   discoverWebMcpTools,
@@ -26,12 +29,16 @@ type PendingTool = { id: string; name: string; args: Record<string, unknown> }
 const route = useRoute()
 const { t } = useI18n()
 const publicId = String(route.params.publicId)
+const chatOrigin = window.location.origin
 const agentName = ref('')
 const draft = ref('')
 const ready = ref(false)
 const sending = ref(false)
 const error = ref('')
 const messages = ref<DisplayMessage[]>([])
+const sessionId = ref('')
+const sessionToken = ref('')
+const authorization = ref<EmbedAuthorizationSource | null>(null)
 let parentOrigin = ''
 let agent: ReturnType<typeof createEmbedAgent> | null = null
 let tools: Tool[] = []
@@ -68,6 +75,8 @@ async function initialize(origin: string): Promise<void> {
       throw new Error('embed.unavailable')
     }
     parentOrigin = origin
+    sessionId.value = body.session_id
+    sessionToken.value = body.token
     agentName.value = body.agent.name
     sessionStorage.setItem(`chat4openapi.embed.${publicId}`, body.token)
     agent = createEmbedAgent({
@@ -118,6 +127,26 @@ const subscriber: AgentSubscriber = {
         ...agent.state,
         conversationId: (event.value as { conversationId: string }).conversationId,
       })
+    }
+    if (
+      event.name === 'authorization_required'
+      && event.value
+      && typeof event.value === 'object'
+    ) {
+      const value = event.value as Partial<EmbedAuthorizationSource>
+      if (
+        typeof value.api_source_id === 'number'
+        && typeof value.api_source_name === 'string'
+        && Array.isArray(value.flows)
+      ) {
+        authorization.value = {
+          api_source_id: value.api_source_id,
+          api_source_name: value.api_source_name,
+          flows: value.flows.filter(
+            (flow): flow is 'pkce' | 'swagger' => flow === 'pkce' || flow === 'swagger',
+          ),
+        }
+      }
     }
   },
   onRunErrorEvent() {
@@ -185,6 +214,20 @@ function close(): void {
   if (parentOrigin) window.parent.postMessage({ type: 'chat4openapi:close' }, parentOrigin)
 }
 
+async function resumeAfterAuthorization(): Promise<void> {
+  authorization.value = null
+  if (!agent || sending.value) return
+  sending.value = true
+  error.value = ''
+  try {
+    await runUntilSettled()
+  } catch {
+    error.value = t('embed.failed')
+  } finally {
+    sending.value = false
+  }
+}
+
 onMounted(() => window.addEventListener('message', handleParentMessage))
 onBeforeUnmount(() => {
   window.removeEventListener('message', handleParentMessage)
@@ -194,15 +237,30 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <EmbedChatPanel
-    v-model:draft="draft"
-    :agent-name="agentName"
-    :messages="messages"
-    :ready="ready"
-    :sending="sending"
-    :error="error"
-    @send="send"
-    @cancel="cancel"
-    @close="close"
-  />
+  <div class="embed-chat-root">
+    <EmbedChatPanel
+      v-model:draft="draft"
+      :agent-name="agentName"
+      :messages="messages"
+      :ready="ready"
+      :sending="sending"
+      :error="error"
+      @send="send"
+      @cancel="cancel"
+      @close="close"
+    />
+    <EmbedAuthorization
+      v-if="authorization"
+      :session-id="sessionId"
+      :token="sessionToken"
+      :chat-origin="chatOrigin"
+      :source="authorization"
+      @authorized="resumeAfterAuthorization"
+      @revoked="authorization = null"
+    />
+  </div>
 </template>
+
+<style scoped>
+.embed-chat-root { position: relative; height: 100dvh; }
+</style>

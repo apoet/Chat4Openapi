@@ -121,6 +121,9 @@ export default {
     welcome: '与 {agent} 对话', welcomeHint: '输入问题，或让它帮你完成操作。',
     you: '你', placeholder: '输入消息…', send: '发送', cancel: '取消', close: '关闭对话',
     unavailable: '此对话当前不可用。', failed: '请求未能完成，请重试。',
+    authorizationTitle: '登录 {source}', authorizationHint: '此受保护 API 需要你的授权，Agent 才能继续。',
+    authorize: '去授权', authorizing: '正在打开…', logout: '退出授权', popupBlocked: '授权弹窗被浏览器拦截，请允许弹窗后重试。',
+    authorizationCancelled: '已取消授权，你可以重新尝试。', authorizationFailed: '授权失败，请重试。',
   },
   action: { continue: '继续' },
   error: {

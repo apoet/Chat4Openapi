@@ -2,6 +2,7 @@ import html
 import json
 from datetime import datetime, timedelta
 from typing import Literal
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Form, Header, Query
 from fastapi.responses import HTMLResponse
@@ -86,6 +87,11 @@ def _base_url(db: Session) -> str:
     return settings.base_url
 
 
+def _origin(url: str) -> str:
+    parsed = urlsplit(url)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
 def _popup_result(grant: str, target_origin: str) -> HTMLResponse:
     payload = json.dumps(
         {"type": "chat4openapi:auth-grant", "grant": grant},
@@ -151,6 +157,7 @@ def _start_swagger(
                     "kind": "swagger",
                     "embed_session_id": owner.id,
                     "parent_origin": owner.parent_origin,
+                    "target_origin": _origin(_base_url(db)),
                     "login_tool_id": login_tool.id,
                     "owner_absolute_expires_at": owner.absolute_expires_at.isoformat(),
                 }
@@ -319,7 +326,7 @@ async def complete_swagger_login(
         flow.encrypted_flow_data = service._cipher.encrypt_json({})
         grant = create_auth_grant(db, row.embed_session_id, row.id, flow.api_source_id)
         db.commit()
-        return _popup_result(grant, str(data["parent_origin"]))
+        return _popup_result(grant, str(data["target_origin"]))
     except Exception:
         row.status = "failed"
         flow.status = "failed"
