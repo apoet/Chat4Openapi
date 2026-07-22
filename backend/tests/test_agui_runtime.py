@@ -4,6 +4,8 @@ import pytest
 from cryptography.fernet import Fernet
 from sqlalchemy import select
 
+from chat4openapi.agui.contracts import AguiRunInput
+from chat4openapi.agui.runtime import AguiRuntime
 from chat4openapi.chat.agent import AgentRuntime, AgentTurnRequest
 from chat4openapi.llm.client import (
     CanonicalMessage,
@@ -285,3 +287,82 @@ async def test_frontend_tool_result_continues_the_same_embed_conversation(
         conversation = session.scalar(select(Conversation))
         assert conversation is not None
         assert conversation.embed_session_id == embed_session.id
+
+
+@pytest.mark.asyncio
+async def test_agui_adapter_emits_client_tool_and_continues_from_tool_message(
+    db_session_factory,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as session:
+        skill, embed_session = _seed(session, cipher)
+        llm = SequencedLlm(
+            [
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[
+                        CanonicalToolCall("load", "load_skills", {"skill_ids": [skill.id]})
+                    ],
+                ),
+                CanonicalResponse(
+                    content="Selecting.",
+                    tool_calls=[
+                        CanonicalToolCall("web-1", "web__select-row", {"id": "42"})
+                    ],
+                ),
+                CanonicalResponse(content="Selected row 42."),
+            ]
+        )
+        executor = RecordingExecutor()
+        runtime = AguiRuntime(AgentRuntime(session, cipher, llm, executor))
+        first_payload = AguiRunInput.model_validate(
+            {
+                "threadId": "thread-1",
+                "runId": "run-1",
+                "messages": [{"id": "user-1", "role": "user", "content": "Select 42"}],
+                "tools": [
+                    {
+                        "name": "web__select-row",
+                        "description": "Select a row.",
+                        "parameters": _web_tool().input_schema,
+                    }
+                ],
+            }
+        )
+
+        first_events = [event async for event in runtime.run(first_payload, embed_session)]
+
+        assert [
+            event["type"]
+            for event in first_events
+            if event["type"].startswith("TOOL_CALL_")
+        ] == ["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END"]
+        conversation_event = next(
+            event
+            for event in first_events
+            if event.get("name") == "chat4openapi:conversation"
+        )
+        conversation_id = conversation_event["value"]["conversationId"]
+        second_payload = AguiRunInput.model_validate(
+            {
+                "threadId": "thread-1",
+                "runId": "run-2",
+                "state": {"conversationId": conversation_id},
+                "messages": [
+                    {
+                        "id": "tool-1",
+                        "role": "tool",
+                        "toolCallId": "web-1",
+                        "content": {"selected": "42"},
+                    }
+                ],
+                "tools": first_payload.model_dump(mode="json")["tools"],
+            }
+        )
+
+        second_events = [event async for event in runtime.run(second_payload, embed_session)]
+
+        assert any(
+            event.get("delta") == "Selected row 42." for event in second_events
+        )
+        assert executor.calls == []
