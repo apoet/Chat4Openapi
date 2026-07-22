@@ -10,6 +10,8 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
+    "@ag-ui/client": "0.0.57",
+    "@ag-ui/core": "0.0.57",
     "@element-plus/icons-vue": "^2.3.2",
     "dompurify": "^3.4.12",
     "element-plus": "^2.10.4",
