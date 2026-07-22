@@ -7,8 +7,9 @@ import httpx
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
-from chat4openapi.api import admin_tools
+from chat4openapi.api import admin_skills, admin_tools
 from chat4openapi.api.admin_auth import AdminContext
+from chat4openapi.api.errors import ApiError
 from chat4openapi.models import (
     ApiSource,
     GlobalToolAuthConfig,
@@ -16,7 +17,7 @@ from chat4openapi.models import (
     SkillTool,
     Tool,
 )
-from chat4openapi.schemas.tools import ApiSourceEnabledRequest
+from chat4openapi.schemas.tools import ApiSourceEnabledRequest, ToolAuthConfigRequest
 
 ADMIN = {"username": "admin", "password": "StrongPass!123", "locale": "en-US"}
 
@@ -505,3 +506,118 @@ def test_source_disable_serializes_before_a_competing_bulk_enable(
     with db_session_factory() as session:
         assert session.get(ApiSource, ids["source"]).enabled is False
         assert session.get(Tool, ids["disabled"]).enabled is False
+
+
+@pytest.mark.parametrize("action", ["disable", "delete"])
+def test_set_tool_auth_revalidates_after_queued_batch_mutation(
+    db_session_factory: sessionmaker[Session],
+    action: str,
+) -> None:
+    ids = seed_tools(db_session_factory)
+    target_id = ids["enabled"]
+    auth_ready = Event()
+    batch_committed = Event()
+
+    def configure_auth() -> str | None:
+        with db_session_factory() as session:
+            tool = session.get(Tool, target_id)
+            session.get(ApiSource, tool.api_source_id)
+            session.get(GlobalToolAuthConfig, 1)
+            session.commit()
+            auth_ready.set()
+            assert batch_committed.wait(5)
+            try:
+                admin_tools.set_tool_auth(
+                    ToolAuthConfigRequest(
+                        enabled=True,
+                        login_tool_id=target_id,
+                        token_json_path="$.token",
+                    ),
+                    context(session),
+                )
+            except ApiError as exc:
+                return exc.code
+            return None
+
+    def mutate_tool() -> None:
+        with db_session_factory() as session:
+            admin_tools.batch_tools(
+                SimpleNamespace(action=action, tool_ids=[target_id]),
+                context(session),
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        auth_result = executor.submit(configure_auth)
+        assert auth_ready.wait(5)
+        batch_result = executor.submit(mutate_tool)
+        batch_result.result(timeout=5)
+        batch_committed.set()
+        auth_error = auth_result.result(timeout=5)
+
+    assert auth_error in {"tools.login_tool_disabled", "tools.not_found"}
+    with db_session_factory() as session:
+        config = session.get(GlobalToolAuthConfig, 1)
+        target = session.get(Tool, target_id)
+        assert not (config.enabled and config.login_tool_id == target_id)
+        assert target.enabled is False
+        if action == "delete":
+            assert target.deleted_at is not None
+
+
+@pytest.mark.parametrize("action", ["disable", "delete"])
+def test_start_skill_revalidates_after_queued_batch_mutation(
+    db_session_factory: sessionmaker[Session],
+    action: str,
+) -> None:
+    ids = seed_tools(db_session_factory)
+    target_id = ids["enabled"]
+    with db_session_factory() as session:
+        skill = Skill(name=f"Queued {action}", system_prompt="Queued", running=False)
+        session.add(skill)
+        session.flush()
+        session.add(SkillTool(skill_id=skill.id, tool_id=target_id, position=0))
+        session.commit()
+        skill_id = skill.id
+    skill_ready = Event()
+    batch_committed = Event()
+
+    def start_bound_skill() -> str | None:
+        with db_session_factory() as session:
+            cached_skill = session.get(Skill, skill_id)
+            cached_tool = session.get(Tool, target_id)
+            cached_source = session.get(ApiSource, ids["source"])
+            assert cached_skill is not None
+            assert cached_tool is not None
+            assert cached_source is not None
+            session.commit()
+            skill_ready.set()
+            assert batch_committed.wait(5)
+            try:
+                admin_skills.start_skill(skill_id, context(session))
+            except ApiError as exc:
+                return exc.code
+            return None
+
+    def mutate_tool() -> None:
+        with db_session_factory() as session:
+            admin_tools.batch_tools(
+                SimpleNamespace(action=action, tool_ids=[target_id]),
+                context(session),
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        skill_result = executor.submit(start_bound_skill)
+        assert skill_ready.wait(5)
+        batch_result = executor.submit(mutate_tool)
+        batch_result.result(timeout=5)
+        batch_committed.set()
+        skill_error = skill_result.result(timeout=5)
+
+    assert skill_error == "skills.tool_unavailable"
+    with db_session_factory() as session:
+        skill = session.get(Skill, skill_id)
+        target = session.get(Tool, target_id)
+        assert skill.running is False
+        assert target.enabled is False
+        if action == "delete":
+            assert target.deleted_at is not None

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from chat4openapi.api.admin_auth import AdminContext, require_admin, require_csrf
 from chat4openapi.api.errors import ApiError
+from chat4openapi.db.serialized_write import serialized_write
 from chat4openapi.db.session import get_db_session
 from chat4openapi.models import (
     ApiSource,
@@ -159,17 +160,17 @@ def update_skill(
 def start_skill(
     skill_id: int, context: AdminContext = Depends(require_csrf)
 ) -> SkillResponse:
-    skill = _skill(context, skill_id)
-    binding_ids = list(
-        context.db.scalars(
-            select(SkillTool.tool_id)
-            .where(SkillTool.skill_id == skill.id)
-            .order_by(SkillTool.position)
+    with serialized_write(context.db):
+        skill = _skill(context, skill_id)
+        binding_ids = list(
+            context.db.scalars(
+                select(SkillTool.tool_id)
+                .where(SkillTool.skill_id == skill.id)
+                .order_by(SkillTool.position)
+            )
         )
-    )
-    _eligible_tools(context, binding_ids)
-    skill.running = True
-    context.db.commit()
+        _eligible_tools(context, binding_ids)
+        skill.running = True
     return _response(context.db, skill)
 
 

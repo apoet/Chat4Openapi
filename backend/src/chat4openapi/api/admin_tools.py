@@ -569,19 +569,25 @@ def set_tool_auth(
     payload: ToolAuthConfigRequest,
     context: AdminContext = Depends(require_csrf),
 ) -> ToolAuthConfigResponse:
-    if payload.enabled:
-        if payload.login_tool_id is None or not payload.token_json_path:
-            raise ApiError(422, "tools.login_config_incomplete")
-        tool = _managed_tool(context, payload.login_tool_id)
-        if not tool.enabled:
-            raise ApiError(409, "tools.login_tool_disabled")
-    config = context.db.get(GlobalToolAuthConfig, 1)
-    values = payload.model_dump()
-    if config is None:
-        config = GlobalToolAuthConfig(id=1, **values)
-        context.db.add(config)
-    else:
-        for key, value in values.items():
-            setattr(config, key, value)
-    context.db.commit()
+    with serialized_write(context.db):
+        if payload.enabled:
+            if payload.login_tool_id is None or not payload.token_json_path:
+                raise ApiError(422, "tools.login_config_incomplete")
+            tool = _managed_tool(context, payload.login_tool_id)
+            source = context.db.get(ApiSource, tool.api_source_id)
+            if (
+                not tool.enabled
+                or source is None
+                or source.deleted_at is not None
+                or not source.enabled
+            ):
+                raise ApiError(409, "tools.login_tool_disabled")
+        config = context.db.get(GlobalToolAuthConfig, 1)
+        values = payload.model_dump()
+        if config is None:
+            config = GlobalToolAuthConfig(id=1, **values)
+            context.db.add(config)
+        else:
+            for key, value in values.items():
+                setattr(config, key, value)
     return ToolAuthConfigResponse.model_validate(config, from_attributes=True)
