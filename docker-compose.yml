@@ -2,7 +2,7 @@ services:
   agent4api:
     # `docker compose push` publishes this tag to Docker Hub. Override either
     # variable when using another Docker Hub account or release tag.
-    image: "${DOCKERHUB_USERNAME:-apoet}/agent4api:${AGENT4API_TAG:-latest}"
+    image: "${DOCKERHUB_USERNAME:-apoet2003}/agent4api:${AGENT4API_TAG:-latest}"
     build:
       context: .
       dockerfile: Dockerfile
