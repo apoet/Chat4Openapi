@@ -7,6 +7,8 @@ import type {
   SourceImportResponse,
   SourceRefreshResult,
   ToolAuthConfig,
+  ToolBatchAction,
+  ToolBatchResponse,
   ToolParameterOverrideWrite,
   ToolSummary,
 } from '../api/contracts'
@@ -230,6 +232,33 @@ export const useToolsStore = defineStore('tools', () => {
     tools.value = tools.value.filter((item) => item.id !== tool.id)
   }
 
+  async function batchTools(
+    action: ToolBatchAction,
+    toolIds: number[],
+  ): Promise<ToolBatchResponse> {
+    const auth = useAuthStore()
+    const result = await perform(() =>
+      request<ToolBatchResponse>(
+        '/api/admin/tools/batch',
+        {
+          method: 'POST',
+          body: JSON.stringify({ action, tool_ids: toolIds }),
+        },
+        auth.csrfToken,
+      ),
+    )
+    const statuses = new Map(result.succeeded.map((item) => [item.tool_id, item.status]))
+    tools.value = tools.value
+      .filter((tool) => statuses.get(tool.id) !== 'deleted')
+      .map((tool) => {
+        const status = statuses.get(tool.id)
+        if (status === 'enabled') return { ...tool, enabled: true }
+        if (status === 'disabled') return { ...tool, enabled: false }
+        return tool
+      })
+    return result
+  }
+
   async function saveAuthConfig(config: ToolAuthConfig): Promise<void> {
     const auth = useAuthStore()
     authConfig.value = await perform(() =>
@@ -261,6 +290,7 @@ export const useToolsStore = defineStore('tools', () => {
     updateToolDescription,
     updateToolParameter,
     deleteTool,
+    batchTools,
     saveAuthConfig,
   }
 })

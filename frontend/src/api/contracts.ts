@@ -51,6 +51,28 @@ export interface ToolSummary {
   enabled: boolean
 }
 
+export type ToolBatchAction = 'enable' | 'disable' | 'delete'
+export type ToolBatchStatus = 'enabled' | 'disabled' | 'deleted'
+
+export interface ToolBatchSucceeded {
+  tool_id: number
+  action: ToolBatchAction
+  status: ToolBatchStatus
+}
+
+export interface ToolBatchFailed {
+  tool_id: number
+  action: ToolBatchAction
+  code: string
+  params: Record<string, unknown>
+}
+
+export interface ToolBatchResponse {
+  request_count: number
+  succeeded: ToolBatchSucceeded[]
+  failed: ToolBatchFailed[]
+}
+
 export interface ToolParameterOverrideWrite {
   description: string | null
   example: unknown | null

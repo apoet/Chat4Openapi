@@ -1,5 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
@@ -13,6 +13,12 @@ function jsonResponse(value: unknown, status = 200): Response {
     status,
     headers: { 'content-type': 'application/json' },
   })
+}
+
+function deferred<T>(): { promise: Promise<T>, resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((next) => { resolve = next })
+  return { promise, resolve }
 }
 
 beforeEach(() => {
@@ -128,6 +134,275 @@ describe('Tool administration views', () => {
     expect(await screen.findByRole('heading', { name: 'Pet operations' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Order operations' })).toBeTruthy()
     expect(container.querySelectorAll('details.tool-tag-group')).toHaveLength(2)
+  })
+
+  it('selects only visible Tools and keeps selection across search changes', async () => {
+    const tools = [
+      { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: 'Pet catalog', input_schema: {}, execution_schema: {}, tags: ['Pets'], enabled: true },
+      { id: 2, api_source_id: 1, operation_key: 'GET /orders', name: 'listOrders', description: 'Order catalog', input_schema: {}, execution_schema: {}, tags: ['Orders'], enabled: false },
+      { id: 3, api_source_id: 2, operation_key: 'GET /genes', name: 'listGenes', description: 'Gene catalog', input_schema: {}, execution_schema: {}, tags: ['Genes'], enabled: true },
+    ]
+    const sources = [
+      { id: 1, name: 'Commerce API', source_type: 'openapi', base_url: 'https://commerce.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+      { id: 2, name: 'Gene API', source_type: 'openapi', base_url: 'https://genes.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+    ]
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => Promise.resolve(
+      jsonResponse(String(input).endsWith('/sources') ? sources : tools),
+    )))
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    await screen.findByText('listPets')
+    const search = await screen.findByLabelText('Search Tools')
+    await fireEvent.update(search, 'pet')
+    await fireEvent.click(screen.getByRole('button', { name: 'Select visible' }))
+    expect(screen.getByRole('checkbox', { name: 'Select listPets' })).toHaveProperty('checked', true)
+
+    await fireEvent.update(search, 'order')
+    await fireEvent.click(screen.getByRole('button', { name: 'Select visible' }))
+    await fireEvent.update(search, '')
+    await fireEvent.click(screen.getByRole('button', { name: 'Disabled' }))
+    expect(screen.queryByRole('checkbox', { name: 'Select listPets' })).toBeNull()
+    expect(screen.getByText('2 Tools selected')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: 'Select visible' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'All' }))
+
+    expect(screen.getByRole('checkbox', { name: 'Select listPets' })).toHaveProperty('checked', true)
+    expect(screen.getByRole('checkbox', { name: 'Select listOrders' })).toHaveProperty('checked', true)
+    expect(screen.getByRole('checkbox', { name: 'Select listGenes' })).toHaveProperty('checked', false)
+    expect(screen.getByText('2 Tools selected')).toBeTruthy()
+  })
+
+  it('select visible excludes Tools hidden by collapsed source and tag groups', async () => {
+    const tools = [
+      { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: ['Pets'], enabled: false },
+      { id: 2, api_source_id: 2, operation_key: 'GET /orders', name: 'listOrders', description: null, input_schema: {}, execution_schema: {}, tags: ['Orders'], enabled: false },
+      { id: 3, api_source_id: 2, operation_key: 'GET /private', name: 'listPrivateOrders', description: null, input_schema: {}, execution_schema: {}, tags: ['Private'], enabled: false },
+    ]
+    const sources = [
+      { id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://pets.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+      { id: 2, name: 'Orders API', source_type: 'openapi', base_url: 'https://orders.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+    ]
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => Promise.resolve(
+      jsonResponse(String(input).endsWith('/sources') ? sources : tools),
+    )))
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    const petSource = (await screen.findByRole('heading', { name: 'Pet API' })).closest('details') as HTMLDetailsElement
+    const privateTag = screen.getByRole('heading', { name: 'Private' }).closest('details') as HTMLDetailsElement
+    await fireEvent.click(petSource.querySelector(':scope > summary') as HTMLElement)
+    await fireEvent.click(privateTag.querySelector(':scope > summary') as HTMLElement)
+    expect(petSource.open).toBe(false)
+    expect(privateTag.open).toBe(false)
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Select visible' }))
+
+    expect(screen.getByRole('checkbox', { name: 'Select listPets' })).toHaveProperty('checked', false)
+    expect(screen.getByRole('checkbox', { name: 'Select listOrders' })).toHaveProperty('checked', true)
+    expect(screen.getByRole('checkbox', { name: 'Select listPrivateOrders' })).toHaveProperty('checked', false)
+    expect(screen.getByText('1 Tools selected')).toBeTruthy()
+  })
+
+  it('rejects selection above 200 without truncation and can clear the exact selection', async () => {
+    const tools = Array.from({ length: 201 }, (_, index) => ({
+      id: index + 1,
+      api_source_id: 1,
+      operation_key: `GET /tools/${index + 1}`,
+      name: index < 200 ? `allowedTool${index + 1}` : 'overflowTool',
+      description: null,
+      input_schema: {},
+      execution_schema: {},
+      tags: ['Catalog'],
+      enabled: false,
+    }))
+    const sources = [
+      { id: 1, name: 'Large API', source_type: 'openapi', base_url: 'https://large.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+    ]
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => Promise.resolve(
+      jsonResponse(String(input).endsWith('/sources') ? sources : tools),
+    )))
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    await screen.findByText('overflowTool')
+    await fireEvent.click(screen.getByRole('button', { name: 'Select visible' }))
+
+    expect(screen.getByRole('alert').textContent).toContain('You can select up to 200 Tools')
+    expect(screen.getByText('0 Tools selected')).toBeTruthy()
+
+    await fireEvent.update(screen.getByLabelText('Search Tools'), 'allowed')
+    await fireEvent.click(screen.getByRole('button', { name: 'Select visible' }))
+    expect(screen.getByText('200 Tools selected')).toBeTruthy()
+    await fireEvent.update(screen.getByLabelText('Search Tools'), '')
+    expect(screen.getByRole('checkbox', { name: 'Select overflowTool' })).toHaveProperty('disabled', true)
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }))
+    expect(screen.getByText('0 Tools selected')).toBeTruthy()
+    expect(screen.getByRole('checkbox', { name: 'Select overflowTool' })).toHaveProperty('disabled', false)
+  }, 15_000)
+
+  it('reconciles partial bulk disable results with CSRF and localized safe errors', async () => {
+    const tools = [
+      { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: true },
+      { id: 2, api_source_id: 1, operation_key: 'GET /orders', name: 'listOrders', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: true },
+    ]
+    const sources = [
+      { id: 1, name: 'Commerce API', source_type: 'openapi', base_url: 'https://commerce.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+    ]
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse(sources))
+      if (path.endsWith('/batch')) {
+        return Promise.resolve(jsonResponse({
+          request_count: 2,
+          succeeded: [{ tool_id: 1, action: 'disable', status: 'disabled' }],
+          failed: [{
+            tool_id: 2,
+            action: 'disable',
+            code: 'tools.batch_item_failed',
+            params: { internal: 'secret database detail' },
+          }],
+        }))
+      }
+      return Promise.resolve(jsonResponse(tools))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    await fireEvent.click(await screen.findByRole('checkbox', { name: 'Select listPets' }))
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Select listOrders' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Disable selected' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    const batchCall = fetchMock.mock.calls[2]
+    expect(batchCall[0]).toBe('/api/admin/tools/batch')
+    expect(JSON.parse((batchCall[1] as RequestInit).body as string)).toEqual({
+      action: 'disable',
+      tool_ids: [1, 2],
+    })
+    expect(((batchCall[1] as RequestInit).headers as Headers).get('X-CSRF-Token')).toBe('csrf-token')
+    expect(await screen.findByText('Disabled 1 of 2 Tools. 1 failed.')).toBeTruthy()
+    expect(screen.getByRole('checkbox', { name: 'Select listPets' })).toHaveProperty('checked', false)
+    expect(screen.getByRole('checkbox', { name: 'Select listOrders' })).toHaveProperty('checked', true)
+    expect(within(screen.getByText('listPets').closest('article') as HTMLElement).getByText('Disabled')).toBeTruthy()
+    expect(screen.getByText('listOrders: Unable to update this Tool. Try again.')).toBeTruthy()
+    expect(document.body.textContent).not.toContain('secret database detail')
+  })
+
+  it('confirms bulk delete with Tool and source counts while cancel sends no request', async () => {
+    const tools = [
+      { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: false },
+      { id: 2, api_source_id: 2, operation_key: 'GET /genes', name: 'listGenes', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: false },
+    ]
+    const sources = [
+      { id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://pets.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+      { id: 2, name: 'Gene API', source_type: 'openapi', base_url: 'https://genes.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+    ]
+    const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse(sources))
+      if (path.endsWith('/batch')) {
+        return Promise.resolve(jsonResponse({
+          request_count: 2,
+          succeeded: [
+            { tool_id: 1, action: 'delete', status: 'deleted' },
+            { tool_id: 2, action: 'delete', status: 'deleted' },
+          ],
+          failed: [],
+        }))
+      }
+      return Promise.resolve(jsonResponse(tools))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    await fireEvent.click(await screen.findByRole('checkbox', { name: 'Select listPets' }))
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Select listGenes' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Delete selected Tools' })
+    expect(dialog.textContent).toContain('Delete 2 Tools from 2 API sources?')
+    expect(document.activeElement).toBe(dialog)
+    await fireEvent.keyDown(dialog, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Delete selected Tools' })).toBeNull()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel bulk delete' }))
+    expect(screen.queryByRole('dialog', { name: 'Delete selected Tools' })).toBeNull()
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/batch'))).toHaveLength(0)
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete Tools' }))
+
+    expect(await screen.findByText('Deleted 2 of 2 Tools. 0 failed.')).toBeTruthy()
+    expect(screen.queryByText('listPets')).toBeNull()
+    expect(screen.queryByText('listGenes')).toBeNull()
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/batch'))).toHaveLength(1)
+  })
+
+  it('locks the request snapshot while pending and preserves later unrelated selection', async () => {
+    const tools = [
+      { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: false },
+      { id: 2, api_source_id: 1, operation_key: 'GET /orders', name: 'listOrders', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: false },
+      { id: 3, api_source_id: 1, operation_key: 'GET /genes', name: 'listGenes', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: false },
+    ]
+    const batch = deferred<Response>()
+    const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse([]))
+      if (path.endsWith('/batch')) return batch.promise
+      return Promise.resolve(jsonResponse(tools))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    await fireEvent.click(await screen.findByRole('checkbox', { name: 'Select listPets' }))
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Select listOrders' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Enable selected' }))
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/batch'))).toHaveLength(1))
+
+    expect(screen.getByRole('button', { name: 'Enable selected' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('checkbox', { name: 'Select listPets' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('checkbox', { name: 'Select listOrders' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('checkbox', { name: 'Select listGenes' })).toHaveProperty('disabled', false)
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Select listGenes' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Enable selected' }))
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/batch'))).toHaveLength(1)
+
+    batch.resolve(jsonResponse({
+      request_count: 2,
+      succeeded: [{ tool_id: 1, action: 'enable', status: 'enabled' }],
+      failed: [{ tool_id: 2, action: 'enable', code: 'tools.source_unavailable', params: { source_id: 1 } }],
+    }))
+    expect(await screen.findByText('Enabled 1 of 2 Tools. 1 failed.')).toBeTruthy()
+
+    expect(screen.getByRole('checkbox', { name: 'Select listPets' })).toHaveProperty('checked', false)
+    expect(screen.getByRole('checkbox', { name: 'Select listOrders' })).toHaveProperty('checked', true)
+    expect(screen.getByRole('checkbox', { name: 'Select listGenes' })).toHaveProperty('checked', true)
+    const batchCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/batch'))
+    expect(JSON.parse((batchCall?.[1] as RequestInit).body as string).tool_ids).toEqual([1, 2])
+  })
+
+  it('keeps the request selection retryable when the batch endpoint fails', async () => {
+    const tool = { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: true }
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input)
+      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse([]))
+      if (path.endsWith('/batch')) {
+        return Promise.resolve(jsonResponse({
+          error: { code: 'tools.batch_item_failed', params: { internal: 'secret transaction detail' } },
+        }, 500))
+      }
+      return Promise.resolve(jsonResponse([tool]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    await fireEvent.click(await screen.findByRole('checkbox', { name: 'Select listPets' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Disable selected' }))
+
+    expect(await screen.findByText('The bulk action could not be completed. Try again.')).toBeTruthy()
+    expect(screen.getByRole('checkbox', { name: 'Select listPets' })).toHaveProperty('checked', true)
+    expect(screen.getByRole('button', { name: 'Disable selected' })).toHaveProperty('disabled', false)
+    expect(document.body.textContent).not.toContain('secret transaction detail')
   })
 
   it('edits a Tool description', async () => {
