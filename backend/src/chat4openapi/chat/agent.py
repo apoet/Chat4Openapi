@@ -131,16 +131,18 @@ class AgentTurnRequest:
     tool_session_id: str | None = None
     agent_key_id: int | None = None
     browser_chat_session_id: int | None = None
+    embed_session_id: int | None = None
     admin_session_id: int | None = None
     tool_owner_agent_key_id: int | None = None
     incoming_messages: list[CanonicalMessage] = dataclass_field(default_factory=list)
+    client_tools: list[CanonicalTool] = dataclass_field(default_factory=list)
     candidate_scope_source: Literal["automatic", "explicit"] = "automatic"
 
 
 @dataclass(frozen=True, slots=True)
 class AgentTurnResult:
     conversation_id: str
-    status: Literal["completed", "needs_input"]
+    status: Literal["completed", "needs_input", "client_tool_required"]
     content: str
     loaded_skill_ids: list[int]
     pending: dict[str, Any] | None
@@ -225,10 +227,14 @@ class AgentRuntime:
                 tool_map = self._bound_tools(agent.id, conversation.loaded_skill_ids)
                 if conversation.loaded_skill_ids:
                     tools = list(tool_map.canonical.values())
+                    if request.embed_session_id is not None:
+                        tools = [tool for tool in tools if not tool.name.startswith("web__")]
                     if can_ask_user:
                         tools.append(ASK_USER_TOOL)
                 else:
                     tools = [LOAD_SKILLS_TOOL]
+                tools.extend(request.client_tools)
+                client_tool_map = {tool.name: tool for tool in request.client_tools}
                 response = await self._llm.complete(
                     provider_type=provider.provider_type,
                     base_url=provider.base_url,
@@ -247,6 +253,7 @@ class AgentRuntime:
                     conversation=conversation,
                     candidate_skills=candidate_skills,
                     tool_map=tool_map,
+                    client_tool_map=client_tool_map,
                     can_ask_user=can_ask_user,
                 )
                 input_tokens += response.input_tokens
@@ -289,6 +296,7 @@ class AgentRuntime:
         conversation: Conversation,
         candidate_skills: list[Skill],
         tool_map: "AgentRuntime._BoundTools",
+        client_tool_map: dict[str, CanonicalTool],
         can_ask_user: bool,
     ) -> AgentTurnResult | None:
         if not response.tool_calls:
@@ -339,7 +347,36 @@ class AgentRuntime:
                 output_tokens=0,
             )
         for call in response.tool_calls:
-            if call.name == LOAD_SKILLS_TOOL.name:
+            if call.name.startswith("web__"):
+                client_tool = client_tool_map.get(call.name)
+                if client_tool is None:
+                    observation = {
+                        "error": "frontend_tool_unavailable",
+                        "tool": call.name,
+                    }
+                else:
+                    errors = self._validation_errors(
+                        self._strict_tool_schema(client_tool.input_schema),
+                        call.arguments,
+                    )
+                    if errors:
+                        observation = self._invalid_arguments(
+                            call.name, errors, control=False
+                        )
+                    else:
+                        pending = self._pending_client_tool(call)
+                        conversation.agent_status = "waiting_client_tool"
+                        self._session.commit()
+                        return AgentTurnResult(
+                            conversation_id=conversation.id,
+                            status="client_tool_required",
+                            content=response.content,
+                            loaded_skill_ids=list(conversation.loaded_skill_ids),
+                            pending=pending,
+                            input_tokens=0,
+                            output_tokens=0,
+                        )
+            elif call.name == LOAD_SKILLS_TOOL.name:
                 errors = self._validation_errors(LOAD_SKILLS_TOOL.input_schema, call.arguments)
                 observation = (
                     self._invalid_arguments(call.name, errors, control=True)
@@ -463,6 +500,7 @@ class AgentRuntime:
             candidate_scope_source=request.candidate_scope_source,
             agent_key_id=request.agent_key_id,
             browser_chat_session_id=request.browser_chat_session_id,
+            embed_session_id=request.embed_session_id,
         )
         self._session.add(conversation)
         self._session.commit()
@@ -472,7 +510,11 @@ class AgentRuntime:
     def _request_owns(conversation: Conversation, request: AgentTurnRequest) -> bool:
         requested_owner_count = sum(
             owner_id is not None
-            for owner_id in (request.agent_key_id, request.browser_chat_session_id)
+            for owner_id in (
+                request.agent_key_id,
+                request.browser_chat_session_id,
+                request.embed_session_id,
+            )
         )
         if requested_owner_count != 1:
             return False
@@ -480,10 +522,17 @@ class AgentRuntime:
             request.agent_key_id is not None
             and conversation.agent_key_id == request.agent_key_id
             and conversation.browser_chat_session_id is None
+            and conversation.embed_session_id is None
         ) or (
             request.browser_chat_session_id is not None
             and conversation.browser_chat_session_id == request.browser_chat_session_id
             and conversation.agent_key_id is None
+            and conversation.embed_session_id is None
+        ) or (
+            request.embed_session_id is not None
+            and conversation.embed_session_id == request.embed_session_id
+            and conversation.agent_key_id is None
+            and conversation.browser_chat_session_id is None
         )
 
     def _load_skills(
@@ -741,4 +790,12 @@ class AgentRuntime:
             "reason": str(arguments.get("reason", "")),
             "fields": list(arguments.get("fields") or []),
             "choices": list(arguments.get("choices") or []),
+        }
+
+    @staticmethod
+    def _pending_client_tool(call: CanonicalToolCall) -> dict[str, Any]:
+        return {
+            "tool_call_id": call.id,
+            "name": call.name,
+            "arguments": call.arguments,
         }
