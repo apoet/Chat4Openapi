@@ -1,5 +1,5 @@
 export default {
-  app: { name: 'Agent4API', tagline: 'Chat with your APIs.' },
+  app: { name: 'Agent4API', tagline: 'APIs In.Agents Out.' },
   setup: {
     eyebrow: 'First-time setup',
     title: 'Create your administrator',

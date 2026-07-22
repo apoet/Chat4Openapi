@@ -1,5 +1,5 @@
 export default {
-  app: { name: 'Agent4API', tagline: '与你的 API 对话。' },
+  app: { name: 'Agent4API', tagline: '将你的API编排成智能体。' },
   setup: {
     eyebrow: '首次设置',
     title: '创建后台管理员',
