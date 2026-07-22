@@ -58,6 +58,6 @@ def create_mcp_server(
     cipher_factory: Callable[[], SecretCipher],
     executor: ToolExecutor,
 ) -> FastMCP:
-    server = FastMCP("Chat4Openapi Managed Tools")
+    server = FastMCP("Agent4API Managed Tools")
     server.add_provider(ManagedToolProvider(session_factory, cipher_factory, executor))
     return server

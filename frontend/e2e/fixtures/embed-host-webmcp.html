@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8"><title>WebMCP embed host</title></head>
+  <body>
+    <h1>Order portal</h1>
+    <p>Selected order: <strong id="selected-order">none</strong></p>
+    <script>
+      window.webMcpRegistration = (async () => {
+        const context = document.modelContext
+        if (!context || typeof context.registerTool !== 'function') return false
+        await context.registerTool({
+          name: 'select-order',
+          description: 'Select an order in the host page',
+          inputSchema: {
+            type: 'object',
+            properties: { id: { type: 'string' } },
+            required: ['id'],
+          },
+          execute: async ({ id }) => {
+            document.querySelector('#selected-order').textContent = id
+            return { selected: id }
+          },
+        }, { exposedTo: ['http://127.0.0.1:4173'] })
+        return true
+      })()
+    </script>
+    <script src="http://127.0.0.1:4173/embed/public-webmcp.js" async></script>
+  </body>
+</html>

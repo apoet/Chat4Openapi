@@ -65,19 +65,21 @@ def _loader_source(base_url: str, public_id: str, position: str) -> str:
   const style = document.createElement('style');
   style.textContent = `:host{{all:initial}}button{{position:fixed;bottom:24px;width:56px;height:56px;border:0;border-radius:50%;background:#fff;box-shadow:0 8px 28px #0003;cursor:pointer;z-index:2147483646;padding:8px}}img{{width:100%;height:100%;object-fit:contain}}iframe{{position:fixed;bottom:92px;width:min(380px,calc(100vw - 32px));height:min(620px,calc(100vh - 120px));border:0;border-radius:16px;box-shadow:0 12px 40px #0004;z-index:2147483647;background:#fff}}[hidden]{{display:none!important}}@media(max-width:640px){{iframe{{inset:12px;width:calc(100vw - 24px);height:calc(100vh - 24px)}}}}`;
   const button = document.createElement('button');
-  button.type = 'button'; button.setAttribute('aria-label', 'Open Chat4Openapi');
+  button.type = 'button'; button.setAttribute('aria-label', 'Open Agent4API');
   button.style[side] = '24px';
   const image = document.createElement('img'); image.alt = ''; image.src = config.baseUrl + '/embed/assets/logo.png';
   button.append(image);
   const frame = document.createElement('iframe');
-  frame.title = 'Chat4Openapi'; frame.allow = 'tools'; frame.hidden = true;
+  frame.title = 'Agent4API'; frame.allow = 'tools'; frame.hidden = true;
   frame.style[side] = '24px';
   frame.src = config.baseUrl + '/embed/' + encodeURIComponent(config.publicId);
   button.addEventListener('click', () => {{ frame.hidden = !frame.hidden; }});
-  frame.addEventListener('load', () => frame.contentWindow?.postMessage(
-    {{ type: 'chat4openapi:init', parentOrigin: location.origin }}, config.chatOrigin));
+  const initializeFrame = () => frame.contentWindow?.postMessage(
+    {{ type: 'chat4openapi:init', parentOrigin: location.origin }}, config.chatOrigin);
+  frame.addEventListener('load', initializeFrame);
   window.addEventListener('message', (event) => {{
     if (event.origin !== config.chatOrigin || event.source !== frame.contentWindow) return;
+    if (event.data?.type === 'chat4openapi:ready') initializeFrame();
     if (event.data?.type === 'chat4openapi:close') frame.hidden = true;
   }});
   root.append(style, button, frame); document.body.append(host);

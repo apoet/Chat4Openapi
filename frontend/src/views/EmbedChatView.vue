@@ -214,6 +214,16 @@ function close(): void {
   if (parentOrigin) window.parent.postMessage({ type: 'chat4openapi:close' }, parentOrigin)
 }
 
+function notifyParentReady(): void {
+  if (window.parent === window || !document.referrer) return
+  try {
+    const referrerOrigin = new URL(document.referrer).origin
+    window.parent.postMessage({ type: 'chat4openapi:ready' }, referrerOrigin)
+  } catch {
+    // A malformed or suppressed referrer leaves the loader's load handshake in place.
+  }
+}
+
 async function resumeAfterAuthorization(): Promise<void> {
   authorization.value = null
   if (!agent || sending.value) return
@@ -228,7 +238,10 @@ async function resumeAfterAuthorization(): Promise<void> {
   }
 }
 
-onMounted(() => window.addEventListener('message', handleParentMessage))
+onMounted(() => {
+  window.addEventListener('message', handleParentMessage)
+  notifyParentReady()
+})
 onBeforeUnmount(() => {
   window.removeEventListener('message', handleParentMessage)
   stopObserving()

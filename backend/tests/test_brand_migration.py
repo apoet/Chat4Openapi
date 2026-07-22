@@ -125,3 +125,38 @@ def test_alembic_default_config_migrates_the_existing_database(
     with sqlite3.connect(current_database) as connection:
         value = connection.execute("SELECT value FROM preserved_data").fetchone()
     assert value == ("kept",)
+
+
+def test_agent4api_brand_migration_updates_only_shipped_agent_defaults(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "brand.db"
+    config = Config((Path(__file__).parents[1] / "alembic.ini").as_posix())
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database.as_posix()}")
+    command.upgrade(config, "0013_agent_embeds")
+    with sqlite3.connect(database) as connection:
+        old_prompt = connection.execute(
+            "SELECT system_prompt FROM agents WHERE id = 1"
+        ).fetchone()[0]
+        connection.execute(
+            "INSERT INTO agents (name, enabled, is_default, system_prompt, mode, "
+            "max_iterations, created_at, updated_at) "
+            "VALUES ('Custom Agent', 0, 0, 'Custom prompt', 'react', 8, "
+            "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        )
+        connection.commit()
+
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(database) as connection:
+        shipped = connection.execute(
+            "SELECT name, system_prompt FROM agents WHERE id = 1"
+        ).fetchone()
+        custom = connection.execute(
+            "SELECT name, system_prompt FROM agents WHERE name = 'Custom Agent'"
+        ).fetchone()
+    assert shipped == (
+        "Agent4API Agent",
+        old_prompt.replace("Chat4Openapi", "Agent4API", 1),
+    )
+    assert custom == ("Custom Agent", "Custom prompt")

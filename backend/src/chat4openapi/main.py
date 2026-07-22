@@ -43,7 +43,7 @@ def create_app(frontend_dist: Path | None = None) -> FastAPI:
         async with mcp_http_app.lifespan(mcp_http_app):
             yield
 
-    app = FastAPI(title="Chat4Openapi", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Agent4API", version="0.1.0", lifespan=lifespan)
     install_error_handlers(app)
     app.include_router(health_router)
     app.include_router(setup_router)

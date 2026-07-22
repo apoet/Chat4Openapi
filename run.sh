@@ -11,7 +11,7 @@ usage() {
   cat <<'EOF'
 Usage: ./run.sh
 
-Starts the Chat4Openapi development backend and frontend.
+Starts the Agent4API development backend and frontend.
 
 Optional environment variables:
   CONDA_ENV_NAME  Conda environment name (default: chat4openapi)

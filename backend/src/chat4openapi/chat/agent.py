@@ -46,7 +46,7 @@ from chat4openapi.tools.execution_policy import (
     resolve_tool_execution_policy,
 )
 
-DEFAULT_AGENT_PROMPT = """You are Chat4Openapi Agent, the built-in assistant.
+DEFAULT_AGENT_PROMPT = """You are Agent4API Agent, the built-in assistant.
 
 Operating rules:
 - Choose Skills only from the provided Skill catalog, using their declared names and descriptions.

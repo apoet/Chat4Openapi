@@ -48,13 +48,13 @@ echo Applying database migrations...
 call conda run --no-capture-output -n "%CONDA_ENV_NAME%" alembic -c backend/alembic.ini upgrade head || goto :failed
 
 echo Starting backend at http://127.0.0.1:8000
-start "Chat4Openapi Backend" /D "%ROOT_DIR%" cmd /k "conda run --no-capture-output -n %CONDA_ENV_NAME% uvicorn chat4openapi.main:app --app-dir backend/src --host 127.0.0.1 --port 8000"
+start "Agent4API Backend" /D "%ROOT_DIR%" cmd /k "conda run --no-capture-output -n %CONDA_ENV_NAME% uvicorn chat4openapi.main:app --app-dir backend/src --host 127.0.0.1 --port 8000"
 
 echo Starting frontend at http://127.0.0.1:5173
-start "Chat4Openapi Frontend" /D "%ROOT_DIR%frontend" cmd /k "npm run dev -- --host 127.0.0.1 --port 5173 --strictPort"
+start "Agent4API Frontend" /D "%ROOT_DIR%frontend" cmd /k "npm run dev -- --host 127.0.0.1 --port 5173 --strictPort"
 
 echo.
-echo Chat4Openapi is starting in two terminal windows.
+echo Agent4API is starting in two terminal windows.
 echo Close both windows to stop the development servers.
 popd
 exit /b 0
@@ -62,7 +62,7 @@ exit /b 0
 :help
 echo Usage: run.bat
 echo.
-echo Starts the Chat4Openapi development backend and frontend.
+echo Starts the Agent4API development backend and frontend.
 echo Loads .env when present, applies Alembic migrations, and opens:
 echo   Backend:  http://127.0.0.1:8000
 echo   Frontend: http://127.0.0.1:5173

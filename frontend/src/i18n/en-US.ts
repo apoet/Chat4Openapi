@@ -1,5 +1,5 @@
 export default {
-  app: { name: 'Chat4Openapi', tagline: 'Chat with your APIs.' },
+  app: { name: 'Agent4API', tagline: 'Chat with your APIs.' },
   setup: {
     eyebrow: 'First-time setup',
     title: 'Create your administrator',
@@ -16,14 +16,14 @@ export default {
   login: {
     eyebrow: 'Administration',
     title: 'Welcome back',
-    description: 'Sign in to manage your Chat4Openapi instance.',
+    description: 'Sign in to manage your Agent4API instance.',
     username: 'Username',
     password: 'Password',
     submit: 'Sign in',
     quote: 'Turn interface definitions into useful, governed conversations.',
   },
   overview: {
-    eyebrow: 'Chat4Openapi control plane',
+    eyebrow: 'Agent4API control plane',
     title: 'Platform overview',
     subtitle: 'Configure each building block, then connect them through an Agent.',
     providers: 'Providers',
@@ -119,7 +119,7 @@ export default {
     },
   },
   embed: {
-    starting: 'Starting chat…', subtitle: 'Powered by Chat4Openapi', assistant: 'Assistant',
+    starting: 'Starting chat…', subtitle: 'Powered by Agent4API', assistant: 'Assistant',
     welcome: 'Chat with {agent}', welcomeHint: 'Ask a question or request an action.',
     you: 'You', placeholder: 'Type a message…', send: 'Send', cancel: 'Cancel', close: 'Close chat',
     unavailable: 'This chat is unavailable.', failed: 'The request could not be completed. Please try again.',
@@ -129,7 +129,7 @@ export default {
   },
   action: { continue: 'Continue' },
   error: {
-    setup: { already_initialized: 'This Chat4Openapi instance is already initialized.' },
+    setup: { already_initialized: 'This Agent4API instance is already initialized.' },
     auth: {
       invalid_credentials: 'The username or password is incorrect.',
       required: 'Please sign in to continue.',

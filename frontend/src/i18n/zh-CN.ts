@@ -1,5 +1,5 @@
 export default {
-  app: { name: 'Chat4Openapi', tagline: '与你的 API 对话。' },
+  app: { name: 'Agent4API', tagline: '与你的 API 对话。' },
   setup: {
     eyebrow: '首次设置',
     title: '创建后台管理员',
@@ -16,14 +16,14 @@ export default {
   login: {
     eyebrow: '后台管理',
     title: '欢迎回来',
-    description: '登录以管理 Chat4Openapi 实例。',
+    description: '登录以管理 Agent4API 实例。',
     username: '用户名',
     password: '密码',
     submit: '登录',
     quote: '将接口定义转化为实用、可治理的智能对话。',
   },
   overview: {
-    eyebrow: 'Chat4Openapi 管理平台',
+    eyebrow: 'Agent4API 管理平台',
     title: '平台概览',
     subtitle: '依次配置各项能力，然后通过 Agent 将它们连接起来。',
     providers: '大模型供应商',
@@ -119,7 +119,7 @@ export default {
     },
   },
   embed: {
-    starting: '正在启动对话…', subtitle: '由 Chat4Openapi 提供支持', assistant: '智能助手',
+    starting: '正在启动对话…', subtitle: '由 Agent4API 提供支持', assistant: '智能助手',
     welcome: '与 {agent} 对话', welcomeHint: '输入问题，或让它帮你完成操作。',
     you: '你', placeholder: '输入消息…', send: '发送', cancel: '取消', close: '关闭对话',
     unavailable: '此对话当前不可用。', failed: '请求未能完成，请重试。',
@@ -129,7 +129,7 @@ export default {
   },
   action: { continue: '继续' },
   error: {
-    setup: { already_initialized: '此 Chat4Openapi 实例已经完成初始化。' },
+    setup: { already_initialized: '此 Agent4API 实例已经完成初始化。' },
     auth: {
       invalid_credentials: '用户名或密码不正确。',
       required: '请先登录。',

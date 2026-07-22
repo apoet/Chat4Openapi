@@ -54,7 +54,7 @@ async function submit(): Promise<void> {
 <template>
   <main class="auth-page">
     <section class="auth-story">
-      <div class="brand-mark brand-logo"><img :src="logoUrl" alt="Chat4Openapi" /></div>
+      <div class="brand-mark brand-logo"><img :src="logoUrl" alt="Agent4API" /></div>
       <div>
         <p class="eyebrow">{{ t('setup.eyebrow') }}</p>
         <h1>{{ t('app.name') }}</h1>

@@ -1,4 +1,4 @@
-"""Stable defaults for Skills shipped with Chat4Openapi installations."""
+"""Stable defaults for Skills shipped with Agent4API installations."""
 
 VARCARDS2_GENE_LEGACY_SYSTEM_PROMPT = (
     "你是 Varcards2 Gene 助手。用户询问基因的染色体或位点时，必须调用 "

@@ -36,7 +36,7 @@ class Agent(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(160), default="Chat4Openapi Agent")
+    name: Mapped[str] = mapped_column(String(160), default="Agent4API Agent")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     system_prompt: Mapped[str] = mapped_column(Text)

@@ -1,1 +1,1 @@
-"""Chat4Openapi backend package."""
+"""Agent4API backend package."""

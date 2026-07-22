@@ -8,6 +8,8 @@ data/*
 !data/.gitkeep
 frontend/node_modules/
 frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
 output/playwright/
 .playwright-cli/
 .worktrees/

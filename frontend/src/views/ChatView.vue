@@ -434,7 +434,7 @@ function useSuggestedQuestion(question: string): void {
 <template>
   <main class="chat-page">
     <header class="chat-header">
-      <RouterLink to="/" class="chat-brand"><span class="brand-mark brand-logo small"><img :src="logoUrl" alt="Chat4Openapi" /></span><strong>Chat4Openapi</strong></RouterLink>
+      <RouterLink to="/" class="chat-brand"><span class="brand-mark brand-logo small"><img :src="logoUrl" alt="Agent4API" /></span><strong>Agent4API</strong></RouterLink>
       <span>{{ t('chat.title') }}</span>
     </header>
     <section v-if="loginRequired && !authenticated" class="chat-login">

@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "test": "vitest run",
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@ag-ui/client": "0.0.57",
@@ -22,6 +23,7 @@
     "vue-router": "^4.5.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@testing-library/vue": "^8.1.0",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.17.0",

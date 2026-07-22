@@ -115,7 +115,7 @@ class ToolExecutor:
             raise ToolExecutionError("invalid_target", "Tool target uses a different origin")
 
         query: dict[str, Any] = {}
-        headers: dict[str, str] = {"User-Agent": "Chat4Openapi/0.1"}
+        headers: dict[str, str] = {"User-Agent": "Agent4API/0.1"}
         cookies: dict[str, str] = {}
         for parameter in execution.get("parameters", []):
             argument = parameter.get("argument", parameter.get("name"))
