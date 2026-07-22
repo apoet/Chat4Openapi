@@ -19,13 +19,15 @@ const mentionStart = ref<number | null>(null)
 const mentionEnd = ref<number | null>(null)
 const mentionQuery = ref('')
 const activeMentionIndex = ref(0)
+const mentionOptionElements = new Map<number, HTMLElement>()
 const catalog = useToolCatalog(
   computed(() => store.tools),
   computed(() => store.sources),
+  computed(() => store.eligibleToolIds),
 )
 const mentionResult = computed(() => {
-  if (mentionStart.value === null) return catalog.query({ state: 'enabled' }, 0)
-  return catalog.query({ query: mentionQuery.value, state: 'enabled' }, 20)
+  if (mentionStart.value === null) return catalog.query({ skillEligible: true }, 0)
+  return catalog.query({ query: mentionQuery.value, skillEligible: true }, 50)
 })
 const mentionTools = computed(() => mentionResult.value.tools)
 
@@ -38,13 +40,13 @@ function canonicalReference(tool: IndexedTool): string {
 }
 
 function bindTool(tool: IndexedTool): void {
-  if (tool.available && !selectedToolIds.value.includes(tool.id)) {
+  if (tool.skillEligible && !selectedToolIds.value.includes(tool.id)) {
     selectedToolIds.value.push(tool.id)
   }
 }
 
 function referenceTool(tool: IndexedTool): void {
-  if (!tool.available) return
+  if (!tool.skillEligible) return
   bindTool(tool)
   const token = canonicalReference(tool)
   const input = promptInput.value
@@ -76,7 +78,7 @@ function closeMention(): void {
 }
 
 async function chooseMention(tool: IndexedTool): Promise<void> {
-  if (!tool.available || mentionStart.value === null || mentionEnd.value === null) return
+  if (!tool.skillEligible || mentionStart.value === null || mentionEnd.value === null) return
   bindTool(tool)
   const token = canonicalReference(tool)
   const cursor = mentionStart.value + token.length
@@ -87,6 +89,20 @@ async function chooseMention(tool: IndexedTool): Promise<void> {
   promptInput.value?.setSelectionRange(cursor, cursor)
 }
 
+function setMentionOption(toolId: number, element: unknown): void {
+  if (element instanceof HTMLElement) mentionOptionElements.set(toolId, element)
+  else mentionOptionElements.delete(toolId)
+}
+
+async function moveActiveMention(delta: number): Promise<void> {
+  activeMentionIndex.value = (
+    activeMentionIndex.value + delta + mentionTools.value.length
+  ) % mentionTools.value.length
+  await nextTick()
+  const tool = mentionTools.value[activeMentionIndex.value]
+  if (tool) mentionOptionElements.get(tool.id)?.scrollIntoView({ block: 'nearest' })
+}
+
 function handlePromptKeydown(event: KeyboardEvent): void {
   if (mentionStart.value === null) return
   if (event.key === 'Escape') {
@@ -94,11 +110,10 @@ function handlePromptKeydown(event: KeyboardEvent): void {
     closeMention()
   } else if (event.key === 'ArrowDown' && mentionTools.value.length) {
     event.preventDefault()
-    activeMentionIndex.value = (activeMentionIndex.value + 1) % mentionTools.value.length
+    void moveActiveMention(1)
   } else if (event.key === 'ArrowUp' && mentionTools.value.length) {
     event.preventDefault()
-    activeMentionIndex.value = (activeMentionIndex.value - 1 + mentionTools.value.length)
-      % mentionTools.value.length
+    void moveActiveMention(-1)
   } else if (event.key === 'Enter' && mentionTools.value.length) {
     event.preventDefault()
     void chooseMention(mentionTools.value[activeMentionIndex.value])
@@ -106,11 +121,12 @@ function handlePromptKeydown(event: KeyboardEvent): void {
 }
 
 async function save(): Promise<void> {
+  await store.waitForToolEligibility()
   await store.save({
     name: name.value,
     description: description.value || null,
     system_prompt: systemPrompt.value,
-    tool_ids: selectedToolIds.value,
+    tool_ids: selectedToolIds.value.filter((id) => store.eligibleToolIds.has(id)),
   }, editingId.value ?? undefined)
   resetEditor()
 }
@@ -151,7 +167,7 @@ async function remove(skill: SkillSummary): Promise<void> {
             <div v-for="source in mentionResult.groups" :key="source.id" class="mention-source">
               <div v-for="tagGroup in source.tags" :key="tagGroup.name" role="group" :aria-label="`${source.name} / ${tagGroup.name || t('skills.untagged')}`">
                 <p class="mention-category">{{ source.name }} / {{ tagGroup.name || t('skills.untagged') }}</p>
-                <button v-for="tool in tagGroup.tools" :id="`tool-mention-${tool.id}`" :key="tool.id" type="button" role="option" :aria-selected="mentionTools[activeMentionIndex]?.id === tool.id" :class="{ active: mentionTools[activeMentionIndex]?.id === tool.id }" :aria-label="t('skills.mentionTool', { name: tool.name })" @mousedown.prevent @click="chooseMention(tool)"><strong>{{ tool.name }}</strong><small>{{ tool.method }} {{ tool.path }}</small></button>
+                <button v-for="tool in tagGroup.tools" :id="`tool-mention-${tool.id}`" :key="tool.id" :ref="(element) => setMentionOption(tool.id, element)" type="button" role="option" :aria-selected="mentionTools[activeMentionIndex]?.id === tool.id" :class="{ active: mentionTools[activeMentionIndex]?.id === tool.id }" :aria-label="t('skills.mentionTool', { name: tool.name })" @mousedown.prevent @click="chooseMention(tool)"><strong>{{ tool.name }}</strong><small>{{ tool.method }} {{ tool.path }}</small></button>
               </div>
             </div>
           </div>

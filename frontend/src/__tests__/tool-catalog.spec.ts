@@ -60,13 +60,23 @@ function catalogFetch(
   tools: ToolSummary[],
   sources: ApiSourceSummary[],
   skills: SkillSummary[] = [],
+  eligibleTools: ToolSummary[] = tools.filter((item) => item.enabled),
 ) {
-  return vi.fn((input: RequestInfo | URL) => {
+  return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     if (input === '/api/admin/tools') {
       return Promise.resolve(response(tools))
     }
+    if (input === '/api/admin/skills/eligible-tools') {
+      return Promise.resolve(response(eligibleTools))
+    }
     if (input === '/api/admin/sources') return Promise.resolve(response(sources))
+    if (input === '/api/admin/skills' && init?.method) {
+      return Promise.resolve(response(skills[0] || skill(99, [])))
+    }
     if (input === '/api/admin/skills') return Promise.resolve(response(skills))
+    if (typeof input === 'string' && input.startsWith('/api/admin/skills/') && init?.method === 'PUT') {
+      return Promise.resolve(response(skills[0] || skill(99, [])))
+    }
     return Promise.resolve(response([]))
   })
 }
@@ -75,6 +85,10 @@ beforeEach(() => {
   setActivePinia(createPinia())
   useAuthStore().csrfToken = 'csrf'
   localStorage.clear()
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  })
 })
 
 describe('scalable Skill Tool catalog', () => {
@@ -174,6 +188,65 @@ describe('scalable Skill Tool catalog', () => {
     expect(checkbox.disabled).toBe(false)
   })
 
+  it('uses authoritative Skill eligibility for login Tools and omits unavailable IDs from create and update', async () => {
+    const login = tool(1, { name: 'api_login' })
+    const normal = tool(2, { name: 'get_pet', tags: ['Pets'] })
+    const existing = skill(7, [login, normal])
+    const fetchMock = catalogFetch(
+      [login, normal],
+      [source(1, 'Pet API')],
+      [existing],
+      [normal],
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(SkillsView, { global: { plugins: [i18n] } })
+    await fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+
+    const loginRow = screen.getByTestId('catalog-tool-1')
+    expect(within(loginRow).getByText('Enabled')).toBeTruthy()
+    expect(within(loginRow).getByText('Unavailable')).toBeTruthy()
+    const boundLogin = within(loginRow).getByRole('checkbox', { name: 'Bind api_login' }) as HTMLInputElement
+    expect(boundLogin.checked).toBe(true)
+    expect(boundLogin.disabled).toBe(false)
+    expect((within(loginRow).getByRole('button', { name: 'Reference api_login' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('checkbox', { name: 'Bind get_pet' }) as HTMLInputElement).disabled).toBe(false)
+
+    const prompt = screen.getByLabelText('System prompt') as HTMLTextAreaElement
+    await fireEvent.update(prompt, 'Use @api_login')
+    expect(screen.queryByRole('option', { name: 'Mention api_login' })).toBeNull()
+    await fireEvent.update(prompt, 'Use existing Tools.')
+    await fireEvent.click(screen.getByRole('button', { name: 'Save Skill' }))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url, init]) => url === '/api/admin/skills/7' && init?.method === 'PUT')).toBe(true))
+    const updateCall = fetchMock.mock.calls.find(([url, init]) => url === '/api/admin/skills/7' && init?.method === 'PUT')
+    expect(JSON.parse(updateCall?.[1]?.body as string).tool_ids).toEqual([2])
+
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Bind api_login' }))
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Bind get_pet' }))
+    await fireEvent.update(screen.getByLabelText('Skill name'), 'New Skill')
+    await fireEvent.update(prompt, 'Use a normal Tool.')
+    await fireEvent.click(screen.getByRole('button', { name: 'Save Skill' }))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url, init]) => url === '/api/admin/skills' && init?.method === 'POST')).toBe(true))
+    const createCall = fetchMock.mock.calls.find(([url, init]) => url === '/api/admin/skills' && init?.method === 'POST')
+    expect(JSON.parse(createCall?.[1]?.body as string).tool_ids).toEqual([2])
+  })
+
+  it('fails closed when authoritative Skill eligibility cannot be loaded', async () => {
+    const normal = tool(2, { name: 'get_pet' })
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      if (input === '/api/admin/tools') return Promise.resolve(response([normal]))
+      if (input === '/api/admin/skills/eligible-tools') return Promise.resolve(response({}, 500))
+      return Promise.resolve(response([]))
+    }))
+
+    render(SkillsView, { global: { plugins: [i18n] } })
+    const checkbox = await screen.findByRole('checkbox', { name: 'Bind get_pet' }) as HTMLInputElement
+    expect(checkbox.disabled).toBe(true)
+    const prompt = screen.getByLabelText('System prompt')
+    await fireEvent.update(prompt, 'Use @get_pet')
+    expect(screen.queryByRole('option', { name: 'Mention get_pet' })).toBeNull()
+  })
+
   it('uses the catalog search for categorized enabled-only mentions and keyboard insertion', async () => {
     const first = tool(1, { name: 'gene_lookup', tags: ['Genomics'], api_source_id: 2 })
     const second = tool(2, { name: 'gene_summary', tags: ['Genomics'], api_source_id: 2 })
@@ -201,6 +274,23 @@ describe('scalable Skill Tool catalog', () => {
     expect(await screen.findByRole('listbox', { name: 'Tool reference suggestions' })).toBeTruthy()
     await fireEvent.keyDown(prompt, { key: 'Escape' })
     expect(screen.queryByRole('listbox', { name: 'Tool reference suggestions' })).toBeNull()
+  })
+
+  it('scrolls the active option into view while navigating more than 20 suggestions', async () => {
+    const tools = Array.from({ length: 25 }, (_, index) => tool(index + 1))
+    vi.stubGlobal('fetch', catalogFetch(tools, [source(1, 'Large API')]))
+
+    render(SkillsView, { global: { plugins: [i18n] } })
+    const prompt = await screen.findByLabelText('System prompt')
+    await fireEvent.update(prompt, 'Use @generic')
+    await screen.findByRole('option', { name: 'Mention generic_tool_25' })
+    for (let index = 0; index < 22; index += 1) {
+      await fireEvent.keyDown(prompt, { key: 'ArrowDown' })
+    }
+
+    expect(prompt.getAttribute('aria-activedescendant')).toBe('tool-mention-23')
+    const scrollIntoView = HTMLElement.prototype.scrollIntoView as ReturnType<typeof vi.fn>
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest' })
   })
 
   it('restores a bounded panel height and persists keyboard resizing', async () => {

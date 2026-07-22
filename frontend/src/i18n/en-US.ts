@@ -77,7 +77,7 @@ export default {
       title: 'Tool catalog', search: 'Search Tool catalog', searchHint: 'Name, description, path, tag, or source',
       source: 'API source', allSources: 'All API sources', tag: 'Swagger tag', allTags: 'All Swagger tags', state: 'Enabled state',
       bind: 'Bind {name}', reference: 'Reference {name}', suggestions: 'Tool reference suggestions', resize: 'Resize Tool catalog',
-      showing: 'Showing {shown} of {total} Tools', empty: 'No Tools match these catalog filters.',
+      showing: 'Showing {shown} of {total} Tools', empty: 'No Tools match these catalog filters.', unavailable: 'Unavailable',
     },
   },
   chat: {

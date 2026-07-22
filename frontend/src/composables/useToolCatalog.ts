@@ -10,6 +10,7 @@ export interface ToolCatalogFilters {
   tag?: string | null
   state?: ToolCatalogState
   pinnedIds?: readonly number[]
+  skillEligible?: boolean
 }
 
 export interface IndexedTool extends ToolSummary {
@@ -18,6 +19,7 @@ export interface IndexedTool extends ToolSummary {
   path: string
   primaryTag: string
   available: boolean
+  skillEligible: boolean
   searchableText: string
 }
 
@@ -67,7 +69,11 @@ function operationParts(operationKey: string): { method: string, path: string } 
   }
 }
 
-function buildIndex(tools: ToolSummary[], sources: ApiSourceSummary[]): ToolCatalogIndex {
+function buildIndex(
+  tools: ToolSummary[],
+  sources: ApiSourceSummary[],
+  eligibleToolIds: ReadonlySet<number>,
+): ToolCatalogIndex {
   const sourceById = new Map(sources.map((source) => [source.id, source]))
   const indexed = tools.map((tool) => {
     const source = sourceById.get(tool.api_source_id)
@@ -80,6 +86,7 @@ function buildIndex(tools: ToolSummary[], sources: ApiSourceSummary[]): ToolCata
       sourceName,
       primaryTag: tags[0] || '',
       available: tool.enabled && (source?.enabled ?? true),
+      skillEligible: eligibleToolIds.has(tool.id),
       searchableText: searchableText(tool, sourceName),
     }
   })
@@ -136,8 +143,13 @@ function groupTools(
 export function useToolCatalog(
   tools: MaybeRefOrGetter<ToolSummary[]>,
   sources: MaybeRefOrGetter<ApiSourceSummary[]>,
+  eligibleToolIds: MaybeRefOrGetter<ReadonlySet<number>>,
 ): ToolCatalog {
-  const index = computed(() => buildIndex(toValue(tools), toValue(sources)))
+  const index = computed(() => buildIndex(
+    toValue(tools),
+    toValue(sources),
+    toValue(eligibleToolIds),
+  ))
   return {
     index,
     query(filters = {}, limit = Number.POSITIVE_INFINITY): ToolCatalogResult {
@@ -149,6 +161,7 @@ export function useToolCatalog(
         && (!selectedTag || tool.tags.includes(selectedTag))
         && (!filters.state || filters.state === 'all'
           || tool.available === (filters.state === 'enabled'))
+        && (filters.skillEligible === undefined || tool.skillEligible === filters.skillEligible)
       ))
       const pinnedIds = new Set(filters.pinnedIds || [])
       const pinned = matches.filter((tool) => pinnedIds.has(tool.id))

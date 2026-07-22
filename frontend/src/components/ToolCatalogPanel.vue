@@ -87,7 +87,7 @@ function isBound(toolId: number): boolean {
 }
 
 function setBound(tool: IndexedTool, checked: boolean): void {
-  if (checked && !tool.available) return
+  if (checked && !tool.skillEligible) return
   const next = props.modelValue.filter((id) => id !== tool.id)
   if (checked) next.push(tool.id)
   emit('update:modelValue', next)
@@ -137,12 +137,12 @@ function toggleTag(sourceId: number, tagName: string): void {
         <summary @click.prevent="toggleSource(source.id)"><h3>{{ source.name }}</h3><span>{{ t('tools.count', { count: source.toolCount }) }}</span></summary>
         <details v-for="tagGroup in source.tags" :key="tagGroup.name" class="catalog-tag-group" :open="!collapsedTags.has(tagKey(source.id, tagGroup.name))">
           <summary @click.prevent="toggleTag(source.id, tagGroup.name)"><h4>{{ tagGroup.name || t('skills.untagged') }}</h4><span>{{ tagGroup.tools.length }}</span></summary>
-          <article v-for="tool in tagGroup.tools" :key="tool.id" class="catalog-tool-row" :class="{ disabled: !tool.available }" :data-testid="`catalog-tool-${tool.id}`">
+          <article v-for="tool in tagGroup.tools" :key="tool.id" class="catalog-tool-row" :class="{ disabled: !tool.available, unavailable: !tool.skillEligible }" :data-testid="`catalog-tool-${tool.id}`">
             <span data-testid="catalog-tool-row" class="sr-only" aria-hidden="true"></span>
-            <label class="catalog-bind"><input type="checkbox" :checked="isBound(tool.id)" :disabled="!tool.available && !isBound(tool.id)" :aria-label="t('skills.catalog.bind', { name: tool.name })" @change="setBound(tool, ($event.target as HTMLInputElement).checked)" /><span class="sr-only">{{ t('skills.catalog.bind', { name: tool.name }) }}</span></label>
+            <label class="catalog-bind"><input type="checkbox" :checked="isBound(tool.id)" :disabled="!tool.skillEligible && !isBound(tool.id)" :aria-label="t('skills.catalog.bind', { name: tool.name })" @change="setBound(tool, ($event.target as HTMLInputElement).checked)" /><span class="sr-only">{{ t('skills.catalog.bind', { name: tool.name }) }}</span></label>
             <div class="catalog-tool-main"><strong>{{ tool.name }}</strong><span class="catalog-operation"><code>{{ tool.method }}</code><code>{{ tool.path }}</code></span></div>
-            <div class="catalog-tool-meta"><span>{{ tool.sourceName }}</span><span v-for="toolTag in tool.tags" :key="toolTag" class="catalog-tag">{{ toolTag }}</span><b :class="['catalog-state', tool.available ? 'enabled' : 'disabled']">{{ tool.available ? t('tools.enabled') : t('tools.disabled') }}</b></div>
-            <button type="button" class="catalog-reference" :disabled="!tool.available" :aria-label="t('skills.catalog.reference', { name: tool.name })" @click="emit('reference', tool)">@</button>
+            <div class="catalog-tool-meta"><span>{{ tool.sourceName }}</span><span v-for="toolTag in tool.tags" :key="toolTag" class="catalog-tag">{{ toolTag }}</span><b :class="['catalog-state', tool.available ? 'enabled' : 'disabled']">{{ tool.available ? t('tools.enabled') : t('tools.disabled') }}</b><b v-if="!tool.skillEligible" class="catalog-eligibility unavailable">{{ t('skills.catalog.unavailable') }}</b></div>
+            <button type="button" class="catalog-reference" :disabled="!tool.skillEligible" :aria-label="t('skills.catalog.reference', { name: tool.name })" @click="emit('reference', tool)">@</button>
           </article>
         </details>
       </details>

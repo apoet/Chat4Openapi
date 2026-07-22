@@ -11,11 +11,31 @@ import { useAuthStore } from './auth'
 
 export const useSkillsStore = defineStore('skills', () => {
   const tools = ref<ToolSummary[]>([])
+  const eligibleToolIds = ref(new Set<number>())
   const sources = ref<ApiSourceSummary[]>([])
   const skills = ref<SkillSummary[]>([])
+  let toolEligibilityRequest: Promise<void> | null = null
 
   async function loadTools(): Promise<void> {
-    tools.value = await request<ToolSummary[]>('/api/admin/tools')
+    eligibleToolIds.value = new Set()
+    const currentRequest = (async () => {
+      tools.value = await request<ToolSummary[]>('/api/admin/tools')
+      try {
+        const eligibleTools = await request<ToolSummary[]>('/api/admin/skills/eligible-tools')
+        eligibleToolIds.value = new Set(eligibleTools.map((tool) => tool.id))
+      } catch {
+        eligibleToolIds.value = new Set()
+      }
+    })()
+    toolEligibilityRequest = currentRequest
+    try {
+      await currentRequest
+    } finally {
+      if (toolEligibilityRequest === currentRequest) toolEligibilityRequest = null
+    }
+  }
+  async function waitForToolEligibility(): Promise<void> {
+    await toolEligibilityRequest
   }
   async function loadSources(): Promise<void> {
     sources.value = await request<ApiSourceSummary[]>('/api/admin/sources')
@@ -47,9 +67,11 @@ export const useSkillsStore = defineStore('skills', () => {
   }
   return {
     tools,
+    eligibleToolIds,
     sources,
     skills,
     loadTools,
+    waitForToolEligibility,
     loadSources,
     loadSkills,
     save,

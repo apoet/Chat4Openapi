@@ -77,7 +77,7 @@ export default {
       title: 'Tool 目录', search: '搜索 Tool 目录', searchHint: '按名称、描述、路径、标签或来源搜索',
       source: 'API 来源', allSources: '全部 API 来源', tag: 'Swagger 标签', allTags: '全部 Swagger 标签', state: '启用状态',
       bind: '绑定 {name}', reference: '引用 {name}', suggestions: 'Tool 引用建议', resize: '调整 Tool 目录大小',
-      showing: '显示 {shown}/{total} 个 Tools', empty: '没有符合目录筛选条件的 Tool。',
+      showing: '显示 {shown}/{total} 个 Tools', empty: '没有符合目录筛选条件的 Tool。', unavailable: '不可用',
     },
   },
   chat: {

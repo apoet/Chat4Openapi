@@ -289,11 +289,15 @@ describe('Skills and chat', () => {
         .mockResolvedValueOnce(response([
           { id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://pets.test', document_url: null, allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
         ]))
-        .mockResolvedValueOnce(response([])),
+        .mockResolvedValueOnce(response([]))
+        .mockResolvedValueOnce(response([
+          { id: 2, api_source_id: 1, operation_key: 'GET /pets/{id}', name: 'get_pet', description: 'Get pet', input_schema: { type: 'object' }, enabled: true },
+        ])),
     )
 
     render(SkillsView, { global: { plugins: [i18n] } })
-    const quickTool = await screen.findByRole('button', { name: /get_pet/ })
+    const quickTool = await screen.findByRole('button', { name: /get_pet/ }) as HTMLButtonElement
+    await waitFor(() => expect(quickTool.disabled).toBe(false))
     const disabledTool = screen.getByText('delete_pet')
     expect(disabledTool).toBeTruthy()
     expect((screen.getByRole('checkbox', { name: 'Bind delete_pet' }) as HTMLInputElement).disabled).toBe(true)
@@ -312,7 +316,11 @@ describe('Skills and chat', () => {
         { id: 3, api_source_id: 1, operation_key: 'GET /orders', name: 'list_orders', description: 'List orders', input_schema: {}, execution_schema: {}, tags: ['Orders'], enabled: true },
       ]))
       .mockResolvedValueOnce(response([{ id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://pets.test', document_url: null, allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' }]))
-      .mockResolvedValueOnce(response([])))
+      .mockResolvedValueOnce(response([]))
+      .mockResolvedValueOnce(response([
+        { id: 2, api_source_id: 1, operation_key: 'GET /pets/{id}', name: 'get_pet', description: 'Get pet', input_schema: {}, execution_schema: {}, tags: ['Pets'], enabled: true },
+        { id: 3, api_source_id: 1, operation_key: 'GET /orders', name: 'list_orders', description: 'List orders', input_schema: {}, execution_schema: {}, tags: ['Orders'], enabled: true },
+      ])))
 
     render(SkillsView, { global: { plugins: [i18n] } })
     const prompt = await screen.findByLabelText('System prompt') as HTMLTextAreaElement
@@ -334,7 +342,11 @@ describe('Skills and chat', () => {
         { id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://pets.test', document_url: null, allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
         { id: 2, name: 'Order API', source_type: 'openapi', base_url: 'https://orders.test', document_url: null, allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
       ]))
-      .mockResolvedValueOnce(response([])))
+      .mockResolvedValueOnce(response([]))
+      .mockResolvedValueOnce(response([
+        { id: 2, api_source_id: 1, operation_key: 'GET /pets', name: 'list_pets', description: null, input_schema: {}, execution_schema: {}, tags: ['Pet operations'], enabled: true },
+        { id: 3, api_source_id: 2, operation_key: 'GET /orders', name: 'list_orders', description: null, input_schema: {}, execution_schema: {}, tags: ['Order operations'], enabled: true },
+      ])))
 
     const { container } = render(SkillsView, { global: { plugins: [i18n] } })
 
@@ -351,6 +363,7 @@ describe('Skills and chat', () => {
       .mockResolvedValueOnce(response([]))
       .mockResolvedValueOnce(response([]))
       .mockResolvedValueOnce(response([{ id: 5, name: 'Pet helper', description: null, system_prompt: 'Help', running: false, tools: [] }]))
+      .mockResolvedValueOnce(response([]))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(response([]))
     vi.stubGlobal('fetch', fetchMock)
@@ -358,8 +371,8 @@ describe('Skills and chat', () => {
     render(SkillsView, { global: { plugins: [i18n] } })
     await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5))
-    expect(fetchMock.mock.calls[3][0]).toBe('/api/admin/skills/5')
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6))
+    expect(fetchMock.mock.calls[4][0]).toBe('/api/admin/skills/5')
   })
 
   it('starts a managed Skill through its lifecycle endpoint', async () => {
@@ -369,6 +382,7 @@ describe('Skills and chat', () => {
       .mockResolvedValueOnce(response([]))
       .mockResolvedValueOnce(response([]))
       .mockResolvedValueOnce(response([stopped]))
+      .mockResolvedValueOnce(response([]))
       .mockResolvedValueOnce(response({ ...stopped, running: true }))
       .mockResolvedValueOnce(response([{ ...stopped, running: true }]))
     vi.stubGlobal('fetch', fetchMock)
@@ -376,9 +390,9 @@ describe('Skills and chat', () => {
     render(SkillsView, { global: { plugins: [i18n] } })
     await fireEvent.click(await screen.findByRole('button', { name: 'Start' }))
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5))
-    expect(fetchMock.mock.calls[3][0]).toBe('/api/admin/skills/5/start')
-    expect(fetchMock.mock.calls[3][1]).toMatchObject({ method: 'POST' })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6))
+    expect(fetchMock.mock.calls[4][0]).toBe('/api/admin/skills/5/start')
+    expect(fetchMock.mock.calls[4][1]).toMatchObject({ method: 'POST' })
   })
 
   it('selects the default Agent, sends it on creation, and locks while the turn is pending', async () => {
