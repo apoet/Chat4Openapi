@@ -20,6 +20,7 @@ Complete. The final Important findings are covered by shared execution policy, f
 - Replaced machine-local Conda environment names in tracked briefs/reports with neutral project-environment wording.
 - Renamed two test module aliases that retained the legacy package spelling.
 - Added a `git ls-files`-driven regression test. It reads every tracked path, including hidden reports, decodes content without excluding tracked files, and enforces case-insensitive absence of legacy product/package/environment/header/extension spellings. The searched token is assembled in the test so the gate cannot match itself.
+- The gate resolves an absolute Git executable before entering a minimal child-process environment, avoiding Conda PATH/DLL leakage. Two consecutive final runs passed.
 
 ## TDD evidence
 

@@ -1,4 +1,6 @@
+import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -10,9 +12,17 @@ LEGACY_PRODUCT_PATTERN = re.compile(
 
 def test_tracked_files_do_not_contain_legacy_product_identifiers() -> None:
     repository = Path(__file__).resolve().parents[2]
+    git_executable = shutil.which("git")
+    assert git_executable is not None
+    minimal_environment = {
+        key: value
+        for key in ("SYSTEMROOT", "WINDIR", "TEMP", "TMP")
+        if (value := os.environ.get(key)) is not None
+    }
     tracked = subprocess.run(
-        ["git", "ls-files", "-z"],
+        [git_executable, "ls-files", "-z"],
         cwd=repository,
+        env=minimal_environment,
         check=True,
         capture_output=True,
     ).stdout.decode().split("\0")
