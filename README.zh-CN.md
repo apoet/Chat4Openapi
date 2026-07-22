@@ -12,7 +12,7 @@
 
 Agent4API 可将 Swagger/OpenAPI 接口转换为统一管理的工具（Tool），并让独立配置的智能体（Agent）按顺序加载技能（Skill）目录，通过浏览器、OpenAI 兼容接口或 Anthropic 兼容接口提供服务。
 
-项目采用 FastAPI、Vue 和 SQLite 构建，管理界面支持英文与简体中文。完整文档请参阅 [GitHub Wiki](https://github.com/apoet/Chat4Openapi/wiki)。
+项目采用 FastAPI、Vue 和 SQLite 构建，管理界面支持英文与简体中文。完整文档请参阅 [GitHub Wiki](https://github.com/apoet/Agent4API/wiki)。
 
 <p align="center">
   <img src="docs/images/workflow.zh-CN.svg" alt="Swagger 和 OpenAPI 文档导入为 Tools，Skills 引用 Tools，Agent 绑定 Skills，Chat 与 Agent 发起会话" width="100%">

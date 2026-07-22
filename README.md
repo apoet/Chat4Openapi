@@ -12,7 +12,7 @@
 
 Agent4API turns Swagger/OpenAPI operations into managed Tools and lets independently configured Agents load ordered Skill catalogs to answer browser, OpenAI-compatible, and Anthropic-compatible requests.
 
-It is a single FastAPI/Vue application backed by SQLite, with an English and Simplified Chinese administration interface. See the [GitHub Wiki](https://github.com/apoet/Chat4Openapi/wiki) for complete documentation.
+It is a single FastAPI/Vue application backed by SQLite, with an English and Simplified Chinese administration interface. See the [GitHub Wiki](https://github.com/apoet/Agent4API/wiki) for complete documentation.
 
 <p align="center">
   <img src="docs/images/workflow.svg" alt="Swagger and OpenAPI definitions become Tools, Skills reference Tools, Agents use Skills, and Chat starts Agent conversations" width="100%">
