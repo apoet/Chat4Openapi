@@ -33,13 +33,6 @@ docker compose build
 docker compose up -d
 ```
 
-Publish manually to Docker Hub:
-
-```shell
-docker login
-docker compose push
-```
-
 The container exposes one port for the frontend, API, MCP, and embed assets, all accessed through the same origin and relative paths. The administration page defaults to [http://127.0.0.1:8000](http://127.0.0.1:8000). SQLite data and the encryption key are persisted in the `agent4api-data` volume.
 
 ### Run from source

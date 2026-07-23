@@ -33,12 +33,6 @@ docker compose build
 docker compose up -d
 ```
 
-手动发布到 Docker Hub：
-
-```shell
-docker login
-docker compose push
-```
 
 容器仅开放一个端口，前端页面、API、MCP 和嵌入资源均通过同一地址及相对路径访问。默认管理页面为 [http://127.0.0.1:8000](http://127.0.0.1:8000)。SQLite 数据及加密密钥保存在 `agent4api-data` 数据卷中。
 
