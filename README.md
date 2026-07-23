@@ -12,6 +12,14 @@
 
 Agent4API turns Swagger/OpenAPI operations into managed Tools and lets independently configured Agents load ordered Skill catalogs to answer browser, OpenAI-compatible, and Anthropic-compatible requests.
 
+Agent4API follows a simple **one input, three service types** model:
+
+- **One input — API import:** import Swagger 2.0 or OpenAPI 3.x definitions and turn their operations into governed Tools.
+- **Three service types:**
+  1. **Tools MCP** — expose imported Tools through the Model Context Protocol.
+  2. **Agent API** — serve configured Agents through OpenAI-compatible and Anthropic-compatible APIs.
+  3. **Chat and Embed Chat** — use Agents in the built-in browser Chat or embed a fixed Agent into an existing website.
+
 It is a single FastAPI/Vue application backed by SQLite, with an English and Simplified Chinese administration interface. See the [GitHub Wiki](https://github.com/apoet/Agent4API/wiki) for complete documentation.
 
 <p align="center">

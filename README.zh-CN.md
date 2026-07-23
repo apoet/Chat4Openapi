@@ -12,6 +12,14 @@
 
 Agent4API 可将 Swagger/OpenAPI 接口转换为统一管理的工具（Tool），并让独立配置的智能体（Agent）按顺序加载技能（Skill）目录，通过浏览器、OpenAI 兼容接口或 Anthropic 兼容接口提供服务。
 
+Agent4API 采用清晰的 **1 个输入、3 类服务** 模型：
+
+- **1 个输入——APIs 导入：**导入 Swagger 2.0 或 OpenAPI 3.x 文档，将其中的接口操作转换为受控的 Tools。
+- **3 类服务：**
+  1. **Tools MCP：**通过模型上下文协议（MCP）对外提供已导入的 Tools。
+  2. **Agent API：**通过 OpenAI 兼容和 Anthropic 兼容 API 对外提供配置完成的 Agent。
+  3. **Chat 和 Embed Chat：**在内置浏览器 Chat 中使用 Agent，或将固定 Agent 嵌入现有网站。
+
 项目采用 FastAPI、Vue 和 SQLite 构建，管理界面支持英文与简体中文。完整文档请参阅 [GitHub Wiki](https://github.com/apoet/Agent4API/wiki)。
 
 <p align="center">
