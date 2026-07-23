@@ -1,9 +1,11 @@
 from datetime import UTC, datetime
+import json
 import logging
 from pathlib import Path
 
 import httpx
 import pytest
+import yaml
 from cryptography.fernet import Fernet
 from fastapi import FastAPI
 from sqlalchemy import func, select
@@ -272,3 +274,92 @@ async def test_generation_logs_only_bounded_operational_metadata(
     assert "operations=1 skills=1 agents=1" in caplog.text
     assert "provider-secret" not in caplog.text
     assert "openapi: 3.0.3" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_url_generation_records_url_and_enables_only_referenced_tools(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = await login(client)
+    cipher = SecretCipher(Fernet.generate_key())
+    provider_id = seed_provider(db_session_factory, cipher)
+    spec = yaml.safe_load(OPENAPI)
+    spec["paths"]["/pets"]["get"] = {
+        "operationId": "listPets",
+        "summary": "List pets",
+        "responses": {"200": {"description": "Pet list"}},
+    }
+    document = json.dumps(spec).encode()
+
+    async def fetch_document(url: str, allow_private_networks: bool) -> bytes:
+        assert url == "https://api.example.test/openapi.json"
+        assert allow_private_networks is False
+        return document
+
+    monkeypatch.setattr(
+        "chat4openapi.api.admin_auto_agentify._fetch_openapi_document",
+        fetch_document,
+    )
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_auto_agentify_planner] = lambda: SuccessfulPlanner()
+
+    response = await client.post(
+        "/api/admin/auto-agentify/url",
+        json={
+            "provider_id": provider_id,
+            "name": "Pets",
+            "url": "https://api.example.test/openapi.json",
+            "base_url": None,
+            "allow_private_networks": False,
+        },
+        headers={"X-CSRF-Token": token},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["source"]["document_url"] == (
+        "https://api.example.test/openapi.json"
+    )
+    assert response.json()["imported_tool_count"] == 2
+    assert response.json()["enabled_tool_count"] == 1
+    with db_session_factory() as session:
+        states = {
+            tool.operation_key: tool.enabled
+            for tool in session.scalars(select(Tool).order_by(Tool.operation_key))
+        }
+        assert states == {"GET /pets": False, "POST /pets": True}
+
+
+@pytest.mark.asyncio
+async def test_persistence_failure_rolls_back_source_tools_skills_and_agents(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = await login(client)
+    cipher = SecretCipher(Fernet.generate_key())
+    provider_id = seed_provider(db_session_factory, cipher)
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_auto_agentify_planner] = lambda: SuccessfulPlanner()
+
+    def fail_binding(**_kwargs):
+        raise RuntimeError("forced persistence failure")
+
+    monkeypatch.setattr(
+        "chat4openapi.auto_agentify.service.SkillTool",
+        fail_binding,
+    )
+    with pytest.raises(RuntimeError, match="forced persistence failure"):
+        await client.post(
+            "/api/admin/auto-agentify/file",
+            data={"provider_id": str(provider_id), "name": "Pets"},
+            files={"document": ("openapi.yaml", OPENAPI, "application/yaml")},
+            headers={"X-CSRF-Token": token},
+        )
+
+    with db_session_factory() as session:
+        for model in (ApiSource, Tool, Skill, Agent):
+            assert session.scalar(select(func.count()).select_from(model)) == 0
