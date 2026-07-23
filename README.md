@@ -8,6 +8,11 @@
   English | <a href="README.zh-CN.md">简体中文</a>
 </p>
 
+> [!IMPORTANT]
+> **DEMO:** [https://agent4api.ecrfs.com/admin](https://agent4api.ecrfs.com/admin)<br>
+> **Username:** `demo`<br>
+> **Password:** `demo123`
+
 ## Introduction
 
 Agent4API turns Swagger/OpenAPI operations into managed Tools and lets independently configured Agents load ordered Skill catalogs to answer browser, OpenAI-compatible, and Anthropic-compatible requests.

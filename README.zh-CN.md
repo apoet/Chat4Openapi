@@ -8,6 +8,11 @@
   <a href="README.md">English</a> | 简体中文
 </p>
 
+> [!IMPORTANT]
+> **DEMO 地址：**[https://agent4api.ecrfs.com/admin](https://agent4api.ecrfs.com/admin)<br>
+> **用户名：**`demo`<br>
+> **密码：**`demo123`
+
 ## 项目简介
 
 Agent4API 可将 Swagger/OpenAPI 接口转换为统一管理的工具（Tool），并让独立配置的智能体（Agent）按顺序加载技能（Skill）目录，通过浏览器、OpenAI 兼容接口或 Anthropic 兼容接口提供服务。
