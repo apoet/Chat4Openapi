@@ -21,6 +21,7 @@ class RequestAuth:
     headers: Mapping[str, str] = field(default_factory=dict)
     cookies: Mapping[str, str] = field(default_factory=dict)
     query: Mapping[str, str] = field(default_factory=dict)
+    body: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +149,16 @@ class ToolExecutor:
                 }
             else:
                 body = arguments.get(request_body.get("argument", "body"))
+            if auth.body:
+                if body is None:
+                    body = dict(auth.body)
+                elif isinstance(body, Mapping):
+                    body = {**auth.body, **body}
+                else:
+                    raise ToolExecutionError(
+                        "invalid_auth_body",
+                        "Custom authentication parameters require an object request body",
+                    )
             content_type = request_body.get("content_type", "application/json")
             if content_type == "application/json" or content_type.endswith("+json"):
                 request_kwargs["json"] = body
@@ -156,6 +167,8 @@ class ToolExecutor:
             else:
                 request_kwargs["content"] = body
                 headers.setdefault("content-type", content_type)
+        elif auth.body:
+            request_kwargs["json"] = dict(auth.body)
 
         timeout = httpx.Timeout(30, connect=10)
         async with httpx.AsyncClient(

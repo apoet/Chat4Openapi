@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, String
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, LargeBinary, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from chat4openapi.db.base import Base
@@ -43,3 +43,6 @@ class ApiSourceToolAuthConfig(Base):
     auth_prefix: Mapped[str] = mapped_column(String(64), default="Bearer")
     idle_minutes: Mapped[int] = mapped_column(Integer, default=30)
     absolute_hours: Mapped[int] = mapped_column(Integer, default=8)
+    encrypted_request_config: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True
+    )

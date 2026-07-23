@@ -26,7 +26,7 @@ def test_fresh_database_reaches_the_only_alembic_head(tmp_path: Path) -> None:
     config = migration_config(database)
 
     assert ScriptDirectory.from_config(config).get_heads() == [
-        "0017_api_source_auth_mode"
+        "0018_source_auth_request_config"
     ]
     command.upgrade(config, "head")
 
@@ -43,9 +43,13 @@ def test_fresh_database_reaches_the_only_alembic_head(tmp_path: Path) -> None:
         "tool_session_credentials",
         "tools",
     } <= set(inspector.get_table_names())
+    assert "encrypted_request_config" in {
+        column["name"]
+        for column in inspector.get_columns("api_source_tool_auth_configs")
+    }
     with engine.connect() as connection:
         assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-            "0017_api_source_auth_mode"
+            "0018_source_auth_request_config"
         )
     engine.dispose()
 

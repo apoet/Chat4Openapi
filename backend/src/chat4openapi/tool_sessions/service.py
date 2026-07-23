@@ -190,7 +190,23 @@ class ToolSessionService:
         login_data: Mapping[str, Any],
     ) -> Any:
         login_tool, source = self._login_runtime(config)
-        result = await self._executor.execute(login_tool, source, login_data, RequestAuth())
+        request_auth = RequestAuth()
+        if (
+            isinstance(config, ApiSourceToolAuthConfig)
+            and config.encrypted_request_config
+        ):
+            supplied = self._cipher.decrypt_json(config.encrypted_request_config)
+            if isinstance(supplied, dict):
+                parameters = supplied.get("parameters", {})
+                headers = supplied.get("headers", {})
+                if isinstance(parameters, dict) and isinstance(headers, dict):
+                    request_auth = RequestAuth(
+                        headers=headers,
+                        body=parameters,
+                    )
+        result = await self._executor.execute(
+            login_tool, source, login_data, request_auth
+        )
         build_request_auth(config, result.data)
         return result.data
 

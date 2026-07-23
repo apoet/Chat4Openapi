@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from chat4openapi.api import admin_skills, admin_tools
 from chat4openapi.api.admin_auth import AdminContext
 from chat4openapi.api.errors import ApiError
+from chat4openapi.api.tool_sessions import get_tool_executor
 from chat4openapi.models import (
     ApiSource,
     ApiSourceOAuthConfig,
@@ -21,8 +22,14 @@ from chat4openapi.models import (
     Tool,
 )
 from chat4openapi.security.encryption import SecretCipher
-from chat4openapi.schemas.tools import ApiSourceEnabledRequest, ToolAuthConfigRequest
+from chat4openapi.schemas.tools import (
+    ApiSourceEnabledRequest,
+    ApiSourceToolAuthConfigRequest,
+    ToolAuthConfigRequest,
+)
 from chat4openapi.tool_sessions.oauth import ToolOAuthService
+from chat4openapi.tools.errors import ToolExecutionError
+from chat4openapi.tools.executor import ToolExecutionResult
 
 ADMIN = {"username": "admin", "password": "StrongPass!123", "locale": "en-US"}
 
@@ -135,12 +142,13 @@ def test_api_source_authentication_modes_are_mutually_exclusive(
 
         saved = admin_tools.set_source_tool_auth(
             source.id,
-            ToolAuthConfigRequest(
+            ApiSourceToolAuthConfigRequest(
                 enabled=True,
                 login_tool_id=login_tool.id,
                 token_json_path="$.token",
             ),
             context(session),
+            cipher,
         )
         assert saved.enabled is True
         assert session.get(ApiSource, source.id).auth_mode == "tool"
@@ -182,6 +190,98 @@ async def test_bulk_tools_requires_admin_and_csrf(client: httpx.AsyncClient) -> 
     assert unauthenticated.status_code == 401
     assert missing_csrf.status_code == 403
     assert authorized.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_source_tool_auth_test_uses_custom_parameters_headers_and_details(
+    client: httpx.AsyncClient, app, db_session_factory
+) -> None:
+    ids = seed_tools(db_session_factory)
+    csrf = await login(client)
+    calls: list[tuple[dict, dict, dict]] = []
+
+    class TestExecutor:
+        fail = False
+
+        async def execute(self, _tool, _source, arguments, auth):
+            calls.append((dict(arguments), dict(auth.headers), dict(auth.body)))
+            if self.fail:
+                raise ToolExecutionError(
+                    "upstream_error",
+                    "Upstream API returned HTTP 401",
+                    status_code=401,
+                    details={
+                        "message": "invalid username or password",
+                        "access_token": "must-not-leak",
+                    },
+                )
+            return ToolExecutionResult(
+                status_code=200,
+                data={"access_token": "test-token"},
+                content_type="application/json",
+            )
+
+    executor = TestExecutor()
+    app.dependency_overrides[get_tool_executor] = lambda: executor
+    saved = await client.put(
+        f"/api/admin/sources/{ids['source']}/tool-auth",
+        headers={"X-CSRF-Token": csrf},
+        json={
+            "enabled": True,
+            "login_tool_id": ids["login"],
+            "username_field": "username",
+            "password_field": "password",
+            "token_json_path": "$.access_token",
+            "auth_type": "bearer",
+            "auth_name": "Authorization",
+            "auth_prefix": "Bearer",
+            "idle_minutes": 30,
+            "absolute_hours": 8,
+            "request_parameters": {"tenant": "north", "remember": True},
+            "request_headers": {"x-tenant": "one"},
+        },
+    )
+    assert saved.status_code == 200
+    assert saved.json()["request_parameters"] == {
+        "tenant": "north",
+        "remember": True,
+    }
+    assert saved.json()["request_headers"] == {"x-tenant": "one"}
+
+    tested = await client.post(
+        f"/api/admin/sources/{ids['source']}/tool-auth/test",
+        headers={"X-CSRF-Token": csrf},
+        json={"username": "alice", "password": "secret"},
+    )
+    assert tested.status_code == 200
+    assert tested.json() == {"success": True, "status": 200}
+    assert calls[-1] == (
+        {"username": "alice", "password": "secret"},
+        {"x-tenant": "one"},
+        {
+            "tenant": "north",
+            "remember": True,
+        },
+    )
+
+    executor.fail = True
+    failed = await client.post(
+        f"/api/admin/sources/{ids['source']}/tool-auth/test",
+        headers={"X-CSRF-Token": csrf},
+        json={"username": "alice", "password": "wrong"},
+    )
+    assert failed.status_code == 400
+    assert failed.json()["error"] == {
+        "code": "tools.auth_test_failed",
+        "params": {
+            "status": 401,
+            "reason": "Upstream API returned HTTP 401",
+            "details": {
+                "message": "invalid username or password",
+                "access_token": "[redacted]",
+            },
+        },
+    }
 
 
 @pytest.mark.asyncio

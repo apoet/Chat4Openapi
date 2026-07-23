@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from chat4openapi.api.admin_auth import AdminContext, require_admin, require_csrf
 from chat4openapi.api.errors import ApiError
+from chat4openapi.api.tool_sessions import get_tool_executor, get_tool_secret_cipher
 from chat4openapi.db.serialized_write import serialized_write
 from chat4openapi.models import (
     ApiSource,
@@ -24,14 +25,17 @@ from chat4openapi.models import (
 from chat4openapi.schemas.tools import (
     ApiSourceEnabledRequest,
     ApiSourceSummary,
+    ApiSourceToolAuthConfigRequest,
     ApiSourceUpdateRequest,
     ApiSourceToolAuthConfigResponse,
+    AuthenticationTestResponse,
     SourceImportRequest,
     SourceImportResponse,
     SourceRefreshResponse,
     SourceUrlImportRequest,
     ToolAuthConfigRequest,
     ToolAuthConfigResponse,
+    ToolAuthTestRequest,
     ToolBatchFailed,
     ToolBatchRequest,
     ToolBatchResponse,
@@ -41,6 +45,8 @@ from chat4openapi.schemas.tools import (
     ToolSummary,
     ToolUpdateRequest,
 )
+from chat4openapi.security.encryption import SecretCipher
+from chat4openapi.tool_sessions.auth_mapping import AuthMappingError, build_request_auth
 from chat4openapi.tools.candidates import build_candidates
 from chat4openapi.tools.effective_schema import (
     effective_input_schema,
@@ -49,8 +55,67 @@ from chat4openapi.tools.effective_schema import (
 from chat4openapi.tools.openapi_loader import OpenAPIImportError, load_openapi, normalize_openapi
 from chat4openapi.tools.network_policy import UnsafeNetworkTarget, validate_network_target
 from chat4openapi.tools.bulk import apply_tool_action
+from chat4openapi.tools.errors import ToolExecutionError
+from chat4openapi.tools.executor import RequestAuth, ToolExecutor
 
 router = APIRouter(prefix="/api/admin", tags=["admin-tools"])
+
+
+def _safe_auth_test_details(value, depth: int = 0):
+    if depth >= 5:
+        return "[truncated]"
+    if isinstance(value, dict):
+        safe = {}
+        for key, item in list(value.items())[:32]:
+            name = str(key)[:128]
+            if any(
+                marker in name.lower()
+                for marker in (
+                    "authorization",
+                    "cookie",
+                    "password",
+                    "secret",
+                    "token",
+                )
+            ):
+                safe[name] = "[redacted]"
+            else:
+                safe[name] = _safe_auth_test_details(item, depth + 1)
+        return safe
+    if isinstance(value, list):
+        return [
+            _safe_auth_test_details(item, depth + 1)
+            for item in value[:32]
+        ]
+    if isinstance(value, str):
+        return " ".join(value.split())[:2048]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:2048]
+
+
+def _source_tool_auth_response(
+    config: ApiSourceToolAuthConfig,
+    cipher: SecretCipher,
+) -> ApiSourceToolAuthConfigResponse:
+    request_config = (
+        cipher.decrypt_json(config.encrypted_request_config)
+        if config.encrypted_request_config
+        else {}
+    )
+    if not isinstance(request_config, dict):
+        request_config = {}
+    return ApiSourceToolAuthConfigResponse.model_validate(
+        {
+            **{
+                key: getattr(config, key)
+                for key in ToolAuthConfigRequest.model_fields
+            },
+            "api_source_id": config.api_source_id,
+            "request_parameters": request_config.get("parameters", {}),
+            "request_headers": request_config.get("headers", {}),
+        }
+    )
 
 
 def _tool_summary(
@@ -611,6 +676,7 @@ def set_tool_auth(
 def get_source_tool_auth(
     source_id: int,
     context: AdminContext = Depends(require_admin),
+    cipher: SecretCipher = Depends(get_tool_secret_cipher),
 ) -> ApiSourceToolAuthConfigResponse:
     source = _managed_source(context, source_id)
     config = context.db.get(ApiSourceToolAuthConfig, source.id)
@@ -619,9 +685,7 @@ def get_source_tool_auth(
             api_source_id=source.id,
             enabled=False,
         )
-    return ApiSourceToolAuthConfigResponse.model_validate(
-        config, from_attributes=True
-    )
+    return _source_tool_auth_response(config, cipher)
 
 
 @router.put(
@@ -630,8 +694,9 @@ def get_source_tool_auth(
 )
 def set_source_tool_auth(
     source_id: int,
-    payload: ToolAuthConfigRequest,
+    payload: ApiSourceToolAuthConfigRequest,
     context: AdminContext = Depends(require_csrf),
+    cipher: SecretCipher = Depends(get_tool_secret_cipher),
 ) -> ApiSourceToolAuthConfigResponse:
     with serialized_write(context.db):
         source = _managed_source(context, source_id)
@@ -645,16 +710,26 @@ def set_source_tool_auth(
                 raise ApiError(409, "tools.login_tool_disabled")
 
         config = context.db.get(ApiSourceToolAuthConfig, source.id)
-        values = payload.model_dump()
+        values = payload.model_dump(
+            exclude={"request_parameters", "request_headers"}
+        )
+        encrypted_request_config = cipher.encrypt_json(
+            {
+                "parameters": payload.request_parameters,
+                "headers": payload.request_headers,
+            }
+        )
         if config is None:
             config = ApiSourceToolAuthConfig(
                 api_source_id=source.id,
+                encrypted_request_config=encrypted_request_config,
                 **values,
             )
             context.db.add(config)
         else:
             for key, value in values.items():
                 setattr(config, key, value)
+            config.encrypted_request_config = encrypted_request_config
 
         if payload.enabled:
             source.auth_mode = "tool"
@@ -664,6 +739,68 @@ def set_source_tool_auth(
         elif source.auth_mode == "tool":
             source.auth_mode = "none"
 
-    return ApiSourceToolAuthConfigResponse.model_validate(
-        config, from_attributes=True
+    return _source_tool_auth_response(config, cipher)
+
+
+@router.post(
+    "/sources/{source_id}/tool-auth/test",
+    response_model=AuthenticationTestResponse,
+)
+async def test_source_tool_auth(
+    source_id: int,
+    payload: ToolAuthTestRequest,
+    context: AdminContext = Depends(require_csrf),
+    cipher: SecretCipher = Depends(get_tool_secret_cipher),
+    executor: ToolExecutor = Depends(get_tool_executor),
+) -> AuthenticationTestResponse:
+    source = _managed_source(context, source_id)
+    config = context.db.get(ApiSourceToolAuthConfig, source.id)
+    if config is None or config.login_tool_id is None:
+        raise ApiError(409, "tools.login_config_incomplete")
+    tool = _managed_tool(context, config.login_tool_id)
+    if tool.api_source_id != source.id or not tool.enabled or not source.enabled:
+        raise ApiError(409, "tools.login_tool_disabled")
+    request_config = (
+        cipher.decrypt_json(config.encrypted_request_config)
+        if config.encrypted_request_config
+        else {}
     )
+    parameters = (
+        request_config.get("parameters", {})
+        if isinstance(request_config, dict)
+        else {}
+    )
+    headers = (
+        request_config.get("headers", {})
+        if isinstance(request_config, dict)
+        else {}
+    )
+    arguments = {
+        config.username_field: payload.username,
+        config.password_field: payload.password,
+    }
+    try:
+        result = await executor.execute(
+            tool,
+            source,
+            arguments,
+            RequestAuth(headers=headers, body=parameters),
+        )
+        build_request_auth(config, result.data)
+    except ToolExecutionError as exc:
+        raise ApiError(
+            400,
+            "tools.auth_test_failed",
+            status=exc.status_code,
+            reason=str(exc),
+            details=_safe_auth_test_details(exc.details),
+        ) from exc
+    except AuthMappingError as exc:
+        raise ApiError(
+            400,
+            "tools.auth_test_failed",
+            status=result.status_code,
+            reason=str(exc),
+            details=_safe_auth_test_details(result.data),
+        ) from exc
+    return AuthenticationTestResponse(success=True, status=result.status_code)

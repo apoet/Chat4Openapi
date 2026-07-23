@@ -39,6 +39,16 @@ TOKEN_ENDPOINT_AUTH_METHODS = {
     "client_secret_post",
     "none",
 }
+RESERVED_TOKEN_HEADERS = {
+    "authorization",
+    "connection",
+    "content-length",
+    "content-type",
+    "cookie",
+    "host",
+    "proxy-authorization",
+    "transfer-encoding",
+}
 logger = logging.getLogger(__name__)
 
 
@@ -46,6 +56,13 @@ class OAuthFlowError(RuntimeError):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+        self.params: dict[str, Any] = {}
+
+
+class OAuthTestError(OAuthFlowError):
+    def __init__(self, **params: Any) -> None:
+        super().__init__("oauth.test_failed")
+        self.params = params
 
 
 class OAuthPollingTooSoon(OAuthFlowError):
@@ -105,6 +122,60 @@ def _safe_url(value: Any, *, required: bool = True) -> str | None:
     return str(parsed)
 
 
+def _safe_token_headers(value: Any) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping) or len(value) > 32:
+        raise OAuthFlowError("oauth.config_invalid")
+    headers: dict[str, str] = {}
+    for raw_name, raw_value in value.items():
+        if not isinstance(raw_name, str) or not isinstance(raw_value, str):
+            raise OAuthFlowError("oauth.config_invalid")
+        name = raw_name.strip()
+        header_value = raw_value.strip()
+        if (
+            not name
+            or not header_value
+            or name.lower() in RESERVED_TOKEN_HEADERS
+            or len(name) > 128
+            or len(header_value) > 2048
+            or any(
+                ord(character) < 32 or ord(character) == 127
+                for character in header_value
+            )
+        ):
+            raise OAuthFlowError("oauth.config_invalid")
+        try:
+            httpx.Headers({name: header_value})
+        except (TypeError, ValueError):
+            raise OAuthFlowError("oauth.config_invalid") from None
+        headers[name] = header_value
+    return headers
+
+
+def _safe_token_params(value: Any) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping) or len(value) > 64:
+        raise OAuthFlowError("oauth.config_invalid")
+    params: dict[str, str] = {}
+    for raw_name, raw_value in value.items():
+        if not isinstance(raw_name, str) or not isinstance(raw_value, str):
+            raise OAuthFlowError("oauth.config_invalid")
+        name = raw_name.strip()
+        param_value = raw_value.strip()
+        if (
+            not name
+            or not param_value
+            or len(name) > 128
+            or len(param_value) > 2048
+            or any(ord(character) < 32 for character in name + param_value)
+        ):
+            raise OAuthFlowError("oauth.config_invalid")
+        params[name] = param_value
+    return params
+
+
 class ToolOAuthService:
     def __init__(
         self,
@@ -126,6 +197,8 @@ class ToolOAuthService:
         row = self._session.get(ApiSourceOAuthConfig, source.id)
         existing_secret: str | None = None
         existing_auth_method: str | None = None
+        existing_token_headers: dict[str, str] = {}
+        existing_token_params: dict[str, str] = {}
         if row is not None:
             existing = self._cipher.decrypt_json(row.encrypted_config)
             if isinstance(existing, dict) and isinstance(existing.get("client_secret"), str):
@@ -136,6 +209,11 @@ class ToolOAuthService:
                 in TOKEN_ENDPOINT_AUTH_METHODS
             ):
                 existing_auth_method = existing["token_endpoint_auth_method"]
+            if isinstance(existing, dict):
+                existing_token_headers = _safe_token_headers(
+                    existing.get("token_headers")
+                )
+                existing_token_params = _safe_token_params(existing.get("token_params"))
         client_id = supplied.get("client_id")
         if not isinstance(client_id, str) or not client_id.strip():
             raise OAuthFlowError("oauth.config_invalid")
@@ -152,6 +230,12 @@ class ToolOAuthService:
             )
             or existing_auth_method
             or "auto",
+            "token_headers": _safe_token_headers(
+                supplied.get("token_headers", existing_token_headers)
+            ),
+            "token_params": _safe_token_params(
+                supplied.get("token_params", existing_token_params)
+            ),
             "authorization_url": _safe_url(supplied.get("authorization_url"), required=False),
             "token_url": _safe_url(supplied.get("token_url")),
             "device_authorization_url": _safe_url(
@@ -195,6 +279,8 @@ class ToolOAuthService:
             "token_endpoint_auth_method": config.get(
                 "token_endpoint_auth_method", "auto"
             ),
+            "token_headers": dict(config.get("token_headers", {})),
+            "token_params": dict(config.get("token_params", {})),
             "authorization_url": config.get("authorization_url"),
             "token_url": config["token_url"],
             "device_authorization_url": config.get("device_authorization_url"),
@@ -224,6 +310,7 @@ class ToolOAuthService:
         data: Mapping[str, str],
         *,
         auth: httpx.Auth | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> httpx.Response:
         target = httpx.URL(url)
         try:
@@ -233,7 +320,9 @@ class ToolOAuthService:
                 follow_redirects=False,
                 timeout=httpx.Timeout(20, connect=10),
             ) as client:
-                response = await client.post(target, data=data, auth=auth)
+                response = await client.post(
+                    target, data=data, auth=auth, headers=headers
+                )
         except (httpx.RequestError, ValueError) as exc:
             raise OAuthFlowError("oauth.upstream_failed") from exc
         if response.is_redirect:
@@ -254,15 +343,19 @@ class ToolOAuthService:
         config: Mapping[str, Any],
         fields: Mapping[str, str],
     ) -> httpx.Response:
+        fields = {**config.get("token_params", {}), **fields}
         method = config.get("token_endpoint_auth_method", "auto")
         secret = config.get("client_secret")
+        headers = config.get("token_headers", {})
         if method == "none":
             data = {
                 key: value
                 for key, value in fields.items()
                 if key != "client_secret"
             }
-            return await self._post(source, config["token_url"], data)
+            return await self._post(
+                source, config["token_url"], data, headers=headers
+            )
         if method == "client_secret_basic" and isinstance(secret, str) and secret:
             return await self._post_token_basic(source, config, fields, secret)
         if method == "auto" and isinstance(secret, str) and secret:
@@ -270,10 +363,56 @@ class ToolOAuthService:
                 source, config, fields, secret
             )
             if self._is_client_authentication_failure(response):
-                return await self._post(source, config["token_url"], fields)
+                return await self._post(
+                    source, config["token_url"], fields, headers=headers
+                )
             return response
-        response = await self._post(source, config["token_url"], fields)
+        response = await self._post(
+            source, config["token_url"], fields, headers=headers
+        )
         return response
+
+    async def test_source(self, source_id: int) -> int:
+        source = self._source(source_id)
+        _, config = self._config(source_id)
+        token_params = config.get("token_params", {})
+        fields = {
+            "grant_type": str(token_params.get("grant_type", "client_credentials")),
+            "client_id": str(config["client_id"]),
+        }
+        secret = config.get("client_secret")
+        if isinstance(secret, str) and secret:
+            fields["client_secret"] = secret
+        if config.get("scopes"):
+            fields["scope"] = " ".join(config["scopes"])
+        try:
+            response = await self._post_token(source, config, fields)
+            payload, business_code, business_message = self._token_response_json(
+                response
+            )
+        except OAuthFlowError as exc:
+            raise OAuthTestError(
+                status=None,
+                business_code=None,
+                reason=exc.code,
+                upstream_error="unknown",
+            ) from exc
+        access_token = payload.get("access_token")
+        if (
+            response.status_code >= 400
+            or not isinstance(access_token, str)
+            or not access_token
+        ):
+            upstream_error = payload.get("error")
+            if not isinstance(upstream_error, str) or not upstream_error:
+                upstream_error = "unknown"
+            raise OAuthTestError(
+                status=response.status_code,
+                business_code=business_code,
+                reason=business_message,
+                upstream_error=upstream_error[:128],
+            )
+        return response.status_code
 
     async def _post_token_basic(
         self,
@@ -292,6 +431,7 @@ class ToolOAuthService:
             config["token_url"],
             data,
             auth=httpx.BasicAuth(str(config["client_id"]), secret),
+            headers=config.get("token_headers", {}),
         )
 
     @staticmethod
@@ -433,7 +573,9 @@ class ToolOAuthService:
         generation, interval = claimed
         try:
             response = await self._post_token(source, config, fields)
-            payload = self._response_json(response)
+            payload, _business_code, _business_message = (
+                self._token_response_json(response)
+            )
         except OAuthFlowError:
             self._release_operation(flow.id, generation)
             raise
@@ -798,9 +940,16 @@ class ToolOAuthService:
                 }
             )
             response = await self._post_token(source, config, fields)
-            payload = self._response_json(response)
+            payload, business_code, business_message = (
+                self._token_response_json(response)
+            )
             row = self._session.get(ToolUserSession, row_id)
-            if row is None or response.status_code >= 400:
+            if (
+                row is None
+                or response.status_code >= 400
+                or not isinstance(payload.get("access_token"), str)
+                or not payload.get("access_token")
+            ):
                 upstream_error = payload.get("error")
                 if (
                     not isinstance(upstream_error, str)
@@ -810,10 +959,14 @@ class ToolOAuthService:
                     upstream_error = "unknown"
                 logger.warning(
                     "OAuth token exchange rejected: source_id=%s "
-                    "upstream_status=%s upstream_error=%s auth_method=%s",
+                    "upstream_status=%s upstream_error=%s "
+                    "upstream_business_code=%s upstream_message=%s "
+                    "auth_method=%s",
                     source.id,
                     response.status_code,
                     upstream_error[:128],
+                    business_code,
+                    business_message,
                     config.get("token_endpoint_auth_method", "auto"),
                 )
                 raise OAuthFlowError("oauth.exchange_failed")
@@ -968,6 +1121,23 @@ class ToolOAuthService:
             raise OAuthFlowError("oauth.upstream_failed")
         return payload
 
+    @classmethod
+    def _token_response_json(
+        cls, response: httpx.Response
+    ) -> tuple[dict[str, Any], int | str | None, str]:
+        payload = cls._response_json(response)
+        business_code = payload.get("code") if "data" in payload else None
+        message = payload.get("msg", payload.get("error_description"))
+        business_message = (
+            " ".join(message.split())[:256]
+            if isinstance(message, str) and message.strip()
+            else "unknown"
+        )
+        nested = payload.get("data")
+        if "access_token" not in payload and isinstance(nested, dict):
+            return nested, business_code, business_message
+        return payload, business_code, business_message
+
     def _store_token(
         self,
         row: ToolUserSession,
@@ -1111,7 +1281,9 @@ class ToolOAuthService:
             response = await self._post_token(source, config, fields)
             if response.status_code >= 400:
                 raise OAuthFlowError("oauth.refresh_failed")
-            payload = self._response_json(response)
+            payload, _business_code, _business_message = (
+                self._token_response_json(response)
+            )
         except Exception:
             self._finish_refresh_failure(flow.id, generation)
             raise OAuthFlowError("oauth.refresh_failed") from None

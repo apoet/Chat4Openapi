@@ -659,6 +659,112 @@ async def test_pkce_supports_client_secret_basic(db_session_factory) -> None:
 
 
 @pytest.mark.asyncio
+async def test_pkce_sends_configured_token_headers_and_unwraps_token_data(
+    db_session_factory,
+) -> None:
+    _secret, agent_id, _key_id, source_id = _seed(db_session_factory)
+    now = datetime(2026, 7, 22, 8, 0, 0)
+    token_requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        token_requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "msg": "",
+                "data": {
+                    "access_token": "wrapped-access",
+                    "refresh_token": "wrapped-refresh",
+                    "token_type": "Bearer",
+                    "expires_in": 600,
+                },
+            },
+        )
+
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as db:
+        service = ToolOAuthService(
+            db,
+            cipher,
+            transport=httpx.MockTransport(handler),
+            network_validator=allow_network,
+            now=lambda: now,
+        )
+        service.configure_source(
+            source_id,
+            {
+                "client_id": "public-client",
+                "client_secret": "super-secret",
+                "token_endpoint_auth_method": "client_secret_basic",
+                "authorization_url": "https://issuer.example.test/authorize",
+                "token_url": "https://issuer.example.test/token",
+                "redirect_uri": (
+                    "https://app.example.test/api/tool-sessions/oauth/pkce/callback"
+                ),
+                "token_headers": {"tenant-id": "1"},
+                "scopes": ["openid"],
+            },
+        )
+        started = await service.start_pkce(
+            _admin_context(db), source_id, agent_id=agent_id
+        )
+        completed = await service.complete_pkce(
+            started.state, "authorization-code"
+        )
+
+    assert completed.status == "ready"
+    assert len(token_requests) == 1
+    assert token_requests[0].headers["tenant-id"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_pkce_logs_wrapped_business_error_returned_with_http_200(
+    db_session_factory, monkeypatch
+) -> None:
+    _secret, agent_id, _key_id, source_id = _seed(db_session_factory)
+    now = datetime(2026, 7, 22, 8, 0, 0)
+    warnings: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        "chat4openapi.tool_sessions.oauth.logger.warning",
+        lambda *args: warnings.append(args),
+    )
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "code": 400,
+                "msg": "tenant-id header required",
+                "data": None,
+            },
+        )
+
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as db:
+        service = ToolOAuthService(
+            db,
+            cipher,
+            transport=httpx.MockTransport(handler),
+            network_validator=allow_network,
+            now=lambda: now,
+        )
+        _configure(service, source_id)
+        started = await service.start_pkce(
+            _admin_context(db), source_id, agent_id=agent_id
+        )
+        with pytest.raises(OAuthFlowError) as failed:
+            await service.complete_pkce(
+                started.state, "authorization-code"
+            )
+
+    assert failed.value.code == "oauth.exchange_failed"
+    assert len(warnings) == 1
+    assert warnings[0][4] == 400
+    assert warnings[0][5] == "tenant-id header required"
+
+
+@pytest.mark.asyncio
 async def test_pkce_auto_retries_post_only_after_basic_authentication_failure(
     db_session_factory,
 ) -> None:
@@ -1482,6 +1588,7 @@ async def test_admin_oauth_config_and_pkce_callback_are_secret_free_and_csrf_saf
         "client_id": "web-client",
         "client_secret": "client-secret-never-return",
         "token_endpoint_auth_method": "client_secret_basic",
+        "token_headers": {"tenant-id": "1"},
         "authorization_url": "https://issuer.example.test/authorize",
         "token_url": "https://issuer.example.test/token",
         "device_authorization_url": "https://issuer.example.test/device",
@@ -1500,6 +1607,7 @@ async def test_admin_oauth_config_and_pkce_callback_are_secret_free_and_csrf_saf
     assert configured.status_code == 200
     assert configured.json()["has_client_secret"] is True
     assert configured.json()["token_endpoint_auth_method"] == "client_secret_basic"
+    assert configured.json()["token_headers"] == {"tenant-id": "1"}
     assert configured.json()["recommended_redirect_uri"] == (
         "https://chat.example.test/api/tool-sessions/oauth/pkce/callback"
     )
@@ -1533,6 +1641,88 @@ async def test_admin_oauth_config_and_pkce_callback_are_secret_free_and_csrf_saf
     assert replay.status_code == 400
     assert replay.json()["error"]["code"] == "oauth.state_invalid"
     assert len(posted) == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_oauth_test_uses_custom_parameters_and_returns_upstream_detail(
+    client: httpx.AsyncClient, app, db_session_factory
+) -> None:
+    _secret, _agent_id, _key_id, source_id = _seed(db_session_factory)
+    assert (
+        await client.post(
+            "/api/setup",
+            json={"username": "admin", "password": "admin123", "locale": "en-US"},
+        )
+    ).status_code == 201
+    login = await client.post(
+        "/api/admin/auth/login",
+        json={"username": "admin", "password": "admin123"},
+    )
+    csrf = login.json()["csrf_token"]
+    cipher = SecretCipher(Fernet.generate_key())
+    posted: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        posted.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "code": 400,
+                "msg": "tenant or audience is invalid",
+                "data": None,
+            },
+        )
+
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_oauth_transport] = lambda: httpx.MockTransport(handler)
+    app.dependency_overrides[get_oauth_network_validator] = lambda: allow_network
+    configured = await client.put(
+        f"/api/admin/sources/{source_id}/oauth",
+        headers={"X-CSRF-Token": csrf},
+        json={
+            "enabled": True,
+            "client_id": "test-client",
+            "client_secret": "test-secret",
+            "token_endpoint_auth_method": "client_secret_basic",
+            "token_headers": {"tenant-id": "1"},
+            "token_params": {
+                "grant_type": "client_credentials",
+                "audience": "orders",
+            },
+            "authorization_url": "https://issuer.example.test/authorize",
+            "token_url": "https://issuer.example.test/token",
+            "scopes": ["orders.read"],
+        },
+    )
+    assert configured.status_code == 200
+    assert configured.json()["token_params"] == {
+        "grant_type": "client_credentials",
+        "audience": "orders",
+    }
+
+    tested = await client.post(
+        f"/api/admin/sources/{source_id}/oauth/test",
+        headers={"X-CSRF-Token": csrf},
+    )
+
+    assert tested.status_code == 400
+    assert tested.json()["error"] == {
+        "code": "oauth.test_failed",
+        "params": {
+            "status": 200,
+            "business_code": 400,
+            "reason": "tenant or audience is invalid",
+            "upstream_error": "unknown",
+        },
+    }
+    assert len(posted) == 1
+    assert posted[0].headers["tenant-id"] == "1"
+    assert posted[0].headers["authorization"].startswith("Basic ")
+    assert parse_qs(posted[0].content.decode()) == {
+        "grant_type": ["client_credentials"],
+        "audience": ["orders"],
+        "scope": ["orders.read"],
+    }
 
 
 @pytest.mark.asyncio

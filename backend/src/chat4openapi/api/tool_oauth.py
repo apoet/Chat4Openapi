@@ -43,6 +43,8 @@ class OAuthConfigRequest(BaseModel):
     token_endpoint_auth_method: Literal[
         "auto", "client_secret_basic", "client_secret_post", "none"
     ] | None = None
+    token_headers: dict[str, str] = Field(default_factory=dict, max_length=32)
+    token_params: dict[str, str] = Field(default_factory=dict, max_length=64)
     authorization_url: str | None = Field(default=None, max_length=2048)
     token_url: str = Field(min_length=1, max_length=2048)
     device_authorization_url: str | None = Field(default=None, max_length=2048)
@@ -58,6 +60,8 @@ class OAuthConfigSummary(BaseModel):
     token_endpoint_auth_method: Literal[
         "auto", "client_secret_basic", "client_secret_post", "none"
     ]
+    token_headers: dict[str, str]
+    token_params: dict[str, str]
     authorization_url: str | None
     token_url: str
     device_authorization_url: str | None
@@ -101,6 +105,11 @@ class OAuthReadyResponse(BaseModel):
     status: str
     api_source_id: int
     expires_at: datetime
+
+
+class OAuthTestResponse(BaseModel):
+    success: bool
+    status: int
 
 
 def get_oauth_transport() -> httpx.AsyncBaseTransport | None:
@@ -283,6 +292,8 @@ async def pkce_callback(
             completed = await service.complete_pkce(state, code)
     except Exception as exc:
         raise _oauth_error(exc) from exc
+
+
     if error is not None:
         target_origin = completed.target_origin or completed.popup_origin
         if target_origin is None:
@@ -392,6 +403,26 @@ async def pkce_callback(
         api_source_id=completed.api_source_id,
         expires_at=completed.expires_at,
     )
+
+
+@router.post(
+    "/api/admin/sources/{source_id}/oauth/test",
+    response_model=OAuthTestResponse,
+)
+async def test_oauth_config(
+    source_id: int,
+    context: AdminContext = Depends(require_csrf),
+    service: ToolOAuthService = Depends(get_tool_oauth_service),
+) -> OAuthTestResponse:
+    del context
+    try:
+        result = await service.test_source(source_id)
+        return OAuthTestResponse(success=True, status=result)
+    except OAuthFlowError as exc:
+        params = getattr(exc, "params", {})
+        if params:
+            raise ApiError(400, exc.code, **params) from exc
+        raise _oauth_error(exc) from exc
 
 
 @router.post("/api/tool-sessions/oauth/refresh", response_model=OAuthReadyResponse)

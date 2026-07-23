@@ -114,10 +114,10 @@ onMounted(() => void load())
       </div>
     </section>
 
-    <section class="resource-list">
+    <section class="resource-list compact-resource-list">
       <article v-for="provider in providers" :key="provider.id" class="resource-row">
         <span class="resource-icon">AI</span>
-        <div>
+        <div class="resource-copy">
           <strong>{{ provider.name }}</strong>
           <p>{{ provider.provider_type }} · {{ provider.default_model }}</p>
           <small v-if="feedback[provider.id]" class="success-text">{{ feedback[provider.id] }}</small>

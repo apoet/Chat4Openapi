@@ -165,7 +165,7 @@ describe('Agent administration', () => {
     await waitFor(() => expect(router.currentRoute.value.name).toBe('login'))
   })
 
-  it('opens Chat with the selected enabled Agent in the route query', async () => {
+  it('opens Chat for an enabled Agent in a new window', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const auth = useAuthStore()
@@ -183,13 +183,11 @@ describe('Agent administration', () => {
     vi.stubGlobal('fetch', vi.fn(adminGet))
     render(AgentView, { global: { plugins: [pinia, i18n, router] } })
 
-    const chatButtons = await screen.findAllByRole('button', { name: 'Chat' })
-    await fireEvent.click(chatButtons[0])
-
-    await waitFor(() => expect(router.currentRoute.value).toMatchObject({
-      name: 'chat',
-      query: { agent_id: '1' },
-    }))
+    const chatLinks = await screen.findAllByRole('link', { name: 'Chat' })
+    expect(chatLinks[0].getAttribute('href')).toBe('/chat?agent_id=1')
+    expect(chatLinks[0].getAttribute('target')).toBe('_blank')
+    expect(chatLinks[0].getAttribute('rel')).toContain('noopener')
+    expect(router.currentRoute.value.name).toBe('agent')
   })
 
   it('loads a multi-Agent list and keeps a stopped bound Skill visible', async () => {

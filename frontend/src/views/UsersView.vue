@@ -192,10 +192,10 @@ onMounted(() => void load())
       </div>
     </section>
 
-    <section class="resource-list">
+    <section class="resource-list compact-resource-list">
       <article v-for="user in users" :key="user.id" class="resource-row">
         <span class="resource-icon">U</span>
-        <div><strong>{{ user.username }}</strong><p>{{ user.locale }}</p></div>
+        <div class="resource-copy"><strong>{{ user.username }}</strong><p>{{ user.locale }}</p></div>
         <span :class="['status-pill', user.enabled ? 'enabled' : 'disabled']">{{ user.enabled ? t('tools.enabled') : t('tools.disabled') }}</span>
         <footer class="row-actions">
           <button class="secondary-action" @click="edit(user)">{{ t('users.edit') }}</button>

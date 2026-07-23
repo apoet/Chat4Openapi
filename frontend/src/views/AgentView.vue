@@ -65,9 +65,11 @@ function createAgent(): void {
   errorMessage.value = ''
 }
 
-function openChat(agent: AgentConfig): void {
-  if (!agent.enabled || interactionLocked.value) return
-  void router?.push({ name: 'chat', query: { agent_id: String(agent.id) } })
+function chatHref(agent: AgentConfig): string {
+  return router?.resolve({
+    name: 'chat',
+    query: { agent_id: String(agent.id) },
+  }).href ?? `/chat?agent_id=${encodeURIComponent(String(agent.id))}`
 }
 
 async function save(payload: AgentConfigWrite, skillIds: number[]): Promise<void> {
@@ -136,7 +138,14 @@ async function remove(): Promise<void> {
               <span><strong>{{ agent.name }}</strong><small>{{ agent.enabled ? t('tools.enabled') : t('tools.disabled') }}</small></span>
               <b v-if="agent.is_default">{{ t('agent.default') }}</b>
             </button>
-            <button type="button" class="agent-chat-action" :disabled="!agent.enabled || interactionLocked" @click="openChat(agent)">{{ t('agent.chat') }}</button>
+            <a
+              v-if="agent.enabled && !interactionLocked"
+              class="agent-chat-action"
+              :href="chatHref(agent)"
+              target="_blank"
+              rel="noopener noreferrer"
+            >{{ t('agent.chat') }}</a>
+            <button v-else type="button" class="agent-chat-action" disabled>{{ t('agent.chat') }}</button>
           </div>
         </div>
         <p v-if="store.agents.length === 0" class="empty-inline">{{ t('agent.empty') }}</p>

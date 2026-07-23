@@ -119,6 +119,8 @@ export interface ToolAuthConfig {
   auth_prefix: string
   idle_minutes: number
   absolute_hours: number
+  request_parameters: Record<string, unknown>
+  request_headers: Record<string, string>
 }
 
 export interface LlmProviderSummary {
@@ -166,6 +168,8 @@ export interface OAuthConfigSummary {
   client_id: string
   has_client_secret: boolean
   token_endpoint_auth_method: OAuthTokenEndpointAuthMethod
+  token_headers: Record<string, string>
+  token_params: Record<string, string>
   authorization_url: string | null
   token_url: string
   device_authorization_url: string | null
@@ -186,6 +190,8 @@ export interface OAuthConfigWrite {
   client_id: string
   client_secret: string | null
   token_endpoint_auth_method: OAuthTokenEndpointAuthMethod
+  token_headers: Record<string, string>
+  token_params: Record<string, string>
   authorization_url: string | null
   token_url: string
   device_authorization_url: string | null

@@ -26,6 +26,8 @@ const defaultAuthConfig = (): ToolAuthConfig => ({
   auth_prefix: 'Bearer',
   idle_minutes: 30,
   absolute_hours: 8,
+  request_parameters: {},
+  request_headers: {},
 })
 
 export const useToolsStore = defineStore('tools', () => {

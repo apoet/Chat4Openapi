@@ -145,6 +145,45 @@ class ToolAuthConfigResponse(ToolAuthConfigRequest):
 
 class ApiSourceToolAuthConfigResponse(ToolAuthConfigRequest):
     api_source_id: int
+    request_parameters: dict[str, Any] = Field(default_factory=dict, max_length=64)
+    request_headers: dict[str, str] = Field(default_factory=dict, max_length=32)
+
+
+class ApiSourceToolAuthConfigRequest(ToolAuthConfigRequest):
+    request_parameters: dict[str, Any] = Field(default_factory=dict, max_length=64)
+    request_headers: dict[str, str] = Field(default_factory=dict, max_length=32)
+
+    @field_validator("request_headers")
+    @classmethod
+    def validate_request_headers(cls, value: dict[str, str]) -> dict[str, str]:
+        reserved = {
+            "connection",
+            "content-length",
+            "content-type",
+            "cookie",
+            "host",
+            "transfer-encoding",
+        }
+        for name, header_value in value.items():
+            if (
+                not name.strip()
+                or name.lower() in reserved
+                or len(name) > 128
+                or len(header_value) > 2048
+                or any(ord(character) < 32 for character in name + header_value)
+            ):
+                raise ValueError("invalid request header")
+        return value
+
+
+class ToolAuthTestRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=512)
+    password: str = Field(min_length=1, max_length=2048)
+
+
+class AuthenticationTestResponse(BaseModel):
+    success: bool
+    status: int
 
 
 class ToolSessionLoginRequest(BaseModel):

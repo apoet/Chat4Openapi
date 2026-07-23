@@ -75,6 +75,29 @@ OAuth source configuration supports four token endpoint authentication methods:
 
 Automatic fallback does not retry grant errors such as `invalid_grant`.
 
+OAuth source configuration can also define optional Token request headers and
+form parameters. They are sent only to the Token endpoint; standard flow
+parameters take precedence during authorization-code, refresh, and device
+grants. Transport-controlled headers such as `Authorization`, `Host`, `Cookie`,
+and `Content-Type` are rejected. For example, a multi-tenant provider can use
+the header:
+
+```json
+{
+  "tenant-id": "1"
+}
+```
+
+Standard OAuth Token responses and common API envelopes containing the Token
+response under a `data` object are both supported.
+
+`POST /api/admin/sources/{source_id}/oauth/test` tests the saved Token endpoint
+configuration with the selected client authentication method. The default test
+grant is `client_credentials`; it can be changed through the custom Token
+parameters. A failed test returns the upstream HTTP status, OAuth/business
+error code, and bounded provider message without returning tokens or client
+secrets.
+
 ## Pre-authorized Header or Cookie injection
 
 Use injection when an external authentication system has already obtained a supported credential:
@@ -103,6 +126,14 @@ $created = Invoke-RestMethod -Method Post -Uri "$base/v1/tool-sessions" -Headers
 ```
 
 The login Tool runs once and its mapped Token/Header/Cookie is scoped to that Tool's API source. Declared expiry and JWT `exp` can only shorten the Session. Swagger login does not solve or bypass CAPTCHA, MFA, consent pages, or other interactive challenges; use Device Flow, PKCE, or external injection instead.
+
+Source-scoped Tool authentication can add fixed JSON request-body parameters
+and headers that are not present in the imported OpenAPI document. These values
+are encrypted at rest. The configured username and password fields take
+precedence over fixed body parameters. Unsafe transport headers are rejected.
+Administrators can test saved Tool authentication without creating a Tool
+Session through `POST /api/admin/sources/{source_id}/tool-auth/test`; upstream
+status and response details are returned on failure.
 
 Browser-oriented Swagger login opens a source-scoped popup only when a Tool
 from that source needs authorization. Public Chat and Embed bind the resulting
