@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { routeLocationKey } from 'vue-router'
 
@@ -63,6 +63,7 @@ const sending = ref(false)
 const deletingSessionId = ref<string | null>(null)
 const errorMessage = ref('')
 const sessionErrors = ref<Record<string, string>>({})
+const messageStream = ref<HTMLElement | null>(null)
 const authorization = computed<ChatAuthorizationSource | null>(() => {
   if (status.value !== 'authorization_required' || !pending.value) return null
   const sourceId = pending.value.api_source_id
@@ -428,6 +429,20 @@ watch(selectedAgentId, (agentId) => {
   if (selected) selectedAgentName.value = selected.name
 })
 
+async function scrollToLatestMessage(): Promise<void> {
+  await nextTick()
+  if (!messageStream.value) return
+  messageStream.value.scrollTop = messageStream.value.scrollHeight
+}
+
+watch(
+  () => messages.value.length,
+  () => {
+    void scrollToLatestMessage()
+  },
+  { flush: 'post' },
+)
+
 function formatTurnError(error: unknown): string {
   if (error instanceof ApiError && error.code === 'agent.conversation_not_found') {
     return t('error.chat.historyUnavailable')
@@ -618,7 +633,7 @@ function useSuggestedQuestion(question: string): void {
         </div>
       </aside>
       <div class="conversation">
-        <div class="message-stream">
+        <div ref="messageStream" class="message-stream">
           <div v-if="messages.length === 0" class="chat-empty">
             <p class="eyebrow">{{ t('chat.eyebrow') }}</p>
             <h1>{{ t('chat.emptyTitle') }}</h1>

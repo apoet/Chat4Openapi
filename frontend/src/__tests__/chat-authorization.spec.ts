@@ -21,6 +21,38 @@ beforeEach(() => {
 })
 
 describe('Chat authorization', () => {
+  it('notifies Chat and closes the OAuth popup after authorization succeeds', async () => {
+    const popup = { closed: false, close: vi.fn() } as unknown as Window
+    vi.spyOn(window, 'open').mockReturnValue(popup)
+    const wrapper = mount(ChatAuthorization, {
+      props: {
+        agentId: 3,
+        source: {
+          api_source_id: 9,
+          api_source_name: 'Orders API',
+          flows: ['pkce'],
+        },
+      },
+      global: { plugins: [i18n] },
+    })
+
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+    window.dispatchEvent(new MessageEvent('message', {
+      origin: window.location.origin,
+      source: popup,
+      data: {
+        type: 'chat4openapi:auth-complete',
+        api_source_id: 9,
+      },
+    }))
+    await flushPromises()
+
+    expect(popup.close).toHaveBeenCalledOnce()
+    expect(wrapper.emitted('authorized')).toEqual([[9]])
+    expect(wrapper.get('button').attributes('disabled')).toBeUndefined()
+  })
+
   it('closes a denied OAuth popup and leaves authorization retryable', async () => {
     const popup = { closed: false, close: vi.fn() } as unknown as Window
     vi.spyOn(window, 'open').mockReturnValue(popup)

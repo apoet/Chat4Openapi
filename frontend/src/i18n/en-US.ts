@@ -130,7 +130,7 @@ export default {
     starting: 'Starting chat…', subtitle: 'Powered by Agent4API', assistant: 'Assistant',
     welcome: 'Chat with {agent}', welcomeHint: 'Ask a question or request an action.',
     suggestionLabel: 'Try asking', suggestionQuestion: 'What can you help me with?',
-    you: 'You', placeholder: 'Type a message…', send: 'Send', cancel: 'Cancel', close: 'Close chat',
+    you: 'You', placeholder: 'Type a message…', send: 'Send', cancel: 'Cancel', close: 'Close chat', maximize: 'Maximize chat', restore: 'Restore chat',
     unavailable: 'This chat is unavailable.', failed: 'The request could not be completed. Please try again.',
     authorizationTitle: 'Sign in to {source}', authorizationHint: 'This protected API needs your authorization before the Agent can continue.',
     authorize: 'Authorize', authorizing: 'Opening…', logout: 'Sign out', popupBlocked: 'The authorization popup was blocked. Allow popups and try again.',

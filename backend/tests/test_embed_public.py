@@ -71,7 +71,10 @@ async def test_loader_contains_public_configuration_and_no_secrets(
     assert "frame.allow = 'tools'" in response.text
     assert "frame.hidden = true" in response.text
     assert "button.setAttribute('aria-expanded', 'false')" in response.text
-    assert "width:min(400px,calc(100vw - 32px))" in response.text
+    assert "width:min(800px,calc(100vw - 32px))" in response.text
+    assert "height:min(1280px,calc(100vh - 128px))" in response.text
+    assert 'iframe[data-maximized="true"]' in response.text
+    assert "chat4openapi:maximize" in response.text
     assert "setOpen(frame.hidden)" in response.text
     assert "chat4openapi:ready" in response.text
     assert "initializeFrame" in response.text

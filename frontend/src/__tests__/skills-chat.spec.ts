@@ -137,6 +137,30 @@ describe('Skills and chat', () => {
     )
   })
 
+  it('keeps the latest message visible when new messages arrive', async () => {
+    vi.stubGlobal('fetch', chatFetch({
+      turns: [response({
+        status: 'completed', conversation_id: 'conversation-1', agent_id: 1,
+        agent_name: 'Research Agent', message: 'Latest reply', loaded_skill_ids: [], pending: null,
+      })],
+    }))
+
+    const { container } = render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+
+    await screen.findByRole('option', { name: 'Research Agent — Default' })
+    const stream = container.querySelector('.message-stream') as HTMLElement
+    Object.defineProperty(stream, 'scrollHeight', { configurable: true, value: 640 })
+    stream.scrollTop = 0
+
+    await fireEvent.update(screen.getByLabelText('Message'), 'Show the latest result')
+    await fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    await screen.findByText('Latest reply')
+    await waitFor(() => expect(stream.scrollTop).toBe(640))
+  })
+
   it('loads history only from the current browser subject namespace', async () => {
     const session = (id: string, title: string) => ({
       version: 3, id, conversationId: `conversation-${id}`, title,

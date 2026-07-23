@@ -1783,6 +1783,13 @@ async def test_browser_chat_pkce_binds_credentials_and_returns_popup_completion(
     assert callback.status_code == 200
     assert "chat4openapi:auth-complete" in callback.text
     assert '"api_source_id":' in callback.text
+    assert "window.opener.postMessage" in callback.text
+    assert "window.close()" in callback.text
+    nonce = callback.text.split('nonce="', 1)[1].split('"', 1)[0]
+    assert (
+        callback.headers["content-security-policy"]
+        == f"default-src 'none'; script-src 'nonce-{nonce}'"
+    )
     assert "browser-access" not in callback.text
     assert "chat4openapi_tool_session" not in callback.headers.get("set-cookie", "")
     assert len(token_requests) == 1

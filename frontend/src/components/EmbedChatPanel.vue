@@ -10,6 +10,8 @@ defineProps<{
   ready: boolean
   sending: boolean
   error: string
+  canMaximize: boolean
+  maximized: boolean
 }>()
 
 const emit = defineEmits<{
@@ -17,6 +19,7 @@ const emit = defineEmits<{
   send: []
   cancel: []
   close: []
+  toggleMaximize: []
 }>()
 const { t } = useI18n()
 </script>
@@ -31,9 +34,21 @@ const { t } = useI18n()
           <span>{{ t('embed.subtitle') }}</span>
         </div>
       </div>
-      <button class="embed-close" type="button" :aria-label="t('embed.close')" @click="emit('close')">
-        ×
-      </button>
+      <div class="embed-window-actions">
+        <button
+          v-if="canMaximize"
+          class="embed-window-action"
+          type="button"
+          :aria-label="maximized ? t('embed.restore') : t('embed.maximize')"
+          :title="maximized ? t('embed.restore') : t('embed.maximize')"
+          @click="emit('toggleMaximize')"
+        >
+          {{ maximized ? '❐' : '□' }}
+        </button>
+        <button class="embed-close" type="button" :aria-label="t('embed.close')" @click="emit('close')">
+          ×
+        </button>
+      </div>
     </header>
 
     <main class="embed-chat-messages" aria-live="polite">
@@ -90,8 +105,12 @@ const { t } = useI18n()
 .embed-agent-identity div { min-width: 0; display: grid; gap: 2px; }
 .embed-agent-identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
 .embed-agent-identity span { color: #778092; font-size: 11px; }
-.embed-close { width: 34px; height: 34px; border: 0; border-radius: 50%; color: #5d6574; background: transparent; font-size: 25px; line-height: 1; }
-.embed-close:hover { background: #f0eee8; }
+.embed-window-actions { display: flex; align-items: center; gap: 4px; }
+.embed-window-action, .embed-close { width: 34px; height: 34px; border: 0; border-radius: 50%; color: #5d6574; background: transparent; line-height: 1; cursor: pointer; }
+.embed-window-action { font-size: 20px; }
+.embed-close { font-size: 25px; }
+.embed-window-action:hover, .embed-close:hover { background: #f0eee8; }
+.embed-window-action:focus-visible, .embed-close:focus-visible { outline: 3px solid rgba(101,88,232,.22); outline-offset: 1px; }
 .embed-chat-messages { min-height: 0; padding: 20px 16px; overflow-y: auto; background: radial-gradient(circle at 90% 0, rgba(101,88,232,.07), transparent 32%); }
 .embed-empty { min-height: 100%; display: grid; place-content: center; justify-items: center; text-align: center; color: #626b7b; }
 .embed-empty img { width: 68px; height: 68px; margin-bottom: 14px; object-fit: contain; }

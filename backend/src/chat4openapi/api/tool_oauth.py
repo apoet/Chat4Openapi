@@ -1,6 +1,7 @@
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 import json
+import secrets
 from typing import Literal
 
 import httpx
@@ -147,6 +148,21 @@ def _oauth_error(exc: Exception) -> ApiError:
     if isinstance(exc, (SecretDecryptionError, UnsafeNetworkTarget)):
         return ApiError(400, "oauth.upstream_failed")
     return ApiError(500, "oauth.failed")
+
+
+def _popup_response(script: str) -> HTMLResponse:
+    nonce = secrets.token_urlsafe(24)
+    return HTMLResponse(
+        f'<!doctype html><script nonce="{nonce}">{script}</script>',
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": (
+                f"default-src 'none'; script-src 'nonce-{nonce}'"
+            ),
+            "Referrer-Policy": "no-referrer",
+            "X-Frame-Options": "DENY",
+        },
+    )
 
 
 def _device_response(status: OAuthStatus) -> DeviceFlowResponse:
@@ -316,17 +332,10 @@ async def pkce_callback(
             ensure_ascii=False,
             separators=(",", ":"),
         )
-        return HTMLResponse(
-            "<!doctype html><script>"
-            f"window.opener.postMessage({payload},{json.dumps(target_origin)});"
-            "window.close()"
-            "</script>",
-            headers={
-                "Cache-Control": "no-store",
-                "Content-Security-Policy": "default-src 'none'",
-                "Referrer-Policy": "no-referrer",
-                "X-Frame-Options": "DENY",
-            },
+        return _popup_response(
+            "if(window.opener){"
+            f"window.opener.postMessage({payload},{json.dumps(target_origin)})"
+            "}window.close()"
         )
     if (
         completed.embed_session_id is not None
@@ -346,16 +355,10 @@ async def pkce_callback(
             separators=(",", ":"),
         )
         target_origin = json.dumps(completed.target_origin)
-        return HTMLResponse(
-            "<!doctype html><script>"
-            f"window.opener.postMessage({payload},{target_origin});window.close()"
-            "</script>",
-            headers={
-                "Cache-Control": "no-store",
-                "Content-Security-Policy": "default-src 'none'",
-                "Referrer-Policy": "no-referrer",
-                "X-Frame-Options": "DENY",
-            },
+        return _popup_response(
+            "if(window.opener){"
+            f"window.opener.postMessage({payload},{target_origin})"
+            "}window.close()"
         )
     if (
         completed.browser_chat_session_id is not None
@@ -370,16 +373,10 @@ async def pkce_callback(
             separators=(",", ":"),
         )
         target_origin = json.dumps(completed.popup_origin)
-        return HTMLResponse(
-            "<!doctype html><script>"
-            f"window.opener.postMessage({payload},{target_origin});window.close()"
-            "</script>",
-            headers={
-                "Cache-Control": "no-store",
-                "Content-Security-Policy": "default-src 'none'",
-                "Referrer-Policy": "no-referrer",
-                "X-Frame-Options": "DENY",
-            },
+        return _popup_response(
+            "if(window.opener){"
+            f"window.opener.postMessage({payload},{target_origin})"
+            "}window.close()"
         )
     response.set_cookie(
         TOOL_SESSION_COOKIE,

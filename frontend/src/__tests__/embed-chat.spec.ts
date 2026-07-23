@@ -96,6 +96,23 @@ describe('embedded Agent Chat', () => {
     expect(sessionStorage.getItem('chat4openapi.embed.public-id')).toBe('embed-token')
   })
 
+  it('asks the host loader to maximize and restore the expanded chat', async () => {
+    const wrapper = await mountEmbed()
+    const postMessage = window.parent.postMessage as ReturnType<typeof vi.fn>
+
+    await wrapper.get('button[aria-label="Maximize chat"]').trigger('click')
+
+    expect(postMessage).toHaveBeenLastCalledWith(
+      { type: 'chat4openapi:maximize', maximized: true },
+      'https://host.example',
+    )
+    await wrapper.get('button[aria-label="Restore chat"]').trigger('click')
+    expect(postMessage).toHaveBeenLastCalledWith(
+      { type: 'chat4openapi:maximize', maximized: false },
+      'https://host.example',
+    )
+  })
+
   it('offers one suggested question and places it in the composer', async () => {
     const wrapper = await mountEmbed()
 

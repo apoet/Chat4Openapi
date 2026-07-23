@@ -39,6 +39,8 @@ const messages = ref<DisplayMessage[]>([])
 const sessionId = ref('')
 const sessionToken = ref('')
 const authorization = ref<EmbedAuthorizationSource | null>(null)
+const embedded = ref(false)
+const maximized = ref(false)
 let parentOrigin = ''
 let agent: ReturnType<typeof createEmbedAgent> | null = null
 let tools: Tool[] = []
@@ -66,6 +68,7 @@ async function initialize(origin: string | null): Promise<void> {
   if (initializing || ready.value) return
   initializing = true
   standalone = origin === null
+  embedded.value = !standalone
   try {
     const response = await fetch(`/api/embed/${encodeURIComponent(publicId)}/sessions`, {
       method: 'POST',
@@ -224,6 +227,15 @@ function close(): void {
   }
 }
 
+function toggleMaximize(): void {
+  if (!embedded.value || !parentOrigin) return
+  maximized.value = !maximized.value
+  window.parent.postMessage(
+    { type: 'chat4openapi:maximize', maximized: maximized.value },
+    parentOrigin,
+  )
+}
+
 function notifyParentReady(): void {
   if (window.parent === window || !document.referrer) return
   try {
@@ -272,9 +284,12 @@ onBeforeUnmount(() => {
       :ready="ready"
       :sending="sending"
       :error="error"
+      :can-maximize="embedded"
+      :maximized="maximized"
       @send="send"
       @cancel="cancel"
       @close="close"
+      @toggle-maximize="toggleMaximize"
     />
     <EmbedAuthorization
       v-if="authorization"
