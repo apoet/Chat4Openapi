@@ -14,7 +14,7 @@ from chat4openapi.embed.sessions import (
     available_embed,
     issue_embed_session,
 )
-from chat4openapi.embed.urls import frame_ancestors
+from chat4openapi.embed.urls import base_url_origin, frame_ancestors
 from chat4openapi.models import AppSetting
 from chat4openapi.schemas.embeds import (
     EmbedAgentSummary,
@@ -134,9 +134,14 @@ def create_embed_session(
     db: Session = Depends(get_db_session),
 ) -> EmbedSessionCreated:
     embed, agent = _public_embed(db, public_id)
-    if embed.allowed_origins and payload.parent_origin not in embed.allowed_origins:
+    parent_origin = payload.parent_origin
+    if parent_origin is None:
+        # A directly opened public embed has no parent frame. Use the application's
+        # trusted configured origin without weakening validation for framed embeds.
+        parent_origin = base_url_origin(_base_url(db))
+    elif embed.allowed_origins and parent_origin not in embed.allowed_origins:
         raise _unavailable()
-    session, token = issue_embed_session(db, embed, payload.parent_origin)
+    session, token = issue_embed_session(db, embed, parent_origin)
     db.commit()
     return EmbedSessionCreated(
         session_id=session.public_subject_id,

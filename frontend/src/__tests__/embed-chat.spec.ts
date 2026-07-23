@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '../i18n'
 import EmbedChatView from '../views/EmbedChatView.vue'
 
+const topLevelWindow = window
+
 const mocks = vi.hoisted(() => ({
   runAgent: vi.fn(async () => ({ result: null, newMessages: [] })),
   addMessage: vi.fn(),
@@ -43,10 +45,15 @@ function sessionResponse(): Response {
 }
 
 async function mountEmbed() {
+  const hostWindow = { postMessage: vi.fn() } as unknown as WindowProxy
+  Object.defineProperty(window, 'parent', {
+    configurable: true,
+    value: hostWindow,
+  })
   const wrapper = mount(EmbedChatView, { global: { plugins: [i18n] } })
   window.dispatchEvent(new MessageEvent('message', {
     origin: 'https://host.example',
-    source: window,
+    source: hostWindow,
     data: { type: 'chat4openapi:init', parentOrigin: 'https://host.example' },
   }))
   await flushPromises()
@@ -54,6 +61,10 @@ async function mountEmbed() {
 }
 
 beforeEach(() => {
+  Object.defineProperty(window, 'parent', {
+    configurable: true,
+    value: topLevelWindow,
+  })
   mocks.runAgent.mockClear()
   mocks.addMessage.mockClear()
   mocks.abortRun.mockClear()
@@ -63,6 +74,20 @@ beforeEach(() => {
 })
 
 describe('embedded Agent Chat', () => {
+  it('initializes a directly opened embed and enables its composer', async () => {
+    const wrapper = mount(EmbedChatView, { global: { plugins: [i18n] } })
+    await flushPromises()
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/embed/public-id/sessions',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ parent_origin: null }),
+      }),
+    )
+    expect(wrapper.get('textarea').attributes('disabled')).toBeUndefined()
+  })
+
   it('renders the bound Agent without an Agent selector', async () => {
     const wrapper = await mountEmbed()
 

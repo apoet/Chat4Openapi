@@ -25,7 +25,7 @@ def test_fresh_database_reaches_the_only_alembic_head(tmp_path: Path) -> None:
     database = tmp_path / "fresh.db"
     config = migration_config(database)
 
-    assert ScriptDirectory.from_config(config).get_heads() == ["0014_agent4api_brand"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["0015_system_users"]
     command.upgrade(config, "head")
 
     engine = sa.create_engine(sqlite_url(database))
@@ -43,7 +43,7 @@ def test_fresh_database_reaches_the_only_alembic_head(tmp_path: Path) -> None:
     } <= set(inspector.get_table_names())
     with engine.connect() as connection:
         assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-            "0014_agent4api_brand"
+            "0015_system_users"
         )
     engine.dispose()
 
@@ -207,8 +207,11 @@ def test_0007_representative_installation_reaches_head_without_data_loss(
     engine = sa.create_engine(sqlite_url(database))
     with engine.connect() as connection:
         assert connection.execute(
-            sa.text("SELECT username, password_hash, locale FROM admin_users WHERE id = 1")
-        ).one() == ("operator", "preserved-password-hash", "zh-CN")
+            sa.text(
+                "SELECT username, password_hash, locale, role "
+                "FROM admin_users WHERE id = 1"
+            )
+        ).one() == ("operator", "preserved-password-hash", "zh-CN", "admin")
         assert connection.execute(
             sa.text("SELECT token_hash, csrf_hash FROM admin_sessions WHERE id = 7")
         ).one() == ("preserved-session-hash", "preserved-csrf-hash")

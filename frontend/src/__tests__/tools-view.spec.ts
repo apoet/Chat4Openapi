@@ -1140,4 +1140,30 @@ describe('Tool administration views', () => {
       allow_private_networks: true,
     })
   })
+
+  it('alerts with the backend reason when an OpenAPI import fails', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse({
+        error: {
+          code: 'tools.openapi_invalid',
+          params: { reason: 'Parameter file must define schema or content' },
+        },
+      }, 422))
+    const alertMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('alert', alertMock)
+
+    render(ApiSourcesView, { global: { plugins: [i18n] } })
+    await screen.findByText('No API sources imported yet.')
+    await fireEvent.click(screen.getByRole('button', { name: 'URL import' }))
+    await fireEvent.update(screen.getByLabelText('Source name'), 'Broken API')
+    await fireEvent.update(screen.getByLabelText('OpenAPI URL'), 'https://api.test/openapi.json')
+    await fireEvent.click(screen.getByRole('button', { name: 'Import from URL' }))
+
+    await waitFor(() => expect(alertMock).toHaveBeenCalledWith(
+      'Import failed: Parameter file must define schema or content',
+    ))
+  })
 })

@@ -44,6 +44,22 @@ function selectFile(event: Event): void {
   file.value = (event.target as HTMLInputElement).files?.[0] ?? null
 }
 
+function importFailureReason(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (typeof error.params.reason === 'string' && error.params.reason.trim()) {
+      return error.params.reason
+    }
+    if (Array.isArray(error.params.fields) && error.params.fields.length) {
+      return `${error.code}: ${error.params.fields.join(', ')}`
+    }
+    if (typeof error.params.status === 'number') {
+      return `${error.code} (HTTP ${error.params.status})`
+    }
+    return error.code
+  }
+  return error instanceof Error && error.message ? error.message : t('error.unknown')
+}
+
 async function submit(): Promise<void> {
   if (!name.value) return
   if (importMode.value === 'file' && !file.value) return
@@ -70,6 +86,8 @@ async function submit(): Promise<void> {
     sourceUrl.value = ''
     file.value = null
     allowPrivateNetworks.value = false
+  } catch (error) {
+    window.alert(t('sources.importFailed', { reason: importFailureReason(error) }))
   } finally {
     submitting.value = false
   }

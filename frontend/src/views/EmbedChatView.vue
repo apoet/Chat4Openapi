@@ -45,6 +45,7 @@ let tools: Tool[] = []
 let pendingTool: PendingTool | null = null
 let stopObserving: () => void = () => undefined
 let initializing = false
+let standalone = false
 
 function id(): string {
   return globalThis.crypto?.randomUUID?.() ?? `embed-${Date.now()}-${Math.random()}`
@@ -61,9 +62,10 @@ function isSessionResponse(value: unknown): value is SessionResponse {
     && typeof data.agent.name === 'string'
 }
 
-async function initialize(origin: string): Promise<void> {
+async function initialize(origin: string | null): Promise<void> {
   if (initializing || ready.value) return
   initializing = true
+  standalone = origin === null
   try {
     const response = await fetch(`/api/embed/${encodeURIComponent(publicId)}/sessions`, {
       method: 'POST',
@@ -71,10 +73,14 @@ async function initialize(origin: string): Promise<void> {
       body: JSON.stringify({ parent_origin: origin }),
     })
     const body: unknown = await response.json()
-    if (!response.ok || !isSessionResponse(body) || body.parent_origin !== origin) {
+    if (
+      !response.ok
+      || !isSessionResponse(body)
+      || (origin !== null && body.parent_origin !== origin)
+    ) {
       throw new Error('embed.unavailable')
     }
-    parentOrigin = origin
+    parentOrigin = body.parent_origin
     sessionId.value = body.session_id
     sessionToken.value = body.token
     agentName.value = body.agent.name
@@ -85,8 +91,10 @@ async function initialize(origin: string): Promise<void> {
       threadId: body.session_id,
       token: body.token,
     })
-    tools = await discoverWebMcpTools(parentOrigin)
-    stopObserving = observeWebMcpToolChanges(parentOrigin, (available) => { tools = available })
+    if (!standalone) {
+      tools = await discoverWebMcpTools(parentOrigin)
+      stopObserving = observeWebMcpToolChanges(parentOrigin, (available) => { tools = available })
+    }
     ready.value = true
   } catch {
     error.value = t('embed.unavailable')
@@ -164,7 +172,7 @@ async function runUntilSettled(): Promise<void> {
   if (!agent) return
   for (let iteration = 0; iteration < 8; iteration += 1) {
     pendingTool = null
-    tools = await discoverWebMcpTools(parentOrigin)
+    if (!standalone) tools = await discoverWebMcpTools(parentOrigin)
     await agent.runAgent({ tools }, subscriber)
     const selected = takePendingTool()
     if (!selected) return
@@ -211,7 +219,9 @@ function cancel(): void {
 }
 
 function close(): void {
-  if (parentOrigin) window.parent.postMessage({ type: 'chat4openapi:close' }, parentOrigin)
+  if (!standalone && parentOrigin) {
+    window.parent.postMessage({ type: 'chat4openapi:close' }, parentOrigin)
+  }
 }
 
 function notifyParentReady(): void {
@@ -240,7 +250,11 @@ async function resumeAfterAuthorization(): Promise<void> {
 
 onMounted(() => {
   window.addEventListener('message', handleParentMessage)
-  notifyParentReady()
+  if (window.parent === window) {
+    void initialize(null)
+  } else {
+    notifyParentReady()
+  }
 })
 onBeforeUnmount(() => {
   window.removeEventListener('message', handleParentMessage)

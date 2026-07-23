@@ -71,7 +71,7 @@ let dialogCloseSpy: ReturnType<typeof vi.fn>
 
 function adminGet(input: RequestInfo | URL): Promise<Response> {
   if (input === '/api/admin/agents') return Promise.resolve(response(agents))
-  if (input === '/api/admin/providers') return Promise.resolve(response(providers))
+  if (input === '/api/admin/build/providers') return Promise.resolve(response(providers))
   if (input === '/api/admin/skills') return Promise.resolve(response(skills))
   if (input === '/api/admin/agents/1/keys') return Promise.resolve(response([]))
   if (input === '/api/admin/agents/2/keys') return Promise.resolve(response([]))
@@ -81,7 +81,7 @@ function adminGet(input: RequestInfo | URL): Promise<Response> {
 function renderView(pinia = createPinia()) {
   setActivePinia(pinia)
   const auth = useAuthStore()
-  auth.admin = { username: 'admin', locale: 'en-US' }
+  auth.admin = { username: 'admin', locale: 'en-US', role: 'admin' }
   auth.csrfToken = 'csrf'
   return render(AgentView, { global: { plugins: [pinia, i18n] } })
 }
@@ -95,7 +95,7 @@ beforeEach(() => {
   i18n.global.locale.value = 'en-US'
   setActivePinia(createPinia())
   const auth = useAuthStore()
-  auth.admin = { username: 'admin', locale: 'en-US' }
+  auth.admin = { username: 'admin', locale: 'en-US', role: 'admin' }
   auth.csrfToken = 'csrf'
 })
 
@@ -123,6 +123,33 @@ describe('Agent administration', () => {
     const appRouter = createAppRouter()
     await appRouter.push('/admin/agent')
     expect(appRouter.currentRoute.value.name).toBe('agent')
+  })
+
+  it('opens Chat with the selected enabled Agent in the route query', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const auth = useAuthStore()
+    auth.admin = { username: 'admin', locale: 'en-US', role: 'admin' }
+    auth.csrfToken = 'csrf'
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/admin/agent', name: 'agent', component: AgentView },
+        { path: '/chat', name: 'chat', component: { template: '<div>Chat page</div>' } },
+      ],
+    })
+    await router.push('/admin/agent')
+    await router.isReady()
+    vi.stubGlobal('fetch', vi.fn(adminGet))
+    render(AgentView, { global: { plugins: [pinia, i18n, router] } })
+
+    const chatButtons = await screen.findAllByRole('button', { name: 'Chat' })
+    await fireEvent.click(chatButtons[0])
+
+    await waitFor(() => expect(router.currentRoute.value).toMatchObject({
+      name: 'chat',
+      query: { agent_id: '1' },
+    }))
   })
 
   it('loads a multi-Agent list and keeps a stopped bound Skill visible', async () => {
@@ -162,11 +189,13 @@ describe('Agent administration', () => {
     expect(JSON.parse((bindingCall?.[1] as RequestInit).body as string)).toEqual({ skill_ids: [10] })
   })
 
-  it('creates disabled first and then writes ordered Skill bindings with CSRF', async () => {
+  it('creates safely, writes ordered Skill bindings, and then starts the Agent', async () => {
     const created = { ...agents[1], id: 42, name: 'Support Agent', skill_ids: [] }
+    const bound = { ...created, skill_ids: [12, 10] }
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       if (input === '/api/admin/agents' && init?.method === 'POST') return Promise.resolve(response(created, 201))
-      if (input === '/api/admin/agents/42/skills') return Promise.resolve(response({ ...created, skill_ids: [12, 10] }))
+      if (input === '/api/admin/agents/42/skills') return Promise.resolve(response(bound))
+      if (input === '/api/admin/agents/42/enable') return Promise.resolve(response({ ...bound, enabled: true }))
       return adminGet(input)
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -183,7 +212,7 @@ describe('Agent administration', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Add Inventory' }))
     await fireEvent.click(screen.getByRole('button', { name: 'Save Agent' }))
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/42/skills', expect.anything()))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/42/enable', expect.objectContaining({ method: 'POST' })))
     const createCall = fetchMock.mock.calls.find(([url, init]) => url === '/api/admin/agents' && (init as RequestInit)?.method === 'POST')
     expect(JSON.parse((createCall?.[1] as RequestInit).body as string)).toMatchObject({
       name: 'Support Agent',
@@ -194,6 +223,8 @@ describe('Agent administration', () => {
     expect(((createCall?.[1] as RequestInit).headers as Headers).get('X-CSRF-Token')).toBe('csrf')
     const skillsCall = fetchMock.mock.calls.find(([url]) => url === '/api/admin/agents/42/skills')
     expect(JSON.parse((skillsCall?.[1] as RequestInit).body as string)).toEqual({ skill_ids: [12, 10] })
+    const enableCall = fetchMock.mock.calls.find(([url]) => url === '/api/admin/agents/42/enable')
+    expect(((enableCall?.[1] as RequestInit).headers as Headers).get('X-CSRF-Token')).toBe('csrf')
   })
 
   it('reconciles a partially created Agent and prevents duplicate saves', async () => {

@@ -40,7 +40,7 @@ export const useAgentsStore = defineStore('agents', () => {
   async function load(): Promise<void> {
     const [agentList, providerList, skillList] = await Promise.all([
       request<AgentConfig[]>('/api/admin/agents'),
-      request<LlmProviderSummary[]>('/api/admin/providers'),
+      request<LlmProviderSummary[]>('/api/admin/build/providers'),
       request<SkillSummary[]>('/api/admin/skills'),
     ])
     agents.value = agentList
@@ -54,6 +54,7 @@ export const useAgentsStore = defineStore('agents', () => {
 
   async function save(payload: AgentConfigWrite, skillIds: number[], id?: number): Promise<AgentConfig> {
     const auth = useAuthStore()
+    const startAfterBinding = id === undefined && payload.enabled
     const agent = await request<AgentConfig>(id ? `/api/admin/agents/${id}` : '/api/admin/agents', {
       method: id ? 'PUT' : 'POST',
       body: JSON.stringify(id ? payload : { ...payload, enabled: false }),
@@ -65,6 +66,13 @@ export const useAgentsStore = defineStore('agents', () => {
         body: JSON.stringify({ skill_ids: skillIds }),
       }, auth.csrfToken)
       upsertAgent(updated)
+      if (startAfterBinding) {
+        const started = await request<AgentConfig>(`/api/admin/agents/${agent.id}/enable`, {
+          method: 'POST',
+        }, auth.csrfToken)
+        upsertAgent(started)
+        return started
+      }
       return updated
     } catch (error) {
       try {

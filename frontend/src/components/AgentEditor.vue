@@ -18,7 +18,7 @@ const { t } = useI18n()
 const search = ref('')
 const boundSkillIds = ref<number[]>([])
 const form = reactive<AgentConfigWrite>({
-  name: '', enabled: false, system_prompt: '', provider_id: null,
+  name: '', enabled: true, system_prompt: '', provider_id: null,
   model: null, mode: 'human_in_loop', max_iterations: 8,
 })
 
@@ -32,7 +32,7 @@ watch(() => props.agent, (agent) => {
     mode: agent.mode,
     max_iterations: agent.max_iterations,
   } : {
-    name: '', enabled: false, system_prompt: '', provider_id: null,
+    name: '', enabled: true, system_prompt: '', provider_id: null,
     model: null, mode: 'human_in_loop', max_iterations: 8,
   })
   boundSkillIds.value = agent?.skill_ids.slice() ?? []
@@ -82,7 +82,7 @@ function save(): void {
   if (!canSave.value || props.pending) return
   emit('save', {
     name: form.name.trim(),
-    enabled: props.agent?.enabled ?? false,
+    enabled: props.agent?.enabled ?? true,
     system_prompt: form.system_prompt.trim(),
     provider_id: form.provider_id,
     model: form.model?.trim() || null,

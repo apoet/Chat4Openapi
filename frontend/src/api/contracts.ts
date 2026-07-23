@@ -14,6 +14,16 @@ export interface SetupRequest {
 export interface AdminSummary {
   username: string
   locale: Locale
+  role: 'admin' | 'user'
+}
+
+export interface ManagedUser {
+  id: number
+  username: string
+  role: 'user'
+  locale: Locale
+  enabled: boolean
+  created_at: string
 }
 
 export interface AuthResponse {

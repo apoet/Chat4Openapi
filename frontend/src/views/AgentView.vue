@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, inject, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { routerKey } from 'vue-router'
 
 import { ApiError } from '../api/client'
 import type { AgentConfig, AgentConfigWrite } from '../api/contracts'
@@ -11,6 +12,7 @@ import { AgentSavePartialError, useAgentsStore } from '../stores/agents'
 
 const store = useAgentsStore()
 const { t } = useI18n()
+const router = inject(routerKey, null)
 const selectedId = ref<number | null>(null)
 const creating = ref(false)
 const errorMessage = ref('')
@@ -61,6 +63,11 @@ function createAgent(): void {
   creating.value = true
   selectedId.value = null
   errorMessage.value = ''
+}
+
+function openChat(agent: AgentConfig): void {
+  if (!agent.enabled || interactionLocked.value) return
+  void router?.push({ name: 'chat', query: { agent_id: String(agent.id) } })
 }
 
 async function save(payload: AgentConfigWrite, skillIds: number[]): Promise<void> {
@@ -123,11 +130,14 @@ async function remove(): Promise<void> {
       <aside class="agent-roster" :aria-label="t('agent.listTitle')">
         <div class="panel-heading compact-heading"><h2>{{ t('agent.listTitle') }}</h2><span>{{ store.agents.length }}</span></div>
         <div class="agent-list">
-          <button v-for="agent in store.agents" :key="agent.id" type="button" :class="['agent-list-item', { active: selectedId === agent.id && !creating }]" :disabled="interactionLocked" :aria-current="selectedId === agent.id && !creating ? 'true' : undefined" @click="select(agent)">
-            <span class="agent-avatar" aria-hidden="true">{{ agent.name.slice(0, 2).toUpperCase() }}</span>
-            <span><strong>{{ agent.name }}</strong><small>{{ agent.enabled ? t('tools.enabled') : t('tools.disabled') }}</small></span>
-            <b v-if="agent.is_default">{{ t('agent.default') }}</b>
-          </button>
+          <div v-for="agent in store.agents" :key="agent.id" class="agent-list-row">
+            <button type="button" :class="['agent-list-item', { active: selectedId === agent.id && !creating }]" :disabled="interactionLocked" :aria-current="selectedId === agent.id && !creating ? 'true' : undefined" @click="select(agent)">
+              <span class="agent-avatar" aria-hidden="true">{{ agent.name.slice(0, 2).toUpperCase() }}</span>
+              <span><strong>{{ agent.name }}</strong><small>{{ agent.enabled ? t('tools.enabled') : t('tools.disabled') }}</small></span>
+              <b v-if="agent.is_default">{{ t('agent.default') }}</b>
+            </button>
+            <button type="button" class="agent-chat-action" :disabled="!agent.enabled || interactionLocked" @click="openChat(agent)">{{ t('agent.chat') }}</button>
+          </div>
         </div>
         <p v-if="store.agents.length === 0" class="empty-inline">{{ t('agent.empty') }}</p>
       </aside>

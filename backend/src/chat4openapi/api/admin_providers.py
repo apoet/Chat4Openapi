@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from chat4openapi.api.admin_auth import AdminContext, require_admin, require_csrf
+from chat4openapi.api.admin_auth import (
+    AdminContext,
+    require_admin,
+    require_system_admin,
+    require_system_csrf,
+)
 from chat4openapi.api.errors import ApiError
 from chat4openapi.api.tool_sessions import get_tool_secret_cipher
 from chat4openapi.db.serialized_write import serialized_write
@@ -18,6 +23,7 @@ from chat4openapi.schemas.providers import (
 from chat4openapi.security.encryption import SecretCipher
 
 router = APIRouter(prefix="/api/admin/providers", tags=["admin-providers"])
+build_router = APIRouter(prefix="/api/admin/build", tags=["admin-build"])
 
 
 def _response(provider: LlmProvider) -> ProviderResponse:
@@ -43,8 +49,7 @@ def _ensure_not_agent_provider(context: AdminContext, provider_id: int) -> None:
         raise ApiError(409, "providers.agent_in_use", agent_ids=agent_ids)
 
 
-@router.get("", response_model=list[ProviderResponse])
-def list_providers(context: AdminContext = Depends(require_admin)) -> list[ProviderResponse]:
+def _list_providers(context: AdminContext) -> list[ProviderResponse]:
     providers = context.db.scalars(
         select(LlmProvider)
         .where(LlmProvider.deleted_at.is_(None))
@@ -53,10 +58,24 @@ def list_providers(context: AdminContext = Depends(require_admin)) -> list[Provi
     return [_response(provider) for provider in providers]
 
 
+@router.get("", response_model=list[ProviderResponse])
+def list_providers(
+    context: AdminContext = Depends(require_system_admin),
+) -> list[ProviderResponse]:
+    return _list_providers(context)
+
+
+@build_router.get("/providers", response_model=list[ProviderResponse])
+def list_build_providers(
+    context: AdminContext = Depends(require_admin),
+) -> list[ProviderResponse]:
+    return _list_providers(context)
+
+
 @router.post("", response_model=ProviderResponse, status_code=201)
 def create_provider(
     payload: ProviderCreateRequest,
-    context: AdminContext = Depends(require_csrf),
+    context: AdminContext = Depends(require_system_csrf),
     cipher: SecretCipher = Depends(get_tool_secret_cipher),
 ) -> ProviderResponse:
     provider = LlmProvider(
@@ -79,7 +98,7 @@ def create_provider(
 @router.post("/{provider_id}/test")
 async def test_provider(
     provider_id: int,
-    context: AdminContext = Depends(require_csrf),
+    context: AdminContext = Depends(require_system_csrf),
     cipher: SecretCipher = Depends(get_tool_secret_cipher),
 ) -> dict[str, str | bool]:
     provider = _provider(context, provider_id)
@@ -106,7 +125,7 @@ async def test_provider(
 def update_provider(
     provider_id: int,
     payload: ProviderUpdateRequest,
-    context: AdminContext = Depends(require_csrf),
+    context: AdminContext = Depends(require_system_csrf),
     cipher: SecretCipher = Depends(get_tool_secret_cipher),
 ) -> ProviderResponse:
     values = payload.model_dump(exclude_unset=True)
@@ -127,7 +146,7 @@ def update_provider(
 
 @router.delete("/{provider_id}", status_code=204)
 def delete_provider(
-    provider_id: int, context: AdminContext = Depends(require_csrf)
+    provider_id: int, context: AdminContext = Depends(require_system_csrf)
 ) -> None:
     with serialized_write(context.db):
         provider = _provider(context, provider_id)

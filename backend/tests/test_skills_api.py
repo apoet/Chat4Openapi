@@ -123,6 +123,7 @@ async def test_skill_lifecycle_binds_only_enabled_non_login_tools(
     assert disabled.json()["error"]["code"] == "skills.tool_unavailable"
     assert login_bound.status_code == 409
     assert created.status_code == 201
+    assert created.json()["running"] is True
     assert "provider_id" not in created.json()
     assert "model" not in created.json()
     assert created.json()["tools"][0]["name"] == "enabled_tool"

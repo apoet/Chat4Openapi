@@ -33,12 +33,23 @@ describe('router guards', () => {
   it('allows an authenticated administrator into overview', async () => {
     const auth = useAuthStore()
     auth.initialized = true
-    auth.admin = { username: 'admin', locale: 'en-US' }
+    auth.admin = { username: 'admin', locale: 'en-US', role: 'admin' }
     const router = createAppRouter()
 
     await router.push('/admin')
 
     expect(router.currentRoute.value.fullPath).toBe('/admin')
+  })
+
+  it('redirects an ordinary user away from System routes', async () => {
+    const auth = useAuthStore()
+    auth.initialized = true
+    auth.admin = { username: 'builder', locale: 'en-US', role: 'user' }
+    const router = createAppRouter()
+
+    await router.push('/admin/settings')
+
+    expect(router.currentRoute.value.fullPath).toBe('/admin/sources')
   })
 
   it('keeps public Embed Chat outside setup and administrator guards', async () => {

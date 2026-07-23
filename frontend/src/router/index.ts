@@ -21,14 +21,15 @@ export function createAppRouter(): Router {
         component: () => import('../layouts/AdminLayout.vue'),
         meta: { requiresAdmin: true },
         children: [
-          { path: '', name: 'overview', component: () => import('../views/OverviewView.vue') },
+          { path: '', name: 'overview', component: () => import('../views/OverviewView.vue'), meta: { requiresSystemAdmin: true } },
           { path: 'sources', name: 'sources', component: () => import('../views/ApiSourcesView.vue') },
           { path: 'tools', name: 'tools', component: () => import('../views/ToolsView.vue') },
           { path: 'tool-auth', name: 'tool-auth', component: () => import('../views/ToolAuthView.vue') },
-          { path: 'providers', name: 'providers', component: () => import('../views/ProvidersView.vue') },
+          { path: 'providers', name: 'providers', component: () => import('../views/ProvidersView.vue'), meta: { requiresSystemAdmin: true } },
+          { path: 'users', name: 'users', component: () => import('../views/UsersView.vue'), meta: { requiresSystemAdmin: true } },
           { path: 'skills', name: 'skills', component: () => import('../views/SkillsView.vue') },
           { path: 'agent', name: 'agent', component: () => import('../views/AgentView.vue') },
-          { path: 'settings', name: 'settings', component: () => import('../views/SettingsView.vue') },
+          { path: 'settings', name: 'settings', component: () => import('../views/SettingsView.vue'), meta: { requiresSystemAdmin: true } },
         ],
       },
     ],
@@ -45,7 +46,10 @@ export function createAppRouter(): Router {
     if (to.meta.requiresAdmin && !auth.admin) {
       return { name: 'login', query: { redirect: to.fullPath } }
     }
-    if (to.name === 'login' && auth.admin) return { name: 'overview' }
+    if (to.meta.requiresSystemAdmin && auth.admin?.role !== 'admin') return { name: 'sources' }
+    if (to.name === 'login' && auth.admin) {
+      return { name: auth.admin.role === 'admin' ? 'overview' : 'sources' }
+    }
     return true
   })
 

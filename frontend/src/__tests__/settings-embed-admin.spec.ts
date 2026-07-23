@@ -83,4 +83,61 @@ describe('Embed administration', () => {
       expect.objectContaining({ method: 'POST' }),
     )
   })
+
+  it('copies an embed script when the Clipboard API is unavailable', async () => {
+    const script = '<script src="http://chat.example/embed/public-id.js" async></script>'
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    const execCommand = vi.fn(() => true)
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([
+      {
+        id: 1, agent_id: 7, name: 'Docs', public_id: 'public-id', enabled: true,
+        allowed_origins: [], position: 'bottom_right',
+        created_at: '2026-07-22T00:00:00', updated_at: '2026-07-22T00:00:00',
+        deleted_at: null, script,
+      },
+    ])))
+    const wrapper = mount(AgentEmbedPanel, {
+      props: { agentId: 7 },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="copy-script"]').trigger('click')
+    await flushPromises()
+
+    expect(execCommand).toHaveBeenCalledWith('copy')
+    expect(wrapper.get('[data-testid="copy-script"]').text()).toBe('Copied')
+  })
+
+  it('shows copy failure feedback when the browser blocks all copy methods', async () => {
+    const script = '<script src="http://chat.example/embed/public-id.js" async></script>'
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error('NotAllowedError')) },
+    })
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => { throw new Error('copy blocked') }),
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([
+      {
+        id: 1, agent_id: 7, name: 'Docs', public_id: 'public-id', enabled: true,
+        allowed_origins: [], position: 'bottom_right',
+        created_at: '2026-07-22T00:00:00', updated_at: '2026-07-22T00:00:00',
+        deleted_at: null, script,
+      },
+    ])))
+    const wrapper = mount(AgentEmbedPanel, {
+      props: { agentId: 7 },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="copy-script"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('Copy failed')
+    expect(wrapper.get('[data-testid="embed-script-fallback"]').text()).toBe(script)
+  })
 })

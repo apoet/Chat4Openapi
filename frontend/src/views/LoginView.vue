@@ -21,8 +21,9 @@ async function submit(): Promise<void> {
   errorCode.value = null
   try {
     await auth.login(username.value, password.value)
-    const requested = typeof route.query.redirect === 'string' ? route.query.redirect : '/admin'
-    await router.push(requested.startsWith('/') && !requested.startsWith('//') ? requested : '/admin')
+    const fallback = auth.admin?.role === 'admin' ? '/admin' : '/admin/sources'
+    const requested = typeof route.query.redirect === 'string' ? route.query.redirect : fallback
+    await router.push(requested.startsWith('/') && !requested.startsWith('//') ? requested : fallback)
   } catch (error) {
     errorCode.value = error instanceof ApiError ? error.code : 'unknown'
   } finally {

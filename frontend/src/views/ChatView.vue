@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { routeLocationKey } from 'vue-router'
 
 import logoUrl from '../../../logo.png'
 import { ApiError, request } from '../api/client'
@@ -36,6 +37,7 @@ type LocalChatSessionV3 = {
 const LEGACY_STORAGE_KEY = 'chat4openapi.chat.sessions.v1'
 const STORAGE_PREFIX = 'chat4openapi.chat.sessions.v3.'
 const { t } = useI18n()
+const route = inject(routeLocationKey, null)
 const agents = ref<ChatAgentSummary[]>([])
 const selectedAgentId = ref<number | null>(null)
 const selectedAgentName = ref<string | null>(null)
@@ -216,6 +218,13 @@ function selectDefaultAgent(): void {
   selectedAgentName.value = defaultAgent?.name ?? null
 }
 
+function requestedAgent(): ChatAgentSummary | undefined {
+  const value = route?.query.agent_id
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) return undefined
+  const id = Number(value)
+  return agents.value.find((agent) => agent.id === id)
+}
+
 function skillNames(ids: number[]): string {
   return ids.map((id) => skills.value.find((skill) => skill.id === id)?.name ?? t('chat.unknownSkill')).join(', ')
 }
@@ -363,7 +372,12 @@ onMounted(async () => {
       if (!(error instanceof ApiError) || error.status !== 401) throw error
     }
   }
-  if (conversationId.value === null && selectedAgentId.value === null) {
+  const routeAgent = requestedAgent()
+  if (routeAgent) {
+    startNewChat()
+    selectedAgentId.value = routeAgent.id
+    selectedAgentName.value = routeAgent.name
+  } else if (conversationId.value === null && selectedAgentId.value === null) {
     selectDefaultAgent()
   }
 })

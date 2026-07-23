@@ -34,7 +34,7 @@ describe('auth store', () => {
       'fetch',
       vi.fn<typeof fetch>().mockResolvedValueOnce(
         jsonResponse({
-          admin: { username: 'admin', locale: 'en-US' },
+          admin: { username: 'admin', locale: 'en-US', role: 'admin' },
           csrf_token: 'csrf-value',
         }),
       ),

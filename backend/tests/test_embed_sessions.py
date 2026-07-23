@@ -127,6 +127,24 @@ async def test_empty_origin_list_allows_secure_parent(
 
 
 @pytest.mark.asyncio
+async def test_direct_embed_session_uses_application_origin(
+    client: httpx.AsyncClient,
+    db_session_factory: sessionmaker[Session],
+) -> None:
+    embed = await _seed_embed(
+        client, db_session_factory, origins=["https://docs.example"]
+    )
+
+    response = await client.post(
+        f"/api/embed/{embed.public_id}/sessions",
+        json={"parent_origin": None},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["parent_origin"] == "https://chat.example"
+
+
+@pytest.mark.asyncio
 async def test_session_can_be_revoked_and_expired_session_is_rejected(
     client: httpx.AsyncClient,
     db_session_factory: sessionmaker[Session],

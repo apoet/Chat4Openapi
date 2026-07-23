@@ -68,6 +68,22 @@ def require_csrf(
     return context
 
 
+def require_system_admin(
+    context: AdminContext = Depends(require_admin),
+) -> AdminContext:
+    if context.admin.role != "admin":
+        raise ApiError(403, "auth.system_admin_required")
+    return context
+
+
+def require_system_csrf(
+    context: AdminContext = Depends(require_csrf),
+) -> AdminContext:
+    if context.admin.role != "admin":
+        raise ApiError(403, "auth.system_admin_required")
+    return context
+
+
 @router.post("/login", response_model=AuthResponse)
 def login(
     payload: LoginRequest,
@@ -104,7 +120,11 @@ def me(context: AdminContext = Depends(require_admin)) -> AuthResponse:
     context.admin_session.csrf_hash = hash_token(csrf_token)
     context.db.commit()
     return AuthResponse(
-        admin=AdminSummary(username=context.admin.username, locale=context.admin.locale),
+        admin=AdminSummary(
+            username=context.admin.username,
+            locale=context.admin.locale,
+            role=context.admin.role,
+        ),
         csrf_token=csrf_token,
     )
 

@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -9,6 +11,7 @@ class LoginRequest(BaseModel):
 class AdminSummary(BaseModel):
     username: str
     locale: str
+    role: Literal["admin", "user"]
 
 
 class AuthResponse(BaseModel):

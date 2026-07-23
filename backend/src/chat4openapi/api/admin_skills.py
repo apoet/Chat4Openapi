@@ -86,6 +86,7 @@ def _write_skill(
             name=payload.name,
             description=payload.description,
             system_prompt=payload.system_prompt,
+            running=True,
         )
         context.db.add(skill)
         context.db.flush()

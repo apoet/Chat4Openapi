@@ -1,6 +1,10 @@
 from fastapi import APIRouter, Depends
 
-from chat4openapi.api.admin_auth import AdminContext, require_admin, require_csrf
+from chat4openapi.api.admin_auth import (
+    AdminContext,
+    require_system_admin,
+    require_system_csrf,
+)
 from chat4openapi.db.serialized_write import serialized_write
 from chat4openapi.models import AppSetting
 from chat4openapi.schemas.settings import AppSettingsResponse, AppSettingsWrite
@@ -10,7 +14,7 @@ router = APIRouter(prefix="/api/admin/settings", tags=["admin-settings"])
 
 @router.get("", response_model=AppSettingsResponse)
 def get_app_settings(
-    context: AdminContext = Depends(require_admin),
+    context: AdminContext = Depends(require_system_admin),
 ) -> AppSettingsResponse:
     settings = context.db.get(AppSetting, 1)
     if settings is None:
@@ -24,7 +28,7 @@ def get_app_settings(
 @router.put("", response_model=AppSettingsResponse)
 def update_app_settings(
     payload: AppSettingsWrite,
-    context: AdminContext = Depends(require_csrf),
+    context: AdminContext = Depends(require_system_csrf),
 ) -> AppSettingsResponse:
     with serialized_write(context.db):
         settings = context.db.get(AppSetting, 1)

@@ -42,6 +42,12 @@ def normalize_base_url(value: str) -> str:
     return urlunsplit((scheme, _authority(scheme, hostname, port), path, "", ""))
 
 
+def base_url_origin(value: str) -> str:
+    parsed, hostname, port = _validated_url(value, origin_only=False)
+    scheme = parsed.scheme.lower()
+    return f"{scheme}://{_authority(scheme, hostname, port)}"
+
+
 def normalize_origin(value: str, *, allow_loopback_http: bool = True) -> str:
     parsed, hostname, port = _validated_url(value, origin_only=True)
     scheme = parsed.scheme.lower()

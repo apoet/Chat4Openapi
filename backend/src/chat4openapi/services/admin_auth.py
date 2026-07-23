@@ -39,6 +39,7 @@ def initialize_admin(session: Session, request: SetupRequest) -> SetupStatus:
             username=request.username,
             password_hash=hash_password(request.password),
             locale=request.locale,
+            role="admin",
         )
     )
     settings = session.get(AppSetting, 1)
@@ -83,7 +84,7 @@ def authenticate_admin(
     )
     session.commit()
     return LoginResult(
-        admin=AdminSummary(username=admin.username, locale=admin.locale),
+        admin=AdminSummary(username=admin.username, locale=admin.locale, role=admin.role),
         session_token=session_token,
         csrf_token=csrf_token,
     )

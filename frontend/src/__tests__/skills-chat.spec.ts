@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createMemoryHistory, createRouter } from 'vue-router'
 
 import { i18n } from '../i18n'
 import { useAuthStore } from '../stores/auth'
@@ -74,6 +75,26 @@ describe('Skills and chat', () => {
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === '/api/chat/bootstrap')).toBe(true))
     expect(fetchMock.mock.calls.some(([url]) => url === '/api/admin/agents')).toBe(false)
     expect(await screen.findByRole('option', { name: 'Research Agent — Default' })).toBeTruthy()
+  })
+
+  it('starts a new Chat with the Agent requested in the route query', async () => {
+    const fetchMock = chatFetch({
+      agents: [defaultAgent, { id: 2, name: 'Operations Agent', is_default: false }],
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: { template: '<div />' } },
+        { path: '/chat', name: 'chat', component: ChatView },
+      ],
+    })
+    await router.push('/chat?agent_id=2')
+    await router.isReady()
+
+    render(ChatView, { global: { plugins: [i18n, router] } })
+
+    await waitFor(() => expect((screen.getByLabelText('Agent') as HTMLSelectElement).value).toBe('2'))
   })
 
   it('offers two prompts from the selected Agent Skills and sends with Enter', async () => {

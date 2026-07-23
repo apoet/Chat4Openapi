@@ -41,7 +41,7 @@ class AgentEmbedScriptResponse(BaseModel):
 
 
 class EmbedSessionCreate(BaseModel):
-    parent_origin: NormalizedOrigin
+    parent_origin: NormalizedOrigin | None = None
 
 
 class EmbedAgentSummary(BaseModel):

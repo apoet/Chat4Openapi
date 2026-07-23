@@ -22,7 +22,7 @@ class Skill(Base):
     name: Mapped[str] = mapped_column(String(160), unique=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     system_prompt: Mapped[str] = mapped_column(Text)
-    running: Mapped[bool] = mapped_column(Boolean, default=False)
+    running: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

@@ -22,6 +22,18 @@ def test_loads_json_and_yaml_and_rejects_oversized_documents() -> None:
         load_openapi(b" " * (5 * 1024 * 1024 + 1))
 
 
+def test_supplies_a_string_schema_for_openapi_parameters_missing_their_shape() -> None:
+    spec = load_openapi(fixture_bytes("openapi3.yaml"))
+    parameter = spec["paths"]["/pets"]["post"]["parameters"][0]
+    parameter.pop("schema")
+
+    loaded = load_openapi(json.dumps(spec).encode())
+
+    assert loaded["paths"]["/pets"]["post"]["parameters"][0]["schema"] == {
+        "type": "string"
+    }
+
+
 def test_rejects_external_references() -> None:
     spec = fixture_bytes("openapi3.yaml").replace(
         b'"#/components/schemas/PetInput"', b'"https://example.test/Pet.yaml"', 1

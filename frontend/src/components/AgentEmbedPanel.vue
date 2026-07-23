@@ -13,6 +13,7 @@ const origins = ref('')
 const position = ref<'bottom_right' | 'bottom_left'>('bottom_right')
 const pending = ref(false)
 const copiedId = ref<number | null>(null)
+const copyFailedId = ref<number | null>(null)
 const error = ref(false)
 const embeds = computed(() => store.byAgent[props.agentId] ?? [])
 
@@ -59,10 +60,45 @@ function setOrigins(embed: AgentEmbedConfig, event: Event): void {
   embed.allowed_origins = originList((event.target as HTMLTextAreaElement).value)
 }
 
+function legacyCopy(value: string): boolean {
+  const textarea = document.createElement('textarea')
+  textarea.value = value
+  textarea.readOnly = true
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  textarea.style.pointerEvents = 'none'
+  document.body.append(textarea)
+  textarea.select()
+  textarea.setSelectionRange(0, value.length)
+  try {
+    return typeof document.execCommand === 'function' && document.execCommand('copy')
+  } catch {
+    return false
+  } finally {
+    textarea.remove()
+  }
+}
+
 async function copy(embed: AgentEmbedConfig): Promise<void> {
   if (!embed.script) return
-  await navigator.clipboard.writeText(embed.script)
-  copiedId.value = embed.id
+  copyFailedId.value = null
+  let copied = false
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(embed.script)
+      copied = true
+    } catch {
+      copied = legacyCopy(embed.script)
+    }
+  } else {
+    copied = legacyCopy(embed.script)
+  }
+  if (copied) {
+    copiedId.value = embed.id
+  } else {
+    copiedId.value = null
+    copyFailedId.value = embed.id
+  }
 }
 </script>
 
@@ -87,6 +123,8 @@ async function copy(embed: AgentEmbedConfig): Promise<void> {
           <button type="button" class="secondary-action" @click="toggle(embed)">{{ embed.enabled ? t('tools.disable') : t('tools.enable') }}</button>
           <button type="button" class="danger-action" @click="store.remove(agentId, embed.id)">{{ t('tools.delete') }}</button>
         </footer>
+        <p v-if="copyFailedId === embed.id" class="page-error" role="alert">{{ t('embeds.copyFailed') }}</p>
+        <code v-if="copyFailedId === embed.id" data-testid="embed-script-fallback">{{ embed.script }}</code>
         <details class="embed-editor">
           <summary>{{ t('embeds.edit') }}</summary>
           <form class="form-grid" @submit.prevent="save(embed)">

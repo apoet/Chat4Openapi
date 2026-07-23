@@ -41,7 +41,11 @@ async def test_login_sets_http_only_cookie_and_me_rotates_csrf(
     me = await client.get("/api/admin/auth/me")
 
     assert login.status_code == 200
-    assert login.json()["admin"] == {"username": "admin", "locale": "en-US"}
+    assert login.json()["admin"] == {
+        "username": "admin",
+        "locale": "en-US",
+        "role": "admin",
+    }
     assert first_csrf
     assert "HttpOnly" in login.headers["set-cookie"]
     assert "SameSite=lax" in login.headers["set-cookie"]

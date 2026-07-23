@@ -11,9 +11,13 @@ from chat4openapi.api.admin_embeds import router as admin_embeds_router
 from chat4openapi.api.agent_keys import router as agent_keys_router
 from chat4openapi.api.admin_auth import router as admin_auth_router
 from chat4openapi.api.admin_tools import router as admin_tools_router
-from chat4openapi.api.admin_providers import router as admin_providers_router
+from chat4openapi.api.admin_providers import (
+    build_router as admin_build_router,
+    router as admin_providers_router,
+)
 from chat4openapi.api.admin_skills import router as admin_skills_router
 from chat4openapi.api.admin_settings import router as admin_settings_router
+from chat4openapi.api.admin_users import router as admin_users_router
 from chat4openapi.api.errors import install_error_handlers
 from chat4openapi.api.embed_public import router as embed_public_router
 from chat4openapi.api.embed_agent import router as embed_agent_router
@@ -53,8 +57,10 @@ def create_app(frontend_dist: Path | None = None) -> FastAPI:
     app.include_router(agent_keys_router)
     app.include_router(admin_tools_router)
     app.include_router(admin_providers_router)
+    app.include_router(admin_build_router)
     app.include_router(admin_skills_router)
     app.include_router(admin_settings_router)
+    app.include_router(admin_users_router)
     app.include_router(tool_sessions_router)
     app.include_router(tool_oauth_router)
     app.include_router(chat_router)

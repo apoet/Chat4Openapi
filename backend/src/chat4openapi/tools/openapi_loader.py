@@ -15,6 +15,40 @@ class OpenAPIImportError(ValueError):
     pass
 
 
+def _supply_missing_parameter_schemas(document: dict[str, Any]) -> None:
+    parameter_lists: list[Any] = []
+    components = document.get("components")
+    if isinstance(components, dict):
+        parameters = components.get("parameters")
+        if isinstance(parameters, dict):
+            parameter_lists.append(list(parameters.values()))
+
+    paths = document.get("paths")
+    if isinstance(paths, dict):
+        for path_item in paths.values():
+            if not isinstance(path_item, dict):
+                continue
+            parameter_lists.append(path_item.get("parameters", []))
+            for method in ("get", "put", "post", "delete", "options", "head", "patch", "trace"):
+                operation = path_item.get(method)
+                if isinstance(operation, dict):
+                    parameter_lists.append(operation.get("parameters", []))
+
+    for parameters in parameter_lists:
+        if not isinstance(parameters, list):
+            continue
+        for parameter in parameters:
+            if (
+                isinstance(parameter, dict)
+                and "$ref" not in parameter
+                and isinstance(parameter.get("name"), str)
+                and parameter.get("in") in {"query", "header", "path", "cookie"}
+                and "schema" not in parameter
+                and "content" not in parameter
+            ):
+                parameter["schema"] = {"type": "string"}
+
+
 def _sanitize_references(value: Any) -> None:
     if isinstance(value, dict):
         reference = value.get("$ref")
@@ -46,6 +80,8 @@ def load_openapi(raw: bytes) -> dict[str, Any]:
     _sanitize_references(document)
     if str(document.get("swagger", "")).startswith("2."):
         return document
+    if str(document.get("openapi", "")).startswith("3."):
+        _supply_missing_parameter_schemas(document)
     try:
         validate(document)
     except OpenAPIValidationError as exc:
