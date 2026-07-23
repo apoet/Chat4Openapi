@@ -937,6 +937,7 @@ class ToolOAuthService:
                     "redirect_uri": flow_data.get("redirect_uri")
                     or config.get("redirect_uri"),
                     "code_verifier": flow_data["code_verifier"],
+                    "state": state,
                 }
             )
             response = await self._post_token(source, config, fields)

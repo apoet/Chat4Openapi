@@ -607,6 +607,7 @@ async def test_pkce_uses_s256_and_callback_state_is_one_time(db_session_factory)
         posted = parse_qs(token_request[0].content.decode())
         assert posted["code_verifier"] == [flow_data["code_verifier"]]
         assert posted["code"] == ["authorization-code"]
+        assert posted["state"] == [started.state]
         assert validated_urls == [
             "https://issuer.example.test/authorize",
             "https://issuer.example.test/token",
