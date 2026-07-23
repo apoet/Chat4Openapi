@@ -39,6 +39,7 @@ TOKEN_ENDPOINT_AUTH_METHODS = {
     "client_secret_post",
     "none",
 }
+OAUTH_GRANT_TYPES = {"authorization_code", "client_credentials"}
 RESERVED_TOKEN_HEADERS = {
     "authorization",
     "connection",
@@ -176,6 +177,19 @@ def _safe_token_params(value: Any) -> dict[str, str]:
     return params
 
 
+def _oauth_grant_type(config: Mapping[str, Any]) -> str:
+    configured = config.get("grant_type")
+    if configured in OAUTH_GRANT_TYPES:
+        return str(configured)
+    token_params = config.get("token_params")
+    if (
+        isinstance(token_params, Mapping)
+        and token_params.get("grant_type") == "client_credentials"
+    ):
+        return "client_credentials"
+    return "authorization_code"
+
+
 class ToolOAuthService:
     def __init__(
         self,
@@ -197,6 +211,7 @@ class ToolOAuthService:
         row = self._session.get(ApiSourceOAuthConfig, source.id)
         existing_secret: str | None = None
         existing_auth_method: str | None = None
+        existing_grant_type: str | None = None
         existing_token_headers: dict[str, str] = {}
         existing_token_params: dict[str, str] = {}
         if row is not None:
@@ -210,6 +225,8 @@ class ToolOAuthService:
             ):
                 existing_auth_method = existing["token_endpoint_auth_method"]
             if isinstance(existing, dict):
+                existing_grant_type = _oauth_grant_type(existing)
+            if isinstance(existing, dict):
                 existing_token_headers = _safe_token_headers(
                     existing.get("token_headers")
                 )
@@ -222,9 +239,20 @@ class ToolOAuthService:
             not isinstance(scope, str) or not scope.strip() for scope in scopes
         ):
             raise OAuthFlowError("oauth.config_invalid")
+        supplied_grant_type = supplied.get("grant_type")
+        supplied_token_params = supplied.get("token_params")
+        if (
+            supplied_grant_type is None
+            and isinstance(supplied_token_params, Mapping)
+            and supplied_token_params.get("grant_type") == "client_credentials"
+        ):
+            supplied_grant_type = "client_credentials"
         config = {
             "client_id": client_id.strip(),
             "client_secret": supplied.get("client_secret") or existing_secret,
+            "grant_type": supplied_grant_type
+            or existing_grant_type
+            or "authorization_code",
             "token_endpoint_auth_method": supplied.get(
                 "token_endpoint_auth_method"
             )
@@ -248,9 +276,14 @@ class ToolOAuthService:
             raise OAuthFlowError("oauth.config_invalid")
         if config["token_endpoint_auth_method"] not in TOKEN_ENDPOINT_AUTH_METHODS:
             raise OAuthFlowError("oauth.config_invalid")
+        if config["grant_type"] not in OAUTH_GRANT_TYPES:
+            raise OAuthFlowError("oauth.config_invalid")
         if (
-            config["token_endpoint_auth_method"]
-            in {"client_secret_basic", "client_secret_post"}
+            (
+                config["token_endpoint_auth_method"]
+                in {"client_secret_basic", "client_secret_post"}
+                or config["grant_type"] == "client_credentials"
+            )
             and not config["client_secret"]
         ):
             raise OAuthFlowError("oauth.config_invalid")
@@ -276,6 +309,7 @@ class ToolOAuthService:
             "enabled": row.enabled,
             "client_id": config["client_id"],
             "has_client_secret": bool(config.get("client_secret")),
+            "grant_type": _oauth_grant_type(config),
             "token_endpoint_auth_method": config.get(
                 "token_endpoint_auth_method", "auto"
             ),
@@ -413,6 +447,88 @@ class ToolOAuthService:
                 upstream_error=upstream_error[:128],
             )
         return response.status_code
+
+    def uses_client_credentials(self, source_id: int) -> bool:
+        row = self._session.get(ApiSourceOAuthConfig, source_id)
+        if row is None or not row.enabled:
+            return False
+        config = self._cipher.decrypt_json(row.encrypted_config)
+        if not isinstance(config, dict):
+            raise OAuthFlowError("oauth.not_configured")
+        return _oauth_grant_type(config) == "client_credentials"
+
+    async def client_credentials_auth(
+        self, source_id: int, *, force_refresh: bool = False
+    ) -> RequestAuth:
+        source = self._source(source_id)
+        row, config = self._config(source_id)
+        if _oauth_grant_type(config) != "client_credentials":
+            raise OAuthFlowError("oauth.client_credentials_not_configured")
+
+        cached = config.get("client_credentials_token")
+        if not force_refresh and isinstance(cached, dict):
+            access_token = cached.get("access_token")
+            token_type = cached.get("token_type")
+            expires_at = cached.get("expires_at")
+            try:
+                expiry = datetime.fromisoformat(str(expires_at))
+            except (TypeError, ValueError):
+                expiry = None
+            if (
+                isinstance(access_token, str)
+                and access_token
+                and isinstance(token_type, str)
+                and token_type
+                and expiry is not None
+                and expiry > self._now() + timedelta(seconds=30)
+            ):
+                return RequestAuth(
+                    headers={"Authorization": f"{token_type} {access_token}"}
+                )
+
+        fields = self._client_fields(config)
+        fields["grant_type"] = "client_credentials"
+        if config.get("scopes"):
+            fields["scope"] = " ".join(config["scopes"])
+        response = await self._post_token(source, config, fields)
+        payload, _business_code, _business_message = self._token_response_json(
+            response
+        )
+        access_token = payload.get("access_token")
+        if (
+            response.status_code >= 400
+            or not isinstance(access_token, str)
+            or not access_token
+            or len(access_token) > 16_384
+            or any(ord(character) < 33 or ord(character) == 127 for character in access_token)
+        ):
+            raise OAuthFlowError("oauth.client_credentials_failed")
+        token_type = payload.get("token_type", "Bearer")
+        if (
+            not isinstance(token_type, str)
+            or not token_type
+            or not token_type.isascii()
+            or any(
+                not (character.isalnum() or character in "-._~+")
+                for character in token_type
+            )
+        ):
+            token_type = "Bearer"
+        expires_in = _positive_seconds(
+            payload.get("expires_in"),
+            default=300,
+            maximum=30 * 24 * 60 * 60,
+        )
+        config["client_credentials_token"] = {
+            "access_token": access_token,
+            "token_type": token_type,
+            "expires_at": (self._now() + timedelta(seconds=expires_in)).isoformat(),
+        }
+        row.encrypted_config = self._cipher.encrypt_json(config)
+        self._session.commit()
+        return RequestAuth(
+            headers={"Authorization": f"{token_type} {access_token}"}
+        )
 
     async def _post_token_basic(
         self,

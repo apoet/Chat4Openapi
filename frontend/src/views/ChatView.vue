@@ -16,6 +16,7 @@ import AgentSelect from '../components/AgentSelect.vue'
 import ChatAuthorization, {
   type ChatAuthorizationSource,
 } from '../components/ChatAuthorization.vue'
+import ChatLoadingIndicator from '../components/ChatLoadingIndicator.vue'
 import MarkdownMessage from '../components/MarkdownMessage.vue'
 
 type ChatMessage = {
@@ -651,6 +652,7 @@ function useSuggestedQuestion(question: string): void {
               {{ t('chat.loadedSkills', { names: skillNames(loadedSkillIds) }) }}
             </small>
           </article>
+          <ChatLoadingIndicator v-if="sending" />
           <p v-if="errorMessage" class="chat-error" role="alert">{{ errorMessage }}</p>
           <ChatAuthorization
             v-if="authorization && selectedAgentId"

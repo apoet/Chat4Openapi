@@ -2,6 +2,8 @@
 import { useI18n } from 'vue-i18n'
 
 import logoUrl from '../../../logo.png'
+import ChatLoadingIndicator from './ChatLoadingIndicator.vue'
+import MarkdownMessage from './MarkdownMessage.vue'
 
 defineProps<{
   agentName: string
@@ -73,8 +75,14 @@ const { t } = useI18n()
         :class="`is-${message.role}`"
       >
         <span>{{ message.role === 'user' ? t('embed.you') : agentName }}</span>
-        <p>{{ message.content }}</p>
+        <p v-if="message.role === 'user'" class="embed-message-content">
+          {{ message.content }}
+        </p>
+        <div v-else class="embed-message-content">
+          <MarkdownMessage :content="message.content" />
+        </div>
       </article>
+      <ChatLoadingIndicator v-if="sending" />
       <p v-if="error" class="embed-error" role="alert">{{ error }}</p>
     </main>
 
@@ -123,10 +131,10 @@ const { t } = useI18n()
 .embed-suggestion button:focus-visible { outline: 3px solid rgba(101,88,232,.22); outline-offset: 2px; }
 .embed-message { max-width: 86%; margin: 0 0 16px; }
 .embed-message > span { display: block; margin: 0 5px 5px; color: #858c98; font-size: 10px; }
-.embed-message p { margin: 0; padding: 11px 13px; border-radius: 14px 14px 14px 4px; white-space: pre-wrap; line-height: 1.55; background: white; box-shadow: 0 2px 12px rgba(17,25,40,.07); }
+.embed-message-content { min-width: 0; margin: 0; padding: 11px 13px; overflow: hidden; border-radius: 14px 14px 14px 4px; line-height: 1.55; background: white; box-shadow: 0 2px 12px rgba(17,25,40,.07); }
 .embed-message.is-user { margin-left: auto; }
 .embed-message.is-user > span { text-align: right; }
-.embed-message.is-user p { border-radius: 14px 14px 4px 14px; color: white; background: #6558e8; }
+.embed-message.is-user .embed-message-content { white-space: pre-wrap; border-radius: 14px 14px 4px 14px; color: white; background: #6558e8; }
 .embed-error { padding: 10px 12px; border-radius: 10px; color: #a52f45; background: #fff0f2; font-size: 12px; }
 .embed-composer { padding: 12px; display: flex; align-items: flex-end; gap: 9px; border-top: 1px solid #e5e1d8; background: white; }
 .embed-composer textarea { min-width: 0; flex: 1; resize: none; padding: 10px 11px; border: 1px solid #dcd8cf; border-radius: 11px; outline: none; color: inherit; background: #fbfaf7; line-height: 1.4; }

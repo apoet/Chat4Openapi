@@ -1516,6 +1516,79 @@ async def test_oauth_configured_tool_without_session_requires_authorization(
 
 
 @pytest.mark.asyncio
+async def test_client_credentials_oauth_executes_without_user_authorization(
+    db_session_factory,
+    monkeypatch,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as session:
+        skill, tool = seed_runtime(session, cipher)
+        session.add(
+            ApiSourceOAuthConfig(
+                api_source_id=tool.api_source_id,
+                encrypted_config=cipher.encrypt_json(
+                    {
+                        "client_id": "service-client",
+                        "client_secret": "service-secret",
+                        "grant_type": "client_credentials",
+                        "token_url": "https://issuer.test/token",
+                    }
+                ),
+                enabled=True,
+            )
+        )
+        session.commit()
+
+        async def service_auth(_self, source_id, *, force_refresh=False):
+            assert source_id == tool.api_source_id
+            assert force_refresh is False
+            return RequestAuth(
+                headers={"Authorization": "Bearer service-access"}
+            )
+
+        monkeypatch.setattr(
+            "chat4openapi.chat.agent.ToolOAuthService.client_credentials_auth",
+            service_auth,
+        )
+        executor = RecordingExecutor()
+        result = await AgentRuntime(
+            session,
+            cipher,
+            SequencedLlm(
+                [
+                    CanonicalResponse(
+                        content="",
+                        tool_calls=[
+                            CanonicalToolCall(
+                                id="load",
+                                name="load_skills",
+                                arguments={"skill_ids": [skill.id]},
+                            )
+                        ],
+                    ),
+                    CanonicalResponse(
+                        content="",
+                        tool_calls=[
+                            CanonicalToolCall(
+                                id="tool",
+                                name="get_gene",
+                                arguments={"symbol": "ABCA4"},
+                            )
+                        ],
+                    ),
+                    CanonicalResponse(content="Service result."),
+                ]
+            ),
+            executor,
+        ).run(turn("lookup", [skill.id], False))
+
+        assert result.status == "completed"
+        assert executor.calls[0][2].headers == {
+            "Authorization": "Bearer service-access"
+        }
+
+
+@pytest.mark.asyncio
 async def test_browser_chat_pauses_for_oauth_authorization(
     db_session_factory,
 ) -> None:
@@ -1599,16 +1672,6 @@ async def test_browser_chat_pauses_for_oauth_authorization(
             cipher,
             SequencedLlm(
                 [
-                    CanonicalResponse(
-                        content="",
-                        tool_calls=[
-                            CanonicalToolCall(
-                                id="retry",
-                                name="get_gene",
-                                arguments={"symbol": "ABCA4"},
-                            )
-                        ],
-                    ),
                     CanonicalResponse(content="Authorized result."),
                 ]
             ),

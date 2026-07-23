@@ -161,6 +161,30 @@ describe('Skills and chat', () => {
     await waitFor(() => expect(stream.scrollTop).toBe(640))
   })
 
+  it('shows a loading animation while a Chat turn is running', async () => {
+    const turn = deferred<Response>()
+    vi.stubGlobal('fetch', chatFetch({ turns: [turn.promise] }))
+
+    render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+
+    await screen.findByRole('option', { name: 'Research Agent — Default' })
+    await fireEvent.update(screen.getByLabelText('Message'), 'Load projects')
+    await fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    expect(await screen.findByRole('status', { name: 'Assistant is working…' })).toBeTruthy()
+
+    turn.resolve(response({
+      status: 'completed', conversation_id: 'conversation-loading', agent_id: 1,
+      agent_name: 'Research Agent', message: 'Done.', loaded_skill_ids: [], pending: null,
+    }))
+    await screen.findByText('Done.')
+    await waitFor(() => {
+      expect(screen.queryByRole('status', { name: 'Assistant is working…' })).toBeNull()
+    })
+  })
+
   it('loads history only from the current browser subject namespace', async () => {
     const session = (id: string, title: string) => ({
       version: 3, id, conversationId: `conversation-${id}`, title,

@@ -41,6 +41,9 @@ class OAuthConfigRequest(BaseModel):
     enabled: bool = True
     client_id: str = Field(min_length=1, max_length=512)
     client_secret: str | None = Field(default=None, max_length=2048)
+    grant_type: Literal["authorization_code", "client_credentials"] = (
+        "authorization_code"
+    )
     token_endpoint_auth_method: Literal[
         "auto", "client_secret_basic", "client_secret_post", "none"
     ] | None = None
@@ -58,6 +61,7 @@ class OAuthConfigSummary(BaseModel):
     enabled: bool
     client_id: str
     has_client_secret: bool
+    grant_type: Literal["authorization_code", "client_credentials"]
     token_endpoint_auth_method: Literal[
         "auto", "client_secret_basic", "client_secret_post", "none"
     ]

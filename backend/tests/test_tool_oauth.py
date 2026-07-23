@@ -118,6 +118,62 @@ def _configure(service: ToolOAuthService, source_id: int) -> None:
 
 
 @pytest.mark.asyncio
+async def test_client_credentials_mode_caches_an_encrypted_service_token(
+    db_session_factory,
+) -> None:
+    _secret, _agent_id, _key_id, source_id = _seed(db_session_factory)
+    now = datetime(2026, 7, 22, 8, 0, 0)
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "service-access-secret",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+            },
+        )
+
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as db:
+        service = ToolOAuthService(
+            db,
+            cipher,
+            transport=httpx.MockTransport(handler),
+            network_validator=allow_network,
+            now=lambda: now,
+        )
+        service.configure_source(
+            source_id,
+            {
+                "client_id": "service-client",
+                "client_secret": "service-secret",
+                "grant_type": "client_credentials",
+                "token_endpoint_auth_method": "client_secret_basic",
+                "token_url": "https://issuer.example.test/token",
+                "scopes": ["projects.read"],
+            },
+        )
+
+        first = await service.client_credentials_auth(source_id)
+        second = await service.client_credentials_auth(source_id)
+
+        assert first.headers == {"Authorization": "Bearer service-access-secret"}
+        assert second == first
+        assert len(requests) == 1
+        assert parse_qs(requests[0].content.decode()) == {
+            "grant_type": ["client_credentials"],
+            "scope": ["projects.read"],
+        }
+        assert service.config_summary(source_id)["grant_type"] == "client_credentials"
+        row = db.get(ApiSourceOAuthConfig, source_id)
+        assert row is not None
+        assert b"service-access-secret" not in row.encrypted_config
+
+
+@pytest.mark.asyncio
 async def test_device_flow_encrypts_codes_and_becomes_ready(db_session_factory) -> None:
     _secret, agent_id, key_id, source_id = _seed(db_session_factory)
     now = datetime(2026, 7, 22, 8, 0, 0)

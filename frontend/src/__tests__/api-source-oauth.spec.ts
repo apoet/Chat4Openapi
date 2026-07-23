@@ -38,6 +38,7 @@ it('configures OAuth on its API Source and displays the effective callback URI',
     .mockResolvedValueOnce(response({
       api_source_id: 9, enabled: true, client_id: 'orders-client',
       has_client_secret: true, authorization_url: 'https://identity.example/authorize',
+      grant_type: 'authorization_code',
       token_endpoint_auth_method: 'client_secret_basic',
       token_headers: { 'tenant-id': '1' },
       token_params: { audience: 'orders' },
@@ -49,6 +50,7 @@ it('configures OAuth on its API Source and displays the effective callback URI',
     .mockResolvedValueOnce(response({
       api_source_id: 9, enabled: true, client_id: 'orders-client',
       has_client_secret: true, authorization_url: 'https://identity.example/authorize',
+      grant_type: 'client_credentials',
       token_endpoint_auth_method: 'client_secret_basic',
       token_headers: { 'tenant-id': '2' },
       token_params: { audience: 'invoices' },
@@ -60,6 +62,7 @@ it('configures OAuth on its API Source and displays the effective callback URI',
   const wrapper = mount(ApiSourcesView, { global: { plugins: [i18n] } })
   await flushPromises()
 
+  expect(wrapper.get('[data-testid="source-mcp-9"]').text()).toBe('MCP')
   await wrapper.get('[data-testid="source-oauth-9"]').trigger('click')
   await flushPromises()
 
@@ -72,6 +75,12 @@ it('configures OAuth on its API Source and displays the effective callback URI',
     'value',
     'client_secret_basic',
   )
+  expect(wrapper.get('[data-testid="oauth-grant-type"]').element).toHaveProperty(
+    'value',
+    'authorization_code',
+  )
+  expect(wrapper.get('[aria-describedby="oauth-grant-type-help"]').attributes('aria-label'))
+    .toContain('OpenAI/Anthropic')
   expect(wrapper.get('[data-testid="oauth-token-headers"]').element).toHaveProperty(
     'value',
     '{\n  "tenant-id": "1"\n}',
@@ -87,6 +96,11 @@ it('configures OAuth on its API Source and displays the effective callback URI',
   await wrapper.get('[data-testid="oauth-token-params"]').setValue(
     '{ "audience": "invoices" }',
   )
+  await wrapper.get('[data-testid="oauth-grant-type"]').setValue(
+    'client_credentials',
+  )
+  expect(wrapper.find('input[type="url"][value="https://identity.example/authorize"]').exists())
+    .toBe(false)
   await wrapper.get('.oauth-panel form').trigger('submit')
   await flushPromises()
 
@@ -94,6 +108,7 @@ it('configures OAuth on its API Source and displays the effective callback URI',
   const saveRequest = fetchMock.mock.calls.at(-1)
   expect(saveRequest?.[0]).toBe('/api/admin/sources/9/oauth')
   expect(JSON.parse(String(saveRequest?.[1]?.body))).toMatchObject({
+    grant_type: 'client_credentials',
     token_headers: { 'tenant-id': '2' },
     token_params: { audience: 'invoices' },
   })

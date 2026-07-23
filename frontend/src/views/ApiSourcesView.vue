@@ -8,9 +8,11 @@ import type {
   ApiSourceSummary,
   OAuthConfigSummary,
   OAuthConfigWrite,
+  OAuthGrantType,
   OAuthTokenEndpointAuthMethod,
   ToolAuthConfig,
 } from '../api/contracts'
+import SourceMcpUsagePanel from '../components/SourceMcpUsagePanel.vue'
 import { useAuthStore } from '../stores/auth'
 import { useToolsStore } from '../stores/tools'
 
@@ -33,6 +35,7 @@ const editAllowPrivateNetworks = ref(false)
 const refreshingId = ref<number | null>(null)
 const refreshNotice = ref<{ sourceId: number; message: string } | null>(null)
 const oauthSource = ref<ApiSourceSummary | null>(null)
+const mcpSource = ref<ApiSourceSummary | null>(null)
 const authMode = ref<'oauth' | 'tool'>('oauth')
 const toolAuthConfig = ref<ToolAuthConfig>({
   enabled: false,
@@ -53,6 +56,7 @@ const oauthSummary = ref<OAuthConfigSummary | null>(null)
 const oauthEnabled = ref(true)
 const oauthClientId = ref('')
 const oauthClientSecret = ref('')
+const oauthGrantType = ref<OAuthGrantType>('authorization_code')
 const oauthTokenAuthMethod = ref<OAuthTokenEndpointAuthMethod>('auto')
 const oauthTokenHeaders = ref('{}')
 const oauthTokenParams = ref('{}')
@@ -192,6 +196,7 @@ function fillOAuth(summary: OAuthConfigSummary | null): void {
   oauthEnabled.value = summary?.enabled ?? true
   oauthClientId.value = summary?.client_id ?? ''
   oauthClientSecret.value = ''
+  oauthGrantType.value = summary?.grant_type ?? 'authorization_code'
   oauthTokenAuthMethod.value = summary?.token_endpoint_auth_method ?? 'auto'
   oauthTokenHeaders.value = JSON.stringify(summary?.token_headers ?? {}, null, 2)
   oauthTokenParams.value = JSON.stringify(summary?.token_params ?? {}, null, 2)
@@ -204,6 +209,7 @@ function fillOAuth(summary: OAuthConfigSummary | null): void {
 }
 
 async function openOAuth(source: ApiSourceSummary): Promise<void> {
+  mcpSource.value = null
   oauthSource.value = source
   authMode.value = source.auth_mode === 'tool' ? 'tool' : 'oauth'
   if (store.tools.length === 0) await store.loadTools()
@@ -229,6 +235,12 @@ async function openOAuth(source: ApiSourceSummary): Promise<void> {
     if (!(error instanceof ApiError) || !['oauth.not_configured', 'http.404'].includes(error.code)) throw error
     fillOAuth(null)
   }
+}
+
+async function openMcp(source: ApiSourceSummary): Promise<void> {
+  oauthSource.value = null
+  mcpSource.value = source
+  if (store.tools.length === 0) await store.loadTools()
 }
 
 async function saveToolAuth(): Promise<void> {
@@ -286,6 +298,7 @@ async function saveOAuth(): Promise<void> {
     enabled: oauthEnabled.value,
     client_id: oauthClientId.value.trim(),
     client_secret: oauthClientSecret.value.trim() || null,
+    grant_type: oauthGrantType.value,
     token_endpoint_auth_method: oauthTokenAuthMethod.value,
     token_headers: tokenHeaders,
     token_params: tokenParams,
@@ -431,10 +444,16 @@ const sourceLoginTools = () => store.tools.filter(
         <template v-else>
           <div class="resource-copy"><strong>{{ source.name }}</strong><p>{{ source.base_url }}</p><p v-if="source.document_url">{{ source.document_url }}</p><p v-if="refreshNotice?.sourceId === source.id" class="refresh-notice">{{ refreshNotice.message }}</p></div>
           <span :class="['status-pill', source.enabled ? 'enabled' : 'disabled']">{{ source.enabled ? t('tools.enabled') : t('tools.disabled') }}</span>
-          <footer class="row-actions"><button class="secondary-action" @click="viewTools(source)">{{ t('sources.viewTools') }}</button><button class="secondary-action" :data-testid="`source-oauth-${source.id}`" @click="openOAuth(source)">{{ t('sources.auth.open') }}</button><button v-if="source.document_url" class="secondary-action" :disabled="refreshingId === source.id" @click="refreshSource(source)">{{ refreshingId === source.id ? t('sources.updating') : t('sources.update') }}</button><label v-else class="secondary-action source-refresh-file"><span>{{ t('sources.chooseUpdateFile') }}</span><input type="file" accept=".json,.yaml,.yml,application/json,application/yaml" :aria-label="t('sources.chooseUpdateFile')" :disabled="refreshingId === source.id" @change="refreshSourceFile(source, $event)" /></label><button class="secondary-action" @click="startEdit(source)">{{ t('skills.edit') }}</button><button class="secondary-action" @click="store.setSourceEnabled(source, !source.enabled)">{{ source.enabled ? t('tools.disable') : t('tools.enable') }}</button><button class="danger-action" @click="store.deleteSource(source)">{{ t('tools.delete') }}</button></footer>
+          <footer class="row-actions"><button class="secondary-action" @click="viewTools(source)">{{ t('sources.viewTools') }}</button><button class="secondary-action" :data-testid="`source-mcp-${source.id}`" @click="openMcp(source)">MCP</button><button class="secondary-action" :data-testid="`source-oauth-${source.id}`" @click="openOAuth(source)">{{ t('sources.auth.open') }}</button><button v-if="source.document_url" class="secondary-action" :disabled="refreshingId === source.id" @click="refreshSource(source)">{{ refreshingId === source.id ? t('sources.updating') : t('sources.update') }}</button><label v-else class="secondary-action source-refresh-file"><span>{{ t('sources.chooseUpdateFile') }}</span><input type="file" accept=".json,.yaml,.yml,application/json,application/yaml" :aria-label="t('sources.chooseUpdateFile')" :disabled="refreshingId === source.id" @change="refreshSourceFile(source, $event)" /></label><button class="secondary-action" @click="startEdit(source)">{{ t('skills.edit') }}</button><button class="secondary-action" @click="store.setSourceEnabled(source, !source.enabled)">{{ source.enabled ? t('tools.disable') : t('tools.enable') }}</button><button class="danger-action" @click="store.deleteSource(source)">{{ t('tools.delete') }}</button></footer>
         </template>
       </article>
     </section>
+    <SourceMcpUsagePanel
+      v-if="mcpSource"
+      :source="mcpSource"
+      :tools="store.tools"
+      @close="mcpSource = null"
+    />
     <section v-if="oauthSource" class="import-panel oauth-panel">
       <div class="panel-heading"><div><p class="eyebrow">{{ t('sources.auth.eyebrow') }}</p><h2>{{ t('sources.auth.title', { name: oauthSource.name }) }}</h2></div><button type="button" class="text-button" @click="oauthSource = null">×</button></div>
       <div class="segmented">
@@ -444,15 +463,35 @@ const sourceLoginTools = () => store.tools.filter(
       <form v-if="authMode === 'oauth'" class="form-grid" @submit.prevent="saveOAuth">
         <label>{{ t('sources.oauth.clientId') }}<input v-model="oauthClientId" required /></label>
         <label>{{ t('sources.oauth.clientSecret') }}<input v-model="oauthClientSecret" type="password" :placeholder="oauthSummary?.has_client_secret ? t('sources.oauth.keepSecret') : ''" /></label>
+        <label>
+          <span class="oauth-field-label">
+            {{ t('sources.oauth.grantType') }}
+            <span class="oauth-help">
+              <button
+                type="button"
+                class="oauth-help-trigger"
+                :aria-label="t('sources.oauth.grantTypeHelp')"
+                aria-describedby="oauth-grant-type-help"
+              >?</button>
+              <span id="oauth-grant-type-help" class="oauth-help-content" role="tooltip">
+                {{ t('sources.oauth.grantTypeHelp') }}
+              </span>
+            </span>
+          </span>
+          <select v-model="oauthGrantType" data-testid="oauth-grant-type">
+            <option value="authorization_code">{{ t('sources.oauth.authorizationCode') }}</option>
+            <option value="client_credentials">{{ t('sources.oauth.clientCredentials') }}</option>
+          </select>
+        </label>
         <label>{{ t('sources.oauth.tokenAuthMethod') }}<select v-model="oauthTokenAuthMethod" data-testid="oauth-token-auth-method"><option value="auto">{{ t('sources.oauth.tokenAuthAuto') }}</option><option value="client_secret_basic">client_secret_basic</option><option value="client_secret_post">client_secret_post</option><option value="none">{{ t('sources.oauth.tokenAuthNone') }}</option></select></label>
         <label>{{ t('sources.oauth.tokenHeaders') }}<textarea v-model="oauthTokenHeaders" data-testid="oauth-token-headers" spellcheck="false"></textarea><small class="muted">{{ t('sources.oauth.tokenHeadersHint') }}</small></label>
         <label>{{ t('sources.oauth.tokenParams') }}<textarea v-model="oauthTokenParams" data-testid="oauth-token-params" spellcheck="false"></textarea><small class="muted">{{ t('sources.oauth.tokenParamsHint') }}</small></label>
-        <label>{{ t('sources.oauth.authorizationUrl') }}<input v-model="oauthAuthorizationUrl" type="url" /><small v-if="oauthAuthorizationUrl" class="muted">{{ oauthAuthorizationUrl }}</small></label>
+        <label v-if="oauthGrantType === 'authorization_code'">{{ t('sources.oauth.authorizationUrl') }}<input v-model="oauthAuthorizationUrl" type="url" /><small v-if="oauthAuthorizationUrl" class="muted">{{ oauthAuthorizationUrl }}</small></label>
         <label>{{ t('sources.oauth.tokenUrl') }}<input v-model="oauthTokenUrl" type="url" required /></label>
-        <label>{{ t('sources.oauth.deviceUrl') }}<input v-model="oauthDeviceUrl" type="url" /></label>
+        <label v-if="oauthGrantType === 'authorization_code'">{{ t('sources.oauth.deviceUrl') }}<input v-model="oauthDeviceUrl" type="url" /></label>
         <label>{{ t('sources.oauth.scopes') }}<input v-model="oauthScopes" /></label>
-        <label>{{ t('sources.oauth.redirectOverride') }}<input v-model="oauthRedirectUri" type="url" /></label>
-        <div class="oauth-callbacks"><p><strong>{{ t('sources.oauth.recommended') }}</strong> {{ oauthSummary?.recommended_redirect_uri || t('sources.oauth.baseUrlRequired') }}</p><p><strong>{{ t('sources.oauth.effective') }}</strong> {{ oauthSummary?.effective_redirect_uri || oauthRedirectUri || t('sources.oauth.baseUrlRequired') }}</p></div>
+        <label v-if="oauthGrantType === 'authorization_code'">{{ t('sources.oauth.redirectOverride') }}<input v-model="oauthRedirectUri" type="url" /></label>
+        <div v-if="oauthGrantType === 'authorization_code'" class="oauth-callbacks"><p><strong>{{ t('sources.oauth.recommended') }}</strong> {{ oauthSummary?.recommended_redirect_uri || t('sources.oauth.baseUrlRequired') }}</p><p><strong>{{ t('sources.oauth.effective') }}</strong> {{ oauthSummary?.effective_redirect_uri || oauthRedirectUri || t('sources.oauth.baseUrlRequired') }}</p></div>
         <p v-if="oauthConfigError" class="form-error">{{ oauthConfigError }}</p>
         <div class="form-actions auth-form-actions">
           <button type="submit" class="primary-action" :disabled="oauthPending || !oauthClientId || !oauthTokenUrl">{{ t('sources.oauth.save') }}</button>
@@ -488,3 +527,15 @@ const sourceLoginTools = () => store.tools.filter(
     </section>
   </main>
 </template>
+
+<style scoped>
+.oauth-field-label { display: flex; align-items: center; gap: 6px; }
+.oauth-help { position: relative; display: inline-flex; }
+.oauth-help-trigger { width: 18px; height: 18px; padding: 0; border: 1px solid #9aa2b1; border-radius: 50%; color: #626b7b; background: white; font: inherit; font-size: 11px; font-weight: 800; line-height: 16px; cursor: help; }
+.oauth-help-trigger:focus-visible { outline: 3px solid rgba(101,88,232,.24); outline-offset: 2px; }
+.oauth-help-content { position: absolute; z-index: 5; bottom: calc(100% + 8px); left: 50%; width: min(300px, 70vw); padding: 9px 11px; border-radius: 8px; color: white; background: #172033; box-shadow: 0 8px 24px rgba(20,28,45,.2); font-size: 12px; font-weight: 500; line-height: 1.5; opacity: 0; pointer-events: none; transform: translate(-50%, 4px); transition: opacity .15s ease, transform .15s ease; }
+.oauth-help:hover .oauth-help-content, .oauth-help:focus-within .oauth-help-content { opacity: 1; transform: translate(-50%, 0); }
+@media (prefers-reduced-motion: reduce) {
+  .oauth-help-content { transition: none; }
+}
+</style>

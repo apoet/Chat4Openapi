@@ -32,6 +32,7 @@ from chat4openapi.models import (
     Tool,
 )
 from chat4openapi.security.encryption import SecretCipher
+from chat4openapi.tool_sessions.oauth import OAuthFlowError, ToolOAuthService
 from chat4openapi.tool_sessions.service import (
     ToolSessionError,
     ToolSessionExpired,
@@ -180,6 +181,11 @@ class AgentRuntime:
             if request.conversation_id is not None
             else None
         )
+        resuming_authorization = bool(
+            existing is not None
+            and existing.agent_status == "authorization_required"
+            and not request.user_content
+        )
         if existing is not None and not self._request_owns(existing, request):
             raise AgentError("agent.conversation_not_found")
         try:
@@ -207,6 +213,10 @@ class AgentRuntime:
         conversation.agent_status = "running"
         conversation.latest_failure_summary = None
         self._session.commit()
+        if resuming_authorization:
+            resumed = await self._resume_authorized_tool(conversation, request)
+            if resumed is not None:
+                return resumed
         if conversation.pending_clarification is not None:
             pending = conversation.pending_clarification
             self._persist_message(
@@ -510,6 +520,112 @@ class AgentRuntime:
                 flows.append("swagger")
         return flows
 
+    async def _resume_authorized_tool(
+        self,
+        conversation: Conversation,
+        request: AgentTurnRequest,
+    ) -> AgentTurnResult | None:
+        pending = self._pending_authorization_call(conversation.id)
+        if pending is None:
+            return None
+        tool_message, call = pending
+        tool = self._bound_tools(
+            conversation.agent_id, conversation.loaded_skill_ids
+        ).models.get(call.name)
+        if tool is None or not self._tool_is_authorized(conversation, tool):
+            return None
+
+        observation = await self._execute_tool(
+            tool,
+            call.arguments,
+            request.tool_session_id,
+            agent_id=request.agent_id,
+            agent_key_id=request.tool_owner_agent_key_id or request.agent_key_id,
+            admin_session_id=request.admin_session_id,
+            embed_session_id=request.embed_session_id,
+            browser_chat_session_id=request.browser_chat_session_id,
+        )
+        if (
+            isinstance(observation, dict)
+            and observation.get("error")
+            in {"tool_authorization_required", "tool_reauthorization_required"}
+        ):
+            source = self._session.get(ApiSource, tool.api_source_id)
+            authorization = {
+                "api_source_id": source.id if source is not None else None,
+                "api_source_name": source.name if source is not None else call.name,
+                "flows": self._authorization_flows(source),
+            }
+            conversation.agent_status = "authorization_required"
+            self._session.commit()
+            return AgentTurnResult(
+                conversation_id=conversation.id,
+                status="authorization_required",
+                content="",
+                loaded_skill_ids=list(conversation.loaded_skill_ids),
+                pending=authorization,
+                input_tokens=0,
+                output_tokens=0,
+            )
+
+        tool_message.content = {
+            "text": observation,
+            "tool_call_id": call.id,
+            "name": call.name,
+        }
+        self._session.commit()
+        return None
+
+    def _pending_authorization_call(
+        self, conversation_id: str
+    ) -> tuple[ChatMessage, CanonicalToolCall] | None:
+        tool_message = self._session.scalar(
+            select(ChatMessage)
+            .where(
+                ChatMessage.conversation_id == conversation_id,
+                ChatMessage.role == "tool",
+            )
+            .order_by(ChatMessage.sequence.desc())
+            .limit(1)
+        )
+        if tool_message is None:
+            return None
+        observation = tool_message.content.get("text")
+        if (
+            not isinstance(observation, dict)
+            or observation.get("error")
+            not in {"tool_authorization_required", "tool_reauthorization_required"}
+        ):
+            return None
+        call_id = tool_message.content.get("tool_call_id")
+        assistant_message = self._session.scalar(
+            select(ChatMessage)
+            .where(
+                ChatMessage.conversation_id == conversation_id,
+                ChatMessage.role == "assistant",
+                ChatMessage.sequence < tool_message.sequence,
+            )
+            .order_by(ChatMessage.sequence.desc())
+            .limit(1)
+        )
+        if assistant_message is None:
+            return None
+        stored_call = next(
+            (
+                item
+                for item in assistant_message.content.get("tool_calls", [])
+                if item.get("id") == call_id
+            ),
+            None,
+        )
+        if stored_call is None:
+            return None
+        return tool_message, CanonicalToolCall(
+            id=str(stored_call["id"]),
+            name=str(stored_call["name"]),
+            arguments=dict(stored_call.get("arguments") or {}),
+        )
+
     def _conversation(
         self, request: AgentTurnRequest, agent: Agent
     ) -> tuple[Conversation, list[Skill]]:
@@ -737,7 +853,26 @@ class AgentRuntime:
     ) -> Any:
         try:
             policy = resolve_tool_execution_policy(self._session, tool)
-            if browser_chat_session_id is not None and policy.authorization_required:
+            oauth_service = ToolOAuthService(self._session, self._cipher)
+            if (
+                policy.authorization_required
+                and oauth_service.uses_client_credentials(policy.source.id)
+            ):
+                auth = await oauth_service.client_credentials_auth(policy.source.id)
+                try:
+                    result = await self._tool_runner.execute(
+                        tool, policy.source, arguments, auth
+                    )
+                except ToolExecutionError as exc:
+                    if exc.status_code != 401:
+                        raise
+                    auth = await oauth_service.client_credentials_auth(
+                        policy.source.id, force_refresh=True
+                    )
+                    result = await self._tool_runner.execute(
+                        tool, policy.source, arguments, auth
+                    )
+            elif browser_chat_session_id is not None and policy.authorization_required:
                 result = await ToolSessionService(
                     self._session, self._cipher, self._tool_runner
                 ).execute_for_browser(
@@ -783,6 +918,8 @@ class AgentRuntime:
             return {"error": "tool_reauthorization_required", "tool": tool.name}
         except ToolSessionError:
             return {"error": "tool_session_error", "tool": tool.name}
+        except OAuthFlowError:
+            return {"error": "oauth_client_credentials_failed", "tool": tool.name}
 
     def _persist_message(self, conversation_id: str, role: str, content: dict[str, Any]) -> None:
         current = self._session.scalar(

@@ -6,6 +6,7 @@ import { routerKey } from 'vue-router'
 import { ApiError } from '../api/client'
 import type { AgentConfig, AgentConfigWrite } from '../api/contracts'
 import AgentEditor from '../components/AgentEditor.vue'
+import AgentApiUsagePanel from '../components/AgentApiUsagePanel.vue'
 import AgentKeyPanel from '../components/AgentKeyPanel.vue'
 import AgentEmbedPanel from '../components/AgentEmbedPanel.vue'
 import { AgentSavePartialError, useAgentsStore } from '../stores/agents'
@@ -161,6 +162,7 @@ async function remove(): Promise<void> {
           </div>
           <AgentEditor :agent="creating ? null : selectedAgent" :providers="store.providers" :skills="store.skills" :pending="interactionLocked" @save="save" @cancel="creating = false; selectedId = store.agents[0]?.id ?? null" />
           <AgentKeyPanel v-if="selectedAgent && !creating" :agent-id="selectedAgent.id" @busy-change="keyBusy = $event" @error="showError($event, 'keys_failed')" />
+          <AgentApiUsagePanel v-if="selectedAgent && !creating" :agent-id="selectedAgent.id" />
           <AgentEmbedPanel v-if="selectedAgent && !creating" :agent-id="selectedAgent.id" />
         </template>
         <section v-else class="empty-state">{{ t('agent.chooseAgent') }}</section>

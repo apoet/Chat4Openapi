@@ -167,6 +167,7 @@ export interface OAuthConfigSummary {
   enabled: boolean
   client_id: string
   has_client_secret: boolean
+  grant_type: OAuthGrantType
   token_endpoint_auth_method: OAuthTokenEndpointAuthMethod
   token_headers: Record<string, string>
   token_params: Record<string, string>
@@ -185,10 +186,13 @@ export type OAuthTokenEndpointAuthMethod =
   | 'client_secret_post'
   | 'none'
 
+export type OAuthGrantType = 'authorization_code' | 'client_credentials'
+
 export interface OAuthConfigWrite {
   enabled: boolean
   client_id: string
   client_secret: string | null
+  grant_type: OAuthGrantType
   token_endpoint_auth_method: OAuthTokenEndpointAuthMethod
   token_headers: Record<string, string>
   token_params: Record<string, string>
