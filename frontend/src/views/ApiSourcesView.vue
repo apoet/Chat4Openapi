@@ -5,6 +5,7 @@ import { routerKey } from 'vue-router'
 
 import { ApiError, request } from '../api/client'
 import type {
+  AutoAgentifyResult,
   ApiSourceSummary,
   OAuthConfigSummary,
   OAuthConfigWrite,
@@ -12,6 +13,7 @@ import type {
   OAuthTokenEndpointAuthMethod,
   ToolAuthConfig,
 } from '../api/contracts'
+import AutoAgentifyPanel from '../components/AutoAgentifyPanel.vue'
 import SourceMcpUsagePanel from '../components/SourceMcpUsagePanel.vue'
 import { useAuthStore } from '../stores/auth'
 import { useToolsStore } from '../stores/tools'
@@ -74,6 +76,7 @@ const authTestResult = ref<string | null>(null)
 const authTestSucceeded = ref(false)
 const toolTestUsername = ref('')
 const toolTestPassword = ref('')
+const showAutoAgentify = ref(false)
 
 onMounted(() => void store.loadSources())
 
@@ -409,13 +412,19 @@ async function testToolAuth(): Promise<void> {
 const sourceLoginTools = () => store.tools.filter(
   (tool) => tool.api_source_id === oauthSource.value?.id && tool.enabled,
 )
+
+async function autoAgentifyGenerated(_result: AutoAgentifyResult): Promise<void> {
+  await store.loadSources()
+}
 </script>
 
 <template>
   <main class="management-page">
     <header class="page-heading">
       <div><p class="eyebrow">{{ t('sources.eyebrow') }}</p><h1>{{ t('sources.title') }}</h1><p class="muted">{{ t('sources.subtitle') }}</p></div>
+      <button class="primary-action" data-testid="open-auto-agentify" @click="showAutoAgentify = !showAutoAgentify">{{ t('autoAgentify.open') }}</button>
     </header>
+    <AutoAgentifyPanel v-if="showAutoAgentify" @generated="autoAgentifyGenerated" @close="showAutoAgentify = false" />
     <section class="import-panel">
       <div class="segmented import-mode">
         <button type="button" :class="{ active: importMode === 'file' }" @click="importMode = 'file'">{{ t('sources.fileMode') }}</button>

@@ -99,6 +99,31 @@ export interface SourceImportResponse {
   tools: ToolSummary[]
 }
 
+export interface AutoAgentifySkill {
+  id: number
+  name: string
+  tool_ids: number[]
+  value: string
+}
+
+export interface AutoAgentifyAgent {
+  id: number
+  name: string
+  skill_ids: number[]
+  mode: 'human_in_loop' | 'react'
+  provider_id: number
+  value: string
+  use_cases: string[]
+}
+
+export interface AutoAgentifyResult {
+  source: ApiSourceSummary
+  imported_tool_count: number
+  enabled_tool_count: number
+  skills: AutoAgentifySkill[]
+  agents: AutoAgentifyAgent[]
+}
+
 export interface SourceRefreshResult {
   created: number
   updated: number
