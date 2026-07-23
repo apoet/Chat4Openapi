@@ -250,14 +250,21 @@ async def test_generation_logs_only_bounded_operational_metadata(
     provider_id = seed_provider(db_session_factory, cipher)
     app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
     app.dependency_overrides[get_auto_agentify_planner] = lambda: SuccessfulPlanner()
+    service_logger = logging.getLogger("chat4openapi.auto_agentify.service")
+    service_logger.disabled = False
+    previous_disable = logging.root.manager.disable
+    logging.disable(logging.NOTSET)
     caplog.set_level(logging.INFO, logger="chat4openapi.auto_agentify.service")
 
-    response = await client.post(
-        "/api/admin/auto-agentify/file",
-        data={"provider_id": str(provider_id), "name": "Pets"},
-        files={"document": ("openapi.yaml", OPENAPI, "application/yaml")},
-        headers={"X-CSRF-Token": token},
-    )
+    try:
+        response = await client.post(
+            "/api/admin/auto-agentify/file",
+            data={"provider_id": str(provider_id), "name": "Pets"},
+            files={"document": ("openapi.yaml", OPENAPI, "application/yaml")},
+            headers={"X-CSRF-Token": token},
+        )
+    finally:
+        logging.disable(previous_disable)
 
     assert response.status_code == 201
     assert "auto_agentify.completed" in caplog.text

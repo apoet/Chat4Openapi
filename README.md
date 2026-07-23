@@ -33,6 +33,26 @@ It is a single FastAPI/Vue application backed by SQLite, with an English and Sim
 
 ![Agent4API administration and chat demo](docs/images/agent4api-workflow.gif)
 
+## Generate Skills and Agents automatically
+
+After configuring an enabled LLM provider, open **API Sources** and choose
+**Generate with AI**. Select the provider and submit a Swagger 2.0 or OpenAPI
+3.x document by URL or JSON/YAML file.
+
+Agent4API analyzes the interface's business workflows and creates an
+immediately usable configuration in one operation:
+
+- at most 20 focused Skills and 10 core Agents;
+- only Tools referenced by generated Skills are enabled;
+- generated Skills start running immediately;
+- generated Agents are enabled and bound to the selected provider;
+- write-oriented workflows use human-in-loop mode.
+
+The limits are maximums rather than targets—the analyzer favors a small,
+coherent set that demonstrates the API's core value. Invalid model output is
+corrected once. If analysis or persistence still fails, the complete operation
+is rolled back and the input remains available in the form for retry.
+
 ## Quick start
 
 ### Docker
