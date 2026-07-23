@@ -29,6 +29,24 @@ describe('auth store', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('reuses an in-flight setup status request', async () => {
+    let resolveStatus!: (response: Response) => void
+    const pendingStatus = new Promise<Response>((resolve) => {
+      resolveStatus = resolve
+    })
+    const fetchMock = vi.fn<typeof fetch>().mockReturnValue(pendingStatus)
+    vi.stubGlobal('fetch', fetchMock)
+    const store = useAuthStore()
+
+    const first = store.loadState()
+    const second = store.loadState()
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    resolveStatus(jsonResponse({ initialized: false, locale: null }))
+    await Promise.all([first, second])
+    expect(store.initialized).toBe(false)
+  })
+
   it('retains the csrf token returned by login', async () => {
     vi.stubGlobal(
       'fetch',

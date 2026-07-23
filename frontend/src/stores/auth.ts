@@ -8,24 +8,31 @@ export const useAuthStore = defineStore('auth', () => {
   const initialized = ref<boolean | null>(null)
   const admin = ref<AdminSummary | null>(null)
   const csrfToken = ref<string | null>(null)
+  let pendingStateLoad: Promise<void> | null = null
 
-  async function loadState(): Promise<void> {
-    const status = await request<SetupStatus>('/api/setup/status')
-    initialized.value = status.initialized
-    if (!status.initialized) {
-      admin.value = null
-      csrfToken.value = null
-      return
-    }
-    try {
-      const auth = await request<AuthResponse>('/api/admin/auth/me')
-      admin.value = auth.admin
-      csrfToken.value = auth.csrf_token
-    } catch (error) {
-      if (!(error instanceof ApiError) || error.status !== 401) throw error
-      admin.value = null
-      csrfToken.value = null
-    }
+  function loadState(): Promise<void> {
+    if (pendingStateLoad) return pendingStateLoad
+    pendingStateLoad = (async () => {
+      const status = await request<SetupStatus>('/api/setup/status')
+      initialized.value = status.initialized
+      if (!status.initialized) {
+        admin.value = null
+        csrfToken.value = null
+        return
+      }
+      try {
+        const auth = await request<AuthResponse>('/api/admin/auth/me')
+        admin.value = auth.admin
+        csrfToken.value = auth.csrf_token
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 401) throw error
+        admin.value = null
+        csrfToken.value = null
+      }
+    })().finally(() => {
+      pendingStateLoad = null
+    })
+    return pendingStateLoad
   }
 
   async function initialize(username: string, password: string, locale: Locale): Promise<void> {

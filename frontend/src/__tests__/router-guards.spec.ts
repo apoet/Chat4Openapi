@@ -1,5 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createAppRouter } from '../router'
 import { useAuthStore } from '../stores/auth'
@@ -60,5 +60,35 @@ describe('router guards', () => {
     await router.push('/embed/public-id')
 
     expect(router.currentRoute.value.fullPath).toBe('/embed/public-id')
+  })
+
+  it('renders Chat before the setup status request completes', async () => {
+    const auth = useAuthStore()
+    let finishLoading!: () => void
+    const loading = new Promise<void>((resolve) => {
+      finishLoading = resolve
+    })
+    vi.spyOn(auth, 'loadState').mockImplementation(async () => {
+      await loading
+      auth.initialized = false
+    })
+    const router = createAppRouter()
+
+    const navigation = router.push('/chat')
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    const outcome = await Promise.race([
+      navigation.then(() => 'rendered'),
+      new Promise<'blocked'>((resolve) => {
+        timeout = setTimeout(() => resolve('blocked'), 1000)
+      }),
+    ])
+    clearTimeout(timeout)
+
+    expect(outcome).toBe('rendered')
+    expect(router.currentRoute.value.fullPath).toBe('/chat')
+
+    finishLoading()
+    await loading
+    await vi.waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/setup'))
   })
 })

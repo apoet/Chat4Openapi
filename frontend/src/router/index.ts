@@ -7,7 +7,12 @@ export function createAppRouter(): Router {
     history: createWebHistory(),
     routes: [
       { path: '/', redirect: '/chat' },
-      { path: '/chat', name: 'chat', component: () => import('../views/ChatView.vue') },
+      {
+        path: '/chat',
+        name: 'chat',
+        component: () => import('../views/ChatView.vue'),
+        meta: { nonBlockingSetup: true },
+      },
       { path: '/setup', name: 'setup', component: () => import('../views/SetupView.vue') },
       { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
       { path: '/reset-password', name: 'reset-password', component: () => import('../views/ResetPasswordView.vue') },
@@ -39,6 +44,22 @@ export function createAppRouter(): Router {
   router.beforeEach(async (to) => {
     if (to.meta.publicEmbed) return true
     const auth = useAuthStore()
+    if (auth.initialized === null && to.meta.nonBlockingSetup) {
+      void auth.loadState()
+        .then(async () => {
+          await router.isReady()
+          const current = router.currentRoute.value
+          if (
+            auth.initialized === false
+            && current.name !== 'setup'
+            && !current.meta.publicEmbed
+          ) {
+            await router.replace({ name: 'setup' })
+          }
+        })
+        .catch(() => undefined)
+      return true
+    }
     if (auth.initialized === null) await auth.loadState()
     if (!auth.initialized && to.name !== 'setup') return { name: 'setup' }
     if (auth.initialized && to.name === 'setup') {
