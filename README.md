@@ -18,7 +18,7 @@ It is a single FastAPI/Vue application backed by SQLite, with an English and Sim
   <img src="docs/images/workflow.svg" alt="Swagger and OpenAPI definitions become Tools, Skills reference Tools, Agents use Skills, and Chat starts Agent conversations" width="100%">
 </p>
 
-![Agent4API administration and chat demo](docs/images/demo.png)
+![Agent4API administration and chat demo](docs/images/agent4api-workflow.gif)
 
 ## Quick start
 
