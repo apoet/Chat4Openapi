@@ -1,37 +1,33 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-
-def _validate_password(password: str | None) -> str | None:
-    if password is None:
-        return None
-    has_letter = any(character.isascii() and character.isalpha() for character in password)
-    has_number = any(character.isascii() and character.isdigit() for character in password)
-    if not has_letter or not has_number:
-        raise ValueError("password must contain letters and numbers")
-    return password
+from chat4openapi.schemas.auth import validate_password_strength
 
 
 class UserCreateRequest(BaseModel):
     username: str = Field(min_length=3, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
     password: str = Field(min_length=6, max_length=256)
+    password_confirm: str = Field(min_length=6, max_length=256)
     locale: Literal["en-US", "zh-CN"] = "en-US"
     enabled: bool = True
 
-    _password_strength = field_validator("password")(_validate_password)
+    _password_strength = field_validator("password")(validate_password_strength)
+
+    @model_validator(mode="after")
+    def passwords_match(self) -> "UserCreateRequest":
+        if self.password != self.password_confirm:
+            raise ValueError("password confirmation does not match")
+        return self
 
 
 class UserUpdateRequest(BaseModel):
     username: str | None = Field(
         default=None, min_length=3, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$"
     )
-    password: str | None = Field(default=None, min_length=6, max_length=256)
     locale: Literal["en-US", "zh-CN"] | None = None
     enabled: bool | None = None
-
-    _password_strength = field_validator("password")(_validate_password)
 
 
 class UserResponse(BaseModel):

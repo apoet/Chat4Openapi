@@ -58,7 +58,19 @@ async function authorize(): Promise<void> {
 function onComplete(event: MessageEvent): void {
   if (event.origin !== window.location.origin || event.source !== popup) return
   if (!event.data || typeof event.data !== 'object') return
-  const data = event.data as { type?: unknown; api_source_id?: unknown }
+  const data = event.data as { type?: unknown; api_source_id?: unknown; error?: unknown }
+  if (
+    data.type === 'chat4openapi:auth-error'
+    && data.api_source_id === props.source.api_source_id
+  ) {
+    popup?.close()
+    popup = null
+    busy.value = false
+    error.value = data.error === 'access_denied'
+      ? t('embed.authorizationCancelled')
+      : t('embed.authorizationFailed')
+    return
+  }
   if (
     data.type !== 'chat4openapi:auth-complete'
     || data.api_source_id !== props.source.api_source_id

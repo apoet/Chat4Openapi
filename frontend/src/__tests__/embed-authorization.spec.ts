@@ -98,4 +98,27 @@ describe('Embed authorization', () => {
 
     expect(wrapper.get('[role="alert"]').text()).toContain('popup')
   })
+
+  it('closes the popup and reports a denied authorization without exchanging a grant', async () => {
+    const popup = { closed: false, close: vi.fn() } as unknown as Window
+    vi.spyOn(window, 'open').mockReturnValue(popup)
+    const wrapper = mountAuthorization()
+    await wrapper.get('[data-testid="authorize"]').trigger('click')
+    await flushPromises()
+
+    window.dispatchEvent(new MessageEvent('message', {
+      origin: 'https://chat.example',
+      source: popup,
+      data: {
+        type: 'chat4openapi:auth-error',
+        api_source_id: 9,
+        error: 'access_denied',
+      },
+    }))
+    await flushPromises()
+
+    expect(popup.close).toHaveBeenCalled()
+    expect(wrapper.get('[role="alert"]').text()).toContain('cancelled')
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1)
+  })
 })

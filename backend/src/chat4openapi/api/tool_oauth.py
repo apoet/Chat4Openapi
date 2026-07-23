@@ -267,14 +267,56 @@ async def start_pkce(
 async def pkce_callback(
     response: Response,
     state: str = Query(min_length=1, max_length=512),
-    code: str = Query(min_length=1, max_length=4096),
+    code: str | None = Query(default=None, min_length=1, max_length=4096),
+    error: str | None = Query(default=None, min_length=1, max_length=256),
+    error_description: str | None = Query(default=None, max_length=2048),
     service: ToolOAuthService = Depends(get_tool_oauth_service),
     settings: Settings = Depends(get_settings),
 ):
+    del error_description
     try:
-        completed = await service.complete_pkce(state, code)
+        if (code is None) == (error is None):
+            raise OAuthFlowError("oauth.callback_invalid")
+        if error is not None:
+            completed = service.reject_pkce(state)
+        else:
+            completed = await service.complete_pkce(state, code)
     except Exception as exc:
         raise _oauth_error(exc) from exc
+    if error is not None:
+        target_origin = completed.target_origin or completed.popup_origin
+        if target_origin is None:
+            raise ApiError(
+                400,
+                "oauth.authorization_denied"
+                if error == "access_denied"
+                else "oauth.authorization_failed",
+            )
+        payload = json.dumps(
+            {
+                "type": "chat4openapi:auth-error",
+                "api_source_id": completed.api_source_id,
+                "error": (
+                    "access_denied"
+                    if error == "access_denied"
+                    else "authorization_failed"
+                ),
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return HTMLResponse(
+            "<!doctype html><script>"
+            f"window.opener.postMessage({payload},{json.dumps(target_origin)});"
+            "window.close()"
+            "</script>",
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Security-Policy": "default-src 'none'",
+                "Referrer-Policy": "no-referrer",
+                "X-Frame-Options": "DENY",
+            },
+        )
     if (
         completed.embed_session_id is not None
         and completed.tool_session_db_id is not None

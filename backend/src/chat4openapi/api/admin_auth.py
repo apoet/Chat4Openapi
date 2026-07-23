@@ -11,9 +11,25 @@ from chat4openapi.config import Settings, get_settings
 from chat4openapi.db.session import get_db_session
 from chat4openapi.models.admin import AdminUser
 from chat4openapi.models.admin_session import AdminSession
-from chat4openapi.schemas.auth import AdminSummary, AuthResponse, LoginRequest
+from chat4openapi.schemas.auth import (
+    AdminSummary,
+    AdminPasswordResetIssued,
+    AdminPasswordResetRequest,
+    AuthResponse,
+    LoginRequest,
+    PasswordChangeRequest,
+)
+from chat4openapi.security.passwords import (
+    hash_password,
+    verify_password,
+)
 from chat4openapi.security.session_tokens import hash_token, new_token
 from chat4openapi.services.admin_auth import InvalidCredentialsError, authenticate_admin
+from chat4openapi.services.password_reset import (
+    PasswordResetCredentialError,
+    consume_admin_password_reset,
+    issue_admin_password_reset,
+)
 
 ADMIN_COOKIE = "chat4openapi_admin_session"
 
@@ -84,6 +100,23 @@ def require_system_csrf(
     return context
 
 
+def revoke_admin_sessions(
+    db: Session,
+    admin_id: int,
+    *,
+    now: datetime | None = None,
+) -> None:
+    revoked_at = now or datetime.now(UTC).replace(tzinfo=None)
+    sessions = db.scalars(
+        select(AdminSession).where(
+            AdminSession.admin_id == admin_id,
+            AdminSession.revoked_at.is_(None),
+        )
+    )
+    for admin_session in sessions:
+        admin_session.revoked_at = revoked_at
+
+
 @router.post("/login", response_model=AuthResponse)
 def login(
     payload: LoginRequest,
@@ -133,4 +166,67 @@ def me(context: AdminContext = Depends(require_admin)) -> AuthResponse:
 def logout(response: Response, context: AdminContext = Depends(require_csrf)) -> None:
     context.admin_session.revoked_at = datetime.now(UTC).replace(tzinfo=None)
     context.db.commit()
+    response.delete_cookie(ADMIN_COOKIE, path="/")
+
+
+@router.put("/password", status_code=204)
+def change_password(
+    payload: PasswordChangeRequest,
+    response: Response,
+    context: AdminContext = Depends(require_csrf),
+) -> None:
+    if not verify_password(payload.current_password, context.admin.password_hash):
+        raise ApiError(400, "auth.current_password_invalid")
+    context.admin.password_hash = hash_password(payload.new_password)
+    revoke_admin_sessions(context.db, context.admin.id)
+    context.db.commit()
+    response.delete_cookie(ADMIN_COOKIE, path="/")
+
+
+@router.post(
+    "/password-reset/request",
+    response_model=AdminPasswordResetIssued,
+    status_code=201,
+)
+def request_password_reset(
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+) -> AdminPasswordResetIssued:
+    admin_id = db.scalar(
+        select(AdminUser.id).where(
+            AdminUser.role == "admin",
+            AdminUser.enabled.is_(True),
+        )
+    )
+    if admin_id is None:
+        raise ApiError(409, "auth.reset_unavailable")
+    issued = issue_admin_password_reset(settings)
+    return AdminPasswordResetIssued(
+        credential_path=str(issued.path),
+        expires_at=issued.expires_at,
+    )
+
+
+@router.post("/password-reset/complete", status_code=204)
+def complete_password_reset(
+    payload: AdminPasswordResetRequest,
+    response: Response,
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    admin = db.scalar(
+        select(AdminUser).where(
+            AdminUser.role == "admin",
+            AdminUser.enabled.is_(True),
+        )
+    )
+    if admin is None:
+        raise ApiError(409, "auth.reset_unavailable")
+    try:
+        consume_admin_password_reset(settings, payload.key)
+    except PasswordResetCredentialError as exc:
+        raise ApiError(400, exc.code) from exc
+    admin.password_hash = hash_password(payload.new_password)
+    revoke_admin_sessions(db, admin.id)
+    db.commit()
     response.delete_cookie(ADMIN_COOKIE, path="/")

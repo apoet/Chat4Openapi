@@ -10,6 +10,7 @@ export function createAppRouter(): Router {
       { path: '/chat', name: 'chat', component: () => import('../views/ChatView.vue') },
       { path: '/setup', name: 'setup', component: () => import('../views/SetupView.vue') },
       { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
+      { path: '/reset-password', name: 'reset-password', component: () => import('../views/ResetPasswordView.vue') },
       {
         path: '/embed/:publicId',
         name: 'embed-chat',

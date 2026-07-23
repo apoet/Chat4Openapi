@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from chat4openapi.api.admin_auth import AdminContext, require_system_admin, require_system_csrf
 from chat4openapi.api.errors import ApiError
 from chat4openapi.models import AdminSession, AdminUser
+from chat4openapi.schemas.auth import NewPasswordRequest
 from chat4openapi.schemas.users import UserCreateRequest, UserResponse, UserUpdateRequest
 from chat4openapi.security.passwords import hash_password
 
@@ -79,15 +80,24 @@ def update_user(
 ) -> UserResponse:
     user = _ordinary_user(context, user_id)
     values = payload.model_dump(exclude_unset=True)
-    password = values.pop("password", None)
     for key, value in values.items():
         setattr(user, key, value)
-    if password is not None:
-        user.password_hash = hash_password(password)
-    if password is not None or values.get("enabled") is False:
+    if values.get("enabled") is False:
         _revoke_sessions(context, user.id)
     _commit(context)
     return _response(user)
+
+
+@router.put("/{user_id}/password", status_code=204)
+def reset_user_password(
+    user_id: int,
+    payload: NewPasswordRequest,
+    context: AdminContext = Depends(require_system_csrf),
+) -> None:
+    user = _ordinary_user(context, user_id)
+    user.password_hash = hash_password(payload.new_password)
+    _revoke_sessions(context, user.id)
+    _commit(context)
 
 
 @router.delete("/{user_id}", status_code=204)

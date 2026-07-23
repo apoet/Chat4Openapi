@@ -130,3 +130,14 @@ npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 #### 4. Open the administration page
 
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173). The first-run wizard will guide you through creating the administrator account.
+
+### Administrator password recovery
+
+From the login page, choose **Request password reset**. Agent4API creates a
+15-minute, one-time key in the server-only file
+`data/password-reset/admin-password-reset.key` (inside the `/app/data` volume
+when using Docker). Open that file on the server, then enter its key and the
+new password on the reset page. The key is never returned by the API and is
+deleted after use or expiry. Configure the directory and lifetime with
+`CHAT4OPENAPI_ADMIN_PASSWORD_RESET_DIR` and
+`CHAT4OPENAPI_ADMIN_PASSWORD_RESET_MINUTES`.

@@ -117,12 +117,52 @@ describe('Agent administration', () => {
     })
     render(AdminLayout, { global: { plugins: [i18n, router] } })
     expect((await screen.findByRole('link', { name: /Agents/ })).getAttribute('href')).toBe('/admin/agent')
+    const chatLink = await screen.findByRole('link', { name: /Chat/ })
+    expect(chatLink.getAttribute('href')).toBe('/chat')
+    expect(chatLink.getAttribute('target')).toBe('_blank')
+    expect(chatLink.getAttribute('rel')).toContain('noopener')
 
     const auth = useAuthStore()
     auth.initialized = true
     const appRouter = createAppRouter()
     await appRouter.push('/admin/agent')
     expect(appRouter.currentRoute.value.name).toBe('agent')
+  })
+
+  it('opens the account menu and changes the signed-in user password', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response(null, 204))
+    vi.stubGlobal('fetch', fetchMock)
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/admin', component: { template: '<div />' } },
+        { path: '/login', name: 'login', component: { template: '<div>Login</div>' } },
+      ],
+    })
+    await router.push('/admin')
+    await router.isReady()
+    render(AdminLayout, { global: { plugins: [i18n, router] } })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Change password' }))
+    await fireEvent.update(screen.getByLabelText('Current password'), 'StrongPass!123')
+    await fireEvent.update(screen.getByLabelText('New password'), 'ChangedPass456')
+    await fireEvent.update(screen.getByLabelText('Confirm new password'), 'ChangedPass456')
+    await fireEvent.click(screen.getByRole('button', { name: 'Update password' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/admin/auth/password',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({
+          current_password: 'StrongPass!123',
+          new_password: 'ChangedPass456',
+          new_password_confirm: 'ChangedPass456',
+        }),
+        credentials: 'include',
+      }),
+    ))
+    await waitFor(() => expect(router.currentRoute.value.name).toBe('login'))
   })
 
   it('opens Chat with the selected enabled Agent in the route query', async () => {

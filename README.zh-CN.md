@@ -130,3 +130,12 @@ npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 #### 4. 打开管理页面
 
 打开 [http://127.0.0.1:5173](http://127.0.0.1:5173)，首次运行向导会引导你创建管理员账户。
+
+### 管理员密码恢复
+
+在登录页点击“申请重置密码”。Agent4API 会在服务器私有文件
+`data/password-reset/admin-password-reset.key` 中生成一个 15 分钟有效的
+一次性 Key（Docker 部署时位于 `/app/data` 数据卷内）。请在服务器上读取该
+文件，然后在重置页面填写 Key 和新密码。Key 不会通过 API 返回，并会在使用
+或过期后删除。可通过 `CHAT4OPENAPI_ADMIN_PASSWORD_RESET_DIR` 和
+`CHAT4OPENAPI_ADMIN_PASSWORD_RESET_MINUTES` 配置目录与有效期。

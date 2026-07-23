@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import hashlib
+import logging
 import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -38,6 +39,7 @@ TOKEN_ENDPOINT_AUTH_METHODS = {
     "client_secret_post",
     "none",
 }
+logger = logging.getLogger(__name__)
 
 
 class OAuthFlowError(RuntimeError):
@@ -263,14 +265,14 @@ class ToolOAuthService:
             return await self._post(source, config["token_url"], data)
         if method == "client_secret_basic" and isinstance(secret, str) and secret:
             return await self._post_token_basic(source, config, fields, secret)
+        if method == "auto" and isinstance(secret, str) and secret:
+            response = await self._post_token_basic(
+                source, config, fields, secret
+            )
+            if self._is_client_authentication_failure(response):
+                return await self._post(source, config["token_url"], fields)
+            return response
         response = await self._post(source, config["token_url"], fields)
-        if (
-            method == "auto"
-            and isinstance(secret, str)
-            and secret
-            and self._is_client_authentication_failure(response)
-        ):
-            return await self._post_token_basic(source, config, fields, secret)
         return response
 
     async def _post_token_basic(
@@ -799,6 +801,21 @@ class ToolOAuthService:
             payload = self._response_json(response)
             row = self._session.get(ToolUserSession, row_id)
             if row is None or response.status_code >= 400:
+                upstream_error = payload.get("error")
+                if (
+                    not isinstance(upstream_error, str)
+                    or not upstream_error.isascii()
+                    or not upstream_error.replace("_", "").replace("-", "").isalnum()
+                ):
+                    upstream_error = "unknown"
+                logger.warning(
+                    "OAuth token exchange rejected: source_id=%s "
+                    "upstream_status=%s upstream_error=%s auth_method=%s",
+                    source.id,
+                    response.status_code,
+                    upstream_error[:128],
+                    config.get("token_endpoint_auth_method", "auto"),
+                )
                 raise OAuthFlowError("oauth.exchange_failed")
             embed_session_id = flow_data.get("embed_session_id")
             self._store_token(
@@ -845,6 +862,82 @@ class ToolOAuthService:
             if not isinstance(exc, Exception):
                 raise
             raise OAuthFlowError("oauth.exchange_failed") from None
+
+    def reject_pkce(self, state: str) -> OAuthStatus:
+        if not state:
+            raise OAuthFlowError("oauth.state_invalid")
+        now = self._now()
+        state_hash = hash_token(state)
+        flow = self._session.scalar(
+            select(ToolOAuthAuthorization).where(
+                ToolOAuthAuthorization.state_hash == state_hash,
+                ToolOAuthAuthorization.flow_type == "pkce",
+            )
+        )
+        if flow is None or flow.status != "pending" or flow.consumed_at is not None:
+            raise OAuthFlowError("oauth.state_invalid")
+        if flow.expires_at <= now:
+            row = self._session.get(ToolUserSession, flow.tool_session_id)
+            if row is not None:
+                self._terminal(row, flow, "expired")
+            else:
+                flow.status = "expired"
+                flow.encrypted_flow_data = self._cipher.encrypt_json({})
+                self._session.commit()
+            raise OAuthFlowError("oauth.state_expired")
+        try:
+            unclaimed_flow_data = self._cipher.decrypt_json(flow.encrypted_flow_data)
+        except Exception:
+            unclaimed_flow_data = None
+        if (
+            isinstance(unclaimed_flow_data, dict)
+            and unclaimed_flow_data.get("kind") == "swagger"
+        ):
+            raise OAuthFlowError("oauth.state_invalid")
+        claimed = self._session.execute(
+            update(ToolOAuthAuthorization)
+            .where(
+                ToolOAuthAuthorization.id == flow.id,
+                ToolOAuthAuthorization.consumed_at.is_(None),
+                ToolOAuthAuthorization.status == "pending",
+            )
+            .values(consumed_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        if claimed.rowcount != 1:
+            self._session.rollback()
+            raise OAuthFlowError("oauth.state_invalid")
+        self._session.commit()
+        flow_id = flow.id
+        row_id = flow.tool_session_id
+        try:
+            self._session.refresh(flow)
+            flow_data = self._cipher.decrypt_json(flow.encrypted_flow_data)
+            row = self._session.get(ToolUserSession, row_id)
+            if row is None:
+                raise OAuthFlowError("oauth.session_not_found")
+            self._terminal(row, flow, "failed")
+            return OAuthStatus(
+                flow_data["tool_session_token"],
+                "failed",
+                flow.api_source_id,
+                row.absolute_expires_at,
+                tool_session_db_id=row.id,
+                embed_session_id=flow_data.get("embed_session_id"),
+                parent_origin=flow_data.get("parent_origin"),
+                target_origin=flow_data.get("target_origin"),
+                browser_chat_session_id=flow_data.get(
+                    "browser_chat_session_id"
+                ),
+                popup_origin=flow_data.get("popup_origin"),
+            )
+        except BaseException as exc:
+            self._fail_claimed_pkce(flow_id, row_id)
+            if not isinstance(exc, Exception):
+                raise
+            if isinstance(exc, OAuthFlowError):
+                raise
+            raise OAuthFlowError("oauth.state_invalid") from None
 
     def _fail_claimed_pkce(self, flow_id: int, row_id: int) -> None:
         with serialized_write(self._session):

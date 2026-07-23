@@ -65,9 +65,9 @@ the paused conversation through
 
 OAuth source configuration supports four token endpoint authentication methods:
 
-- `auto` (the default, including legacy configurations) sends credentials in
-  the form first, then retries once with HTTP Basic authentication only after
-  `invalid_client` or HTTP 401.
+- `auto` (the default, including legacy configurations) follows the OAuth 2.0
+  confidential-client default by trying HTTP Basic first, then retries once
+  with form credentials only after `invalid_client` or HTTP 401.
 - `client_secret_basic` sends credentials only in the HTTP Basic
   `Authorization` header.
 - `client_secret_post` sends credentials in the request form.

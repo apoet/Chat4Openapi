@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 DEFAULT_DATABASE_PATH = Path("data/chat4openapi.db")
 DEFAULT_DATABASE_URL = f"sqlite:///{DEFAULT_DATABASE_PATH.as_posix()}"
 DEFAULT_ENCRYPTION_KEY_FILE = Path("data/.chat4openapi.key")
+DEFAULT_ADMIN_PASSWORD_RESET_DIR = Path("data/password-reset")
 _LEGACY_PRODUCT_STEM = "chat" + "api"
 _LEGACY_DATABASE_PATH = Path("data") / f"{_LEGACY_PRODUCT_STEM}.db"
 _LEGACY_ENCRYPTION_KEY_FILE = Path("data") / f".{_LEGACY_PRODUCT_STEM}.key"
@@ -33,6 +34,8 @@ class Settings(BaseSettings):
     secure_cookies: bool = False
     encryption_key: str | None = None
     encryption_key_file: Path = DEFAULT_ENCRYPTION_KEY_FILE
+    admin_password_reset_dir: Path = DEFAULT_ADMIN_PASSWORD_RESET_DIR
+    admin_password_reset_minutes: int = Field(default=15, ge=1, le=60)
 
 
 def migrate_legacy_default_files(settings: Settings) -> None:

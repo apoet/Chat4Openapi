@@ -51,5 +51,31 @@ export const useAuthStore = defineStore('auth', () => {
     csrfToken.value = null
   }
 
-  return { initialized, admin, csrfToken, loadState, initialize, login, logout }
+  async function changePassword(
+    currentPassword: string,
+    newPassword: string,
+    newPasswordConfirm: string,
+  ): Promise<void> {
+    await request<void>('/api/admin/auth/password', {
+      method: 'PUT',
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+        new_password_confirm: newPasswordConfirm,
+      }),
+    }, csrfToken.value)
+    admin.value = null
+    csrfToken.value = null
+  }
+
+  return {
+    initialized,
+    admin,
+    csrfToken,
+    loadState,
+    initialize,
+    login,
+    logout,
+    changePassword,
+  }
 })

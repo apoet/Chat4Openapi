@@ -659,7 +659,7 @@ async def test_pkce_supports_client_secret_basic(db_session_factory) -> None:
 
 
 @pytest.mark.asyncio
-async def test_pkce_auto_retries_basic_only_after_client_authentication_failure(
+async def test_pkce_auto_retries_post_only_after_basic_authentication_failure(
     db_session_factory,
 ) -> None:
     _secret, agent_id, _key_id, source_id = _seed(db_session_factory)
@@ -668,7 +668,7 @@ async def test_pkce_auto_retries_basic_only_after_client_authentication_failure(
 
     async def handler(request: httpx.Request) -> httpx.Response:
         token_requests.append(request)
-        if "Authorization" not in request.headers:
+        if "Authorization" in request.headers:
             return httpx.Response(401, json={"error": "invalid_client"})
         return httpx.Response(
             200,
@@ -692,12 +692,51 @@ async def test_pkce_auto_retries_basic_only_after_client_authentication_failure(
 
     assert len(token_requests) == 2
     first = parse_qs(token_requests[0].content.decode())
-    assert first["client_id"] == ["public-client"]
-    assert first["client_secret"] == ["super-secret"]
-    assert token_requests[1].headers["Authorization"].startswith("Basic ")
+    assert token_requests[0].headers["Authorization"].startswith("Basic ")
+    assert "client_id" not in first
+    assert "client_secret" not in first
     second = parse_qs(token_requests[1].content.decode())
-    assert "client_id" not in second
-    assert "client_secret" not in second
+    assert second["client_id"] == ["public-client"]
+    assert second["client_secret"] == ["super-secret"]
+
+
+@pytest.mark.asyncio
+async def test_pkce_auto_prefers_basic_when_post_auth_returns_invalid_request(
+    db_session_factory,
+) -> None:
+    _secret, agent_id, _key_id, source_id = _seed(db_session_factory)
+    now = datetime(2026, 7, 22, 8, 0, 0)
+    token_requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        token_requests.append(request)
+        if "Authorization" not in request.headers:
+            return httpx.Response(400, json={"error": "invalid_request"})
+        return httpx.Response(
+            200,
+            json={"access_token": "pkce-access", "token_type": "Bearer"},
+        )
+
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as db:
+        service = ToolOAuthService(
+            db,
+            cipher,
+            transport=httpx.MockTransport(handler),
+            network_validator=allow_network,
+            now=lambda: now,
+        )
+        _configure(service, source_id)
+        started = await service.start_pkce(
+            _admin_context(db), source_id, agent_id=agent_id
+        )
+        completed = await service.complete_pkce(
+            started.state, "authorization-code"
+        )
+
+    assert completed.status == "ready"
+    assert len(token_requests) == 1
+    assert token_requests[0].headers["Authorization"].startswith("Basic ")
 
 
 @pytest.mark.asyncio
@@ -1570,3 +1609,77 @@ async def test_browser_chat_pkce_binds_credentials_and_returns_popup_completion(
         assert resolved.auth.headers == {
             "Authorization": "Bearer browser-access"
         }
+
+
+@pytest.mark.asyncio
+async def test_browser_chat_pkce_denial_consumes_state_and_closes_popup(
+    client: httpx.AsyncClient, app, db_session_factory
+) -> None:
+    _secret, agent_id, _key_id, source_id = _seed(db_session_factory)
+    cipher = SecretCipher(Fernet.generate_key())
+    token_requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        token_requests.append(request)
+        return httpx.Response(500)
+
+    with db_session_factory() as db:
+        db.add(
+            AppSetting(
+                id=1,
+                default_locale="en-US",
+                base_url="https://chat.example",
+            )
+        )
+        db.commit()
+        _configure(ToolOAuthService(db, cipher), source_id)
+
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_oauth_transport] = lambda: httpx.MockTransport(handler)
+    app.dependency_overrides[get_oauth_network_validator] = lambda: allow_network
+    assert (await client.get("/api/chat/bootstrap")).status_code == 200
+    started = await client.post(
+        "/api/chat/oauth/pkce/start",
+        json={"api_source_id": source_id, "agent_id": agent_id},
+    )
+    state = parse_qs(urlsplit(started.json()["authorization_url"]).query)["state"][0]
+
+    missing_result = await client.get(
+        "/api/tool-sessions/oauth/pkce/callback",
+        params={"state": state},
+    )
+    assert missing_result.status_code == 400
+    assert missing_result.json()["error"]["code"] == "oauth.callback_invalid"
+
+    callback = await client.get(
+        "/api/tool-sessions/oauth/pkce/callback",
+        params={
+            "state": state,
+            "error": "access_denied",
+            "error_description": "User denied access",
+        },
+    )
+
+    assert callback.status_code == 200
+    assert "chat4openapi:auth-error" in callback.text
+    assert '"error":"access_denied"' in callback.text
+    assert "User denied access" not in callback.text
+    assert token_requests == []
+    with db_session_factory() as db:
+        flow = db.scalar(select(ToolOAuthAuthorization))
+        tool_session = db.scalar(select(ToolUserSession))
+        credential = db.scalar(select(ToolSessionCredential))
+        assert flow is not None and tool_session is not None and credential is not None
+        assert flow.status == "failed"
+        assert flow.consumed_at is not None
+        assert tool_session.status == "failed"
+        assert credential.status == "failed"
+        assert cipher.decrypt_json(flow.encrypted_flow_data) == {}
+        assert cipher.decrypt_json(credential.encrypted_credentials) == {}
+
+    replay = await client.get(
+        "/api/tool-sessions/oauth/pkce/callback",
+        params={"state": state, "error": "access_denied"},
+    )
+    assert replay.status_code == 400
+    assert replay.json()["error"]["code"] == "oauth.state_invalid"

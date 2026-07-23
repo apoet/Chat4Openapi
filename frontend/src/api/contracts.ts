@@ -31,6 +31,11 @@ export interface AuthResponse {
   csrf_token: string
 }
 
+export interface AdminPasswordResetIssued {
+  credential_path: string
+  expires_at: string
+}
+
 export interface ApiErrorEnvelope {
   error: {
     code: string

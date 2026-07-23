@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { ApiError, request } from '../api/client'
@@ -12,19 +12,71 @@ const users = ref<ManagedUser[]>([])
 const editingId = ref<number | null>(null)
 const saving = ref(false)
 const errorCode = ref<string | null>(null)
-const form = reactive({ username: '', password: '', locale: 'en-US' as Locale, enabled: true })
+const resettingUser = ref<ManagedUser | null>(null)
+const resetDialog = ref<HTMLDialogElement | null>(null)
+const resetSaving = ref(false)
+const resetErrorCode = ref<string | null>(null)
+const passwordResetForm = reactive({ password: '', confirmation: '' })
+const form = reactive({
+  username: '',
+  password: '',
+  passwordConfirm: '',
+  locale: 'en-US' as Locale,
+  enabled: true,
+})
 const editing = computed(() => editingId.value !== null)
+const passwordsDiffer = computed(
+  () => form.passwordConfirm.length > 0 && form.password !== form.passwordConfirm,
+)
+const canSave = computed(
+  () => Boolean(
+    form.username
+    && !saving.value
+    && (
+      editing.value
+      || (
+        form.password.length >= 6
+        && /[A-Za-z]/.test(form.password)
+        && /[0-9]/.test(form.password)
+        && form.passwordConfirm === form.password
+      )
+    )
+  ),
+)
+const resetPasswordsDiffer = computed(
+  () => passwordResetForm.confirmation.length > 0
+    && passwordResetForm.password !== passwordResetForm.confirmation,
+)
+const canResetPassword = computed(
+  () => passwordResetForm.password.length >= 6
+    && /[A-Za-z]/.test(passwordResetForm.password)
+    && /[0-9]/.test(passwordResetForm.password)
+    && passwordResetForm.confirmation === passwordResetForm.password
+    && !resetSaving.value,
+)
 
 function resetForm(): void {
   editingId.value = null
   errorCode.value = null
-  Object.assign(form, { username: '', password: '', locale: 'en-US', enabled: true })
+  Object.assign(form, {
+    username: '',
+    password: '',
+    passwordConfirm: '',
+    locale: 'en-US',
+    enabled: true,
+  })
 }
 
 function edit(user: ManagedUser): void {
   editingId.value = user.id
   errorCode.value = null
-  Object.assign(form, { username: user.username, password: '', locale: user.locale, enabled: user.enabled })
+  Object.assign(form, {
+    username: user.username,
+    password: '',
+    passwordConfirm: '',
+    locale: user.locale,
+    enabled: user.enabled,
+  })
 }
 
 async function load(): Promise<void> {
@@ -40,7 +92,10 @@ async function save(): Promise<void> {
       locale: form.locale,
       enabled: form.enabled,
     }
-    if (form.password) payload.password = form.password
+    if (!editing.value) {
+      payload.password = form.password
+      payload.password_confirm = form.passwordConfirm
+    }
     await request(editing.value ? `/api/admin/users/${editingId.value}` : '/api/admin/users', {
       method: editing.value ? 'PATCH' : 'POST',
       body: JSON.stringify(payload),
@@ -68,6 +123,46 @@ async function remove(user: ManagedUser): Promise<void> {
   await load()
 }
 
+async function openPasswordReset(user: ManagedUser): Promise<void> {
+  resettingUser.value = user
+  resetErrorCode.value = null
+  Object.assign(passwordResetForm, { password: '', confirmation: '' })
+  await nextTick()
+  if (typeof resetDialog.value?.showModal === 'function') {
+    resetDialog.value.showModal()
+  } else {
+    resetDialog.value?.setAttribute('open', '')
+  }
+}
+
+function closePasswordReset(): void {
+  if (resetDialog.value?.open && typeof resetDialog.value.close === 'function') {
+    resetDialog.value.close()
+  }
+  resettingUser.value = null
+}
+
+async function resetPassword(): Promise<void> {
+  if (!resettingUser.value || !canResetPassword.value) return
+  resetSaving.value = true
+  resetErrorCode.value = null
+  try {
+    await request(`/api/admin/users/${resettingUser.value.id}/password`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        new_password: passwordResetForm.password,
+        new_password_confirm: passwordResetForm.confirmation,
+      }),
+    }, auth.csrfToken)
+    closePasswordReset()
+    await load()
+  } catch (error) {
+    resetErrorCode.value = error instanceof ApiError ? error.code : 'unknown'
+  } finally {
+    resetSaving.value = false
+  }
+}
+
 onMounted(() => void load())
 </script>
 
@@ -84,13 +179,15 @@ onMounted(() => void load())
     <section class="settings-panel">
       <div class="settings-grid">
         <label>{{ t('users.username') }}<input v-model.trim="form.username" autocomplete="off" /></label>
-        <label>{{ t('users.password') }}<input v-model="form.password" type="password" autocomplete="new-password" :placeholder="editing ? t('users.passwordKeep') : ''" /></label>
+        <label v-if="!editing">{{ t('users.password') }}<input v-model="form.password" type="password" autocomplete="new-password" /></label>
+        <label v-if="!editing">{{ t('users.confirmPassword') }}<input v-model="form.passwordConfirm" type="password" autocomplete="new-password" /></label>
         <label>{{ t('users.locale') }}<select v-model="form.locale"><option value="en-US">English</option><option value="zh-CN">简体中文</option></select></label>
         <label class="checkbox-label"><input v-model="form.enabled" type="checkbox" /> {{ t('users.enabled') }}</label>
       </div>
+      <p v-if="passwordsDiffer" class="field-error">{{ t('setup.mismatch') }}</p>
       <p v-if="errorCode" class="form-error">{{ t(`error.${errorCode}`) }}</p>
       <div class="form-actions">
-        <button class="primary-action" :disabled="saving || !form.username || (!editing && !form.password)" @click="save">{{ editing ? t('users.update') : t('users.create') }}</button>
+        <button class="primary-action" :disabled="!canSave" @click="save">{{ editing ? t('users.update') : t('users.create') }}</button>
         <button v-if="editing" class="secondary-action" :disabled="saving" @click="resetForm">{{ t('users.cancel') }}</button>
       </div>
     </section>
@@ -102,11 +199,42 @@ onMounted(() => void load())
         <span :class="['status-pill', user.enabled ? 'enabled' : 'disabled']">{{ user.enabled ? t('tools.enabled') : t('tools.disabled') }}</span>
         <footer class="row-actions">
           <button class="secondary-action" @click="edit(user)">{{ t('users.edit') }}</button>
+          <button class="secondary-action" @click="openPasswordReset(user)">{{ t('users.resetPassword') }}</button>
           <button class="secondary-action" @click="toggle(user)">{{ user.enabled ? t('tools.disable') : t('tools.enable') }}</button>
           <button class="danger-action" @click="remove(user)">{{ t('tools.delete') }}</button>
         </footer>
       </article>
       <p v-if="!users.length" class="empty-state">{{ t('users.empty') }}</p>
     </section>
+    <dialog
+      v-if="resettingUser"
+      ref="resetDialog"
+      class="confirmation-dialog password-dialog"
+      aria-labelledby="reset-user-password-title"
+      @cancel.prevent="closePasswordReset"
+    >
+      <form @submit.prevent="resetPassword">
+        <h2 id="reset-user-password-title">{{ t('users.resetPassword') }}</h2>
+        <p>{{ t('users.resetPasswordHint', { username: resettingUser.username }) }}</p>
+        <label>
+          {{ t('account.newPassword') }}
+          <input v-model="passwordResetForm.password" type="password" autocomplete="new-password" />
+        </label>
+        <label>
+          {{ t('account.confirmNewPassword') }}
+          <input v-model="passwordResetForm.confirmation" type="password" autocomplete="new-password" />
+        </label>
+        <p v-if="resetPasswordsDiffer" class="field-error">{{ t('setup.mismatch') }}</p>
+        <p v-if="resetErrorCode" class="form-error">{{ t(`error.${resetErrorCode}`) }}</p>
+        <div class="confirmation-actions">
+          <button type="button" class="secondary-action" @click="closePasswordReset">
+            {{ t('users.cancel') }}
+          </button>
+          <button type="submit" class="primary-action" :disabled="!canResetPassword">
+            {{ t('users.resetUserPassword') }}
+          </button>
+        </div>
+      </form>
+    </dialog>
   </main>
 </template>
