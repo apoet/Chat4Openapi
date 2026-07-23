@@ -32,12 +32,12 @@ Agent4API 采用清晰的 **1 个输入、3 类服务** 模型：
 
 ### 使用 Docker
 
-镜像默认标记为 `apoet/agent4api:latest`。如需修改 Docker Hub 用户名、镜像标签或访问端口，先复制 `.env.example` 为 `.env` 并修改对应配置。
+已发布的中央仓库镜像为 `apoet2003/agent4api:latest`。如需修改 Docker Hub 用户名、镜像标签或访问端口，先复制 `.env.example` 为 `.env` 并修改对应配置。
 
-本地构建并启动：
+从 Docker Hub 拉取已发布镜像并启动，无需本地构建：
 
 ```shell
-docker compose build
+docker compose pull
 docker compose up -d
 ```
 

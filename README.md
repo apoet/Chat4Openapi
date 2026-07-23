@@ -32,12 +32,12 @@ It is a single FastAPI/Vue application backed by SQLite, with an English and Sim
 
 ### Docker
 
-The image defaults to `apoet/agent4api:latest`. To use another Docker Hub account, image tag, or published port, copy `.env.example` to `.env` and edit the corresponding values first.
+The published image is `apoet2003/agent4api:latest`. To use another Docker Hub account, image tag, or published port, copy `.env.example` to `.env` and edit the corresponding values first.
 
-Build locally and start:
+Pull the published image from Docker Hub and start:
 
 ```shell
-docker compose build
+docker compose pull
 docker compose up -d
 ```
 
