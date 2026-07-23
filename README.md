@@ -8,7 +8,7 @@
   English | <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-> [!IMPORTANT]
+
 > **DEMO:** [https://agent4api.ecrfs.com/admin](https://agent4api.ecrfs.com/admin)<br>
 > **Username:** `demo`<br>
 > **Password:** `demo123`

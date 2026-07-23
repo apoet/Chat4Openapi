@@ -8,7 +8,7 @@
   <a href="README.md">English</a> | 简体中文
 </p>
 
-> [!IMPORTANT]
+
 > **DEMO 地址：**[https://agent4api.ecrfs.com/admin](https://agent4api.ecrfs.com/admin)<br>
 > **用户名：**`demo`<br>
 > **密码：**`demo123`
