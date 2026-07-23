@@ -13,6 +13,8 @@ from chat4openapi.api.errors import ApiError
 from chat4openapi.db.serialized_write import serialized_write
 from chat4openapi.models import (
     ApiSource,
+    ApiSourceOAuthConfig,
+    ApiSourceToolAuthConfig,
     GlobalToolAuthConfig,
     Skill,
     SkillTool,
@@ -23,6 +25,7 @@ from chat4openapi.schemas.tools import (
     ApiSourceEnabledRequest,
     ApiSourceSummary,
     ApiSourceUpdateRequest,
+    ApiSourceToolAuthConfigResponse,
     SourceImportRequest,
     SourceImportResponse,
     SourceRefreshResponse,
@@ -234,6 +237,14 @@ def _source_tool_ids(context: AdminContext, source_id: int) -> list[int]:
 
 
 def _ensure_source_not_login_source(context: AdminContext, tool_ids: list[int]) -> None:
+    source_config = context.db.scalar(
+        select(ApiSourceToolAuthConfig).where(
+            ApiSourceToolAuthConfig.enabled.is_(True),
+            ApiSourceToolAuthConfig.login_tool_id.in_(tool_ids),
+        )
+    )
+    if source_config is not None:
+        raise ApiError(409, "tools.login_tool_conflict")
     config = context.db.get(GlobalToolAuthConfig, 1)
     if (
         config is not None
@@ -591,3 +602,68 @@ def set_tool_auth(
             for key, value in values.items():
                 setattr(config, key, value)
     return ToolAuthConfigResponse.model_validate(config, from_attributes=True)
+
+
+@router.get(
+    "/sources/{source_id}/tool-auth",
+    response_model=ApiSourceToolAuthConfigResponse,
+)
+def get_source_tool_auth(
+    source_id: int,
+    context: AdminContext = Depends(require_admin),
+) -> ApiSourceToolAuthConfigResponse:
+    source = _managed_source(context, source_id)
+    config = context.db.get(ApiSourceToolAuthConfig, source.id)
+    if config is None:
+        return ApiSourceToolAuthConfigResponse(
+            api_source_id=source.id,
+            enabled=False,
+        )
+    return ApiSourceToolAuthConfigResponse.model_validate(
+        config, from_attributes=True
+    )
+
+
+@router.put(
+    "/sources/{source_id}/tool-auth",
+    response_model=ApiSourceToolAuthConfigResponse,
+)
+def set_source_tool_auth(
+    source_id: int,
+    payload: ToolAuthConfigRequest,
+    context: AdminContext = Depends(require_csrf),
+) -> ApiSourceToolAuthConfigResponse:
+    with serialized_write(context.db):
+        source = _managed_source(context, source_id)
+        if payload.enabled:
+            if payload.login_tool_id is None or not payload.token_json_path:
+                raise ApiError(422, "tools.login_config_incomplete")
+            tool = _managed_tool(context, payload.login_tool_id)
+            if tool.api_source_id != source.id:
+                raise ApiError(422, "tools.login_tool_source_mismatch")
+            if not tool.enabled or not source.enabled:
+                raise ApiError(409, "tools.login_tool_disabled")
+
+        config = context.db.get(ApiSourceToolAuthConfig, source.id)
+        values = payload.model_dump()
+        if config is None:
+            config = ApiSourceToolAuthConfig(
+                api_source_id=source.id,
+                **values,
+            )
+            context.db.add(config)
+        else:
+            for key, value in values.items():
+                setattr(config, key, value)
+
+        if payload.enabled:
+            source.auth_mode = "tool"
+            oauth = context.db.get(ApiSourceOAuthConfig, source.id)
+            if oauth is not None:
+                oauth.enabled = False
+        elif source.auth_mode == "tool":
+            source.auth_mode = "none"
+
+    return ApiSourceToolAuthConfigResponse.model_validate(
+        config, from_attributes=True
+    )

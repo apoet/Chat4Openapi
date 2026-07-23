@@ -25,7 +25,9 @@ def test_fresh_database_reaches_the_only_alembic_head(tmp_path: Path) -> None:
     database = tmp_path / "fresh.db"
     config = migration_config(database)
 
-    assert ScriptDirectory.from_config(config).get_heads() == ["0015_system_users"]
+    assert ScriptDirectory.from_config(config).get_heads() == [
+        "0017_api_source_auth_mode"
+    ]
     command.upgrade(config, "head")
 
     engine = sa.create_engine(sqlite_url(database))
@@ -43,7 +45,7 @@ def test_fresh_database_reaches_the_only_alembic_head(tmp_path: Path) -> None:
     } <= set(inspector.get_table_names())
     with engine.connect() as connection:
         assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-            "0015_system_users"
+            "0017_api_source_auth_mode"
         )
     engine.dispose()
 

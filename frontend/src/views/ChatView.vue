@@ -13,6 +13,9 @@ import type {
   SkillSummary,
 } from '../api/contracts'
 import AgentSelect from '../components/AgentSelect.vue'
+import ChatAuthorization, {
+  type ChatAuthorizationSource,
+} from '../components/ChatAuthorization.vue'
 import MarkdownMessage from '../components/MarkdownMessage.vue'
 
 type ChatMessage = {
@@ -28,7 +31,7 @@ type LocalChatSessionV3 = {
   agentId: number | null
   agentName: string | null
   loadedSkillIds: number[]
-  status: 'completed' | 'needs_input'
+  status: 'completed' | 'needs_input' | 'authorization_required'
   pending: Record<string, unknown> | null
   messages: ChatMessage[]
   updatedAt: string
@@ -46,7 +49,7 @@ const loadedSkillIds = ref<number[]>([])
 const input = ref('')
 const messages = ref<ChatMessage[]>([])
 const conversationId = ref<string | null>(null)
-const status = ref<'completed' | 'needs_input'>('completed')
+const status = ref<'completed' | 'needs_input' | 'authorization_required'>('completed')
 const pending = ref<Record<string, unknown> | null>(null)
 const sessions = ref<LocalChatSessionV3[]>([])
 const activeSessionId = ref<string | null>(null)
@@ -57,8 +60,27 @@ const authenticated = ref(false)
 const username = ref('')
 const password = ref('')
 const sending = ref(false)
+const deletingSessionId = ref<string | null>(null)
 const errorMessage = ref('')
 const sessionErrors = ref<Record<string, string>>({})
+const authorization = computed<ChatAuthorizationSource | null>(() => {
+  if (status.value !== 'authorization_required' || !pending.value) return null
+  const sourceId = pending.value.api_source_id
+  const sourceName = pending.value.api_source_name
+  const flows = pending.value.flows
+  if (
+    typeof sourceId !== 'number'
+    || typeof sourceName !== 'string'
+    || !Array.isArray(flows)
+  ) return null
+  return {
+    api_source_id: sourceId,
+    api_source_name: sourceName,
+    flows: flows.filter(
+      (flow): flow is 'pkce' | 'swagger' => flow === 'pkce' || flow === 'swagger',
+    ),
+  }
+})
 
 const suggestedQuestions = computed(() => {
   const selected = agents.value.find((agent) => agent.id === selectedAgentId.value)
@@ -83,9 +105,15 @@ function isIdList(value: unknown): value is number[] {
     && value.every((id) => Number.isInteger(id) && id > 0)
 }
 
+function isChatStatus(value: unknown): value is LocalChatSessionV3['status'] {
+  return value === 'completed'
+    || value === 'needs_input'
+    || value === 'authorization_required'
+}
+
 function parseMessages(
   value: unknown,
-  status: 'completed' | 'needs_input',
+  status: LocalChatSessionV3['status'],
 ): ChatMessage[] | null {
   if (!Array.isArray(value) || !value.every((message) =>
     isRecord(message)
@@ -118,7 +146,7 @@ function parseSession(value: unknown): LocalChatSessionV3 | null {
     if (!isIdList(value.loadedSkillIds)
       || !(value.agentId === null || (Number.isInteger(value.agentId) && (value.agentId as number) > 0))
       || !(value.agentName === null || typeof value.agentName === 'string')
-      || (value.status !== 'completed' && value.status !== 'needs_input')
+      || !isChatStatus(value.status)
       || !(value.pending === null || isRecord(value.pending))) return null
     const messages = parseMessages(value.messages, value.status)
     if (!messages) return null
@@ -275,6 +303,36 @@ function openSession(session: LocalChatSessionV3): void {
   errorMessage.value = sessionErrors.value[session.id] ?? ''
 }
 
+async function hydrateRestoredAgent(): Promise<void> {
+  if (
+    conversationId.value === null
+    || selectedAgentId.value !== null
+    || activeSessionId.value === null
+  ) return
+  try {
+    const snapshot = await request<{ agent_id: number; agent_name: string }>(
+      `/api/chat/conversations/${encodeURIComponent(conversationId.value)}`,
+    )
+    if (
+      !Number.isInteger(snapshot.agent_id)
+      || snapshot.agent_id < 1
+      || typeof snapshot.agent_name !== 'string'
+    ) return
+    selectedAgentId.value = snapshot.agent_id
+    selectedAgentName.value = snapshot.agent_name
+    const session = sessions.value.find(
+      (item) => item.id === activeSessionId.value,
+    )
+    if (session) {
+      session.agentId = snapshot.agent_id
+      session.agentName = snapshot.agent_name
+      persistSessions()
+    }
+  } catch {
+    // The saved conversation may predate browser ownership or no longer exist.
+  }
+}
+
 function startNewChat(): void {
   activeSessionId.value = createLocalId()
   conversationId.value = null
@@ -285,6 +343,52 @@ function startNewChat(): void {
   input.value = ''
   errorMessage.value = ''
   selectDefaultAgent()
+}
+
+async function deleteSession(session: LocalChatSessionV3): Promise<void> {
+  if (
+    deletingSessionId.value !== null
+    || (sending.value && session.id === activeSessionId.value)
+    || !window.confirm(t('chat.deleteConfirm', { title: session.title }))
+  ) return
+
+  deletingSessionId.value = session.id
+  try {
+    if (session.conversationId !== null) {
+      try {
+        await request(
+          `/api/chat/conversations/${encodeURIComponent(session.conversationId)}`,
+          { method: 'DELETE' },
+        )
+      } catch (error) {
+        if (
+          !(error instanceof ApiError)
+          || error.code !== 'agent.conversation_not_found'
+        ) throw error
+      }
+    }
+
+    sessions.value = sessions.value.filter((item) => item.id !== session.id)
+    const nextErrors = { ...sessionErrors.value }
+    delete nextErrors[session.id]
+    sessionErrors.value = nextErrors
+    persistSessions()
+
+    if (activeSessionId.value === session.id) {
+      const next = sessions.value[0]
+      if (next) {
+        openSession(next)
+      } else {
+        startNewChat()
+      }
+    }
+  } catch {
+    const message = t('error.chat.deleteFailed')
+    sessionErrors.value = { ...sessionErrors.value, [session.id]: message }
+    if (activeSessionId.value === session.id) errorMessage.value = message
+  } finally {
+    deletingSessionId.value = null
+  }
 }
 
 function saveSessionResult(sessionId: string, result: ChatTurnResponse): void {
@@ -301,6 +405,9 @@ function saveSessionResult(sessionId: string, result: ChatTurnResponse): void {
     content: result.message,
     kind: result.status === 'needs_input' ? 'clarification' : 'message',
   })
+  if (result.status === 'authorization_required' && !result.message) {
+    session.messages.pop()
+  }
   session.updatedAt = new Date().toISOString()
   sessions.value = [session, ...sessions.value.filter((item) => item.id !== sessionId)]
   persistSessions()
@@ -361,7 +468,10 @@ onMounted(async () => {
   sessions.value = loadSessions(storageKey.value)
   activeSessionId.value = sessions.value[0]?.id ?? null
   const restored = sessions.value[0]
-  if (restored) openSession(restored)
+  if (restored) {
+    openSession(restored)
+    await hydrateRestoredAgent()
+  }
 
   loginRequired.value = config.enabled
   if (config.enabled) {
@@ -434,6 +544,24 @@ async function send(): Promise<void> {
   }
 }
 
+async function resumeAfterAuthorization(): Promise<void> {
+  if (!conversationId.value || !activeSessionId.value || sending.value) return
+  const sessionId = activeSessionId.value
+  sending.value = true
+  errorMessage.value = ''
+  try {
+    const result = await request<ChatTurnResponse>(
+      `/api/chat/turns/${encodeURIComponent(conversationId.value)}/resume`,
+      { method: 'POST' },
+    )
+    saveSessionResult(sessionId, result)
+  } catch (error) {
+    errorMessage.value = formatTurnError(error)
+  } finally {
+    sending.value = false
+  }
+}
+
 function handleEnter(event: KeyboardEvent): void {
   if (event.isComposing || event.shiftKey) return
   event.preventDefault()
@@ -463,16 +591,31 @@ function useSuggestedQuestion(question: string): void {
       <aside class="chat-history">
         <div class="history-heading"><strong>{{ t('chat.history') }}</strong><button type="button" @click="startNewChat">{{ t('chat.newChat') }}</button></div>
         <p v-if="sessions.length === 0" class="history-empty">{{ t('chat.noHistory') }}</p>
-        <button
+        <div
           v-for="session in sessions"
           :key="session.id"
-          type="button"
-          :aria-label="session.title"
-          :class="['history-item', { active: session.id === activeSessionId }]"
-          @click="openSession(session)"
+          :class="['history-row', { active: session.id === activeSessionId }]"
         >
-          <span>{{ session.title }}</span><small>{{ session.agentName || t('chat.conversationAgent') }}</small>
-        </button>
+          <button
+            type="button"
+            :aria-label="session.title"
+            class="history-item"
+            @click="openSession(session)"
+          >
+            <span>{{ session.title }}</span><small>{{ session.agentName || t('chat.conversationAgent') }}</small>
+          </button>
+          <button
+            type="button"
+            class="history-delete"
+            :aria-label="t('chat.deleteNamed', { title: session.title })"
+            :disabled="deletingSessionId !== null || (sending && session.id === activeSessionId)"
+            @click="deleteSession(session)"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-1 11H8L7 9Zm3 2v7h2v-7h-2Zm4 0v7h2v-7h-2Z" />
+            </svg>
+          </button>
+        </div>
       </aside>
       <div class="conversation">
         <div class="message-stream">
@@ -494,6 +637,12 @@ function useSuggestedQuestion(question: string): void {
             </small>
           </article>
           <p v-if="errorMessage" class="chat-error" role="alert">{{ errorMessage }}</p>
+          <ChatAuthorization
+            v-if="authorization && selectedAgentId"
+            :agent-id="selectedAgentId"
+            :source="authorization"
+            @authorized="resumeAfterAuthorization"
+          />
         </div>
         <div class="composer">
           <label class="sr-only" for="chat-input">{{ t('chat.message') }}</label>
@@ -505,7 +654,7 @@ function useSuggestedQuestion(question: string): void {
             @keydown.enter="handleEnter"
           />
           <button
-            :disabled="sending || (conversationId === null && selectedAgentId === null)"
+            :disabled="sending || status === 'authorization_required' || (conversationId === null && selectedAgentId === null)"
             @click="send"
           >{{ sending ? t('chat.sending') : t('chat.send') }}</button>
           <div class="agent-dock">

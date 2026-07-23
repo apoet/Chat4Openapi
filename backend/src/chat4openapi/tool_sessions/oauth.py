@@ -14,8 +14,11 @@ from sqlalchemy.orm import Session
 
 from chat4openapi.db.serialized_write import serialized_write
 from chat4openapi.models import (
+    Agent,
     ApiSource,
     ApiSourceOAuthConfig,
+    ApiSourceToolAuthConfig,
+    BrowserChatSession,
     EmbedSession,
     ToolOAuthAuthorization,
     ToolSessionCredential,
@@ -29,6 +32,12 @@ from chat4openapi.tools.network_policy import validate_network_target
 from chat4openapi.tools.executor import RequestAuth
 
 NetworkValidator = Callable[[httpx.URL, bool], Awaitable[None]]
+TOKEN_ENDPOINT_AUTH_METHODS = {
+    "auto",
+    "client_secret_basic",
+    "client_secret_post",
+    "none",
+}
 
 
 class OAuthFlowError(RuntimeError):
@@ -57,6 +66,8 @@ class OAuthStatus:
     embed_session_id: int | None = None
     parent_origin: str | None = None
     target_origin: str | None = None
+    browser_chat_session_id: int | None = None
+    popup_origin: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,10 +123,17 @@ class ToolOAuthService:
         source = self._source(source_id)
         row = self._session.get(ApiSourceOAuthConfig, source.id)
         existing_secret: str | None = None
+        existing_auth_method: str | None = None
         if row is not None:
             existing = self._cipher.decrypt_json(row.encrypted_config)
             if isinstance(existing, dict) and isinstance(existing.get("client_secret"), str):
                 existing_secret = existing["client_secret"]
+            if (
+                isinstance(existing, dict)
+                and existing.get("token_endpoint_auth_method")
+                in TOKEN_ENDPOINT_AUTH_METHODS
+            ):
+                existing_auth_method = existing["token_endpoint_auth_method"]
         client_id = supplied.get("client_id")
         if not isinstance(client_id, str) or not client_id.strip():
             raise OAuthFlowError("oauth.config_invalid")
@@ -127,6 +145,11 @@ class ToolOAuthService:
         config = {
             "client_id": client_id.strip(),
             "client_secret": supplied.get("client_secret") or existing_secret,
+            "token_endpoint_auth_method": supplied.get(
+                "token_endpoint_auth_method"
+            )
+            or existing_auth_method
+            or "auto",
             "authorization_url": _safe_url(supplied.get("authorization_url"), required=False),
             "token_url": _safe_url(supplied.get("token_url")),
             "device_authorization_url": _safe_url(
@@ -137,11 +160,26 @@ class ToolOAuthService:
         }
         if config["client_secret"] is not None and not isinstance(config["client_secret"], str):
             raise OAuthFlowError("oauth.config_invalid")
+        if config["token_endpoint_auth_method"] not in TOKEN_ENDPOINT_AUTH_METHODS:
+            raise OAuthFlowError("oauth.config_invalid")
+        if (
+            config["token_endpoint_auth_method"]
+            in {"client_secret_basic", "client_secret_post"}
+            and not config["client_secret"]
+        ):
+            raise OAuthFlowError("oauth.config_invalid")
         if row is None:
             row = ApiSourceOAuthConfig(api_source_id=source.id, encrypted_config=b"")
             self._session.add(row)
         row.encrypted_config = self._cipher.encrypt_json(config)
         row.enabled = bool(supplied.get("enabled", True))
+        if row.enabled:
+            source.auth_mode = "oauth"
+            tool_auth = self._session.get(ApiSourceToolAuthConfig, source.id)
+            if tool_auth is not None:
+                tool_auth.enabled = False
+        elif source.auth_mode == "oauth":
+            source.auth_mode = "none"
         self._session.commit()
 
     def config_summary(self, source_id: int) -> dict[str, Any]:
@@ -152,6 +190,9 @@ class ToolOAuthService:
             "enabled": row.enabled,
             "client_id": config["client_id"],
             "has_client_secret": bool(config.get("client_secret")),
+            "token_endpoint_auth_method": config.get(
+                "token_endpoint_auth_method", "auto"
+            ),
             "authorization_url": config.get("authorization_url"),
             "token_url": config["token_url"],
             "device_authorization_url": config.get("device_authorization_url"),
@@ -174,7 +215,14 @@ class ToolOAuthService:
             raise OAuthFlowError("oauth.not_configured")
         return row, config
 
-    async def _post(self, source: ApiSource, url: str, data: Mapping[str, str]) -> httpx.Response:
+    async def _post(
+        self,
+        source: ApiSource,
+        url: str,
+        data: Mapping[str, str],
+        *,
+        auth: httpx.Auth | None = None,
+    ) -> httpx.Response:
         target = httpx.URL(url)
         try:
             await self._network_validator(target, source.allow_private_networks)
@@ -183,7 +231,7 @@ class ToolOAuthService:
                 follow_redirects=False,
                 timeout=httpx.Timeout(20, connect=10),
             ) as client:
-                response = await client.post(target, data=data)
+                response = await client.post(target, data=data, auth=auth)
         except (httpx.RequestError, ValueError) as exc:
             raise OAuthFlowError("oauth.upstream_failed") from exc
         if response.is_redirect:
@@ -197,6 +245,64 @@ class ToolOAuthService:
         if isinstance(secret, str) and secret:
             fields["client_secret"] = secret
         return fields
+
+    async def _post_token(
+        self,
+        source: ApiSource,
+        config: Mapping[str, Any],
+        fields: Mapping[str, str],
+    ) -> httpx.Response:
+        method = config.get("token_endpoint_auth_method", "auto")
+        secret = config.get("client_secret")
+        if method == "none":
+            data = {
+                key: value
+                for key, value in fields.items()
+                if key != "client_secret"
+            }
+            return await self._post(source, config["token_url"], data)
+        if method == "client_secret_basic" and isinstance(secret, str) and secret:
+            return await self._post_token_basic(source, config, fields, secret)
+        response = await self._post(source, config["token_url"], fields)
+        if (
+            method == "auto"
+            and isinstance(secret, str)
+            and secret
+            and self._is_client_authentication_failure(response)
+        ):
+            return await self._post_token_basic(source, config, fields, secret)
+        return response
+
+    async def _post_token_basic(
+        self,
+        source: ApiSource,
+        config: Mapping[str, Any],
+        fields: Mapping[str, str],
+        secret: str,
+    ) -> httpx.Response:
+        data = {
+            key: value
+            for key, value in fields.items()
+            if key not in {"client_id", "client_secret"}
+        }
+        return await self._post(
+            source,
+            config["token_url"],
+            data,
+            auth=httpx.BasicAuth(str(config["client_id"]), secret),
+        )
+
+    @staticmethod
+    def _is_client_authentication_failure(response: httpx.Response) -> bool:
+        if response.status_code == 401:
+            return True
+        if response.status_code != 400:
+            return False
+        try:
+            payload = response.json()
+        except ValueError:
+            return False
+        return isinstance(payload, dict) and payload.get("error") == "invalid_client"
 
     def _pending_session(
         self,
@@ -324,7 +430,7 @@ class ToolOAuthService:
             )
         generation, interval = claimed
         try:
-            response = await self._post(source, config["token_url"], fields)
+            response = await self._post_token(source, config, fields)
             payload = self._response_json(response)
         except OAuthFlowError:
             self._release_operation(flow.id, generation)
@@ -473,6 +579,23 @@ class ToolOAuthService:
             redirect_uri_override=redirect_uri,
         )
 
+    async def start_browser_pkce(
+        self,
+        owner: BrowserChatSession,
+        source_id: int,
+        *,
+        agent_id: int,
+        redirect_uri: str,
+        popup_origin: str,
+    ) -> PKCEStart:
+        return await self._start_pkce(
+            owner,
+            source_id,
+            agent_id=agent_id,
+            redirect_uri_override=redirect_uri,
+            popup_origin=popup_origin,
+        )
+
     async def _start_pkce(
         self,
         context: Any,
@@ -480,6 +603,7 @@ class ToolOAuthService:
         *,
         agent_id: int,
         redirect_uri_override: str | None = None,
+        popup_origin: str | None = None,
     ) -> PKCEStart:
         source = self._source(source_id)
         _, config = self._config(source.id)
@@ -534,6 +658,43 @@ class ToolOAuthService:
                     f"{urlsplit(str(redirect_uri)).scheme}://"
                     f"{urlsplit(str(redirect_uri)).netloc}"
                 ),
+                "redirect_uri": redirect_uri,
+            }
+        elif isinstance(context, BrowserChatSession):
+            if (
+                context.revoked_at is not None
+                or context.expires_at <= now
+            ):
+                raise OAuthFlowError("oauth.session_not_found")
+            agent = self._session.get(Agent, agent_id)
+            if agent is None or agent.deleted_at is not None or not agent.enabled:
+                raise OAuthFlowError("oauth.session_not_found")
+            expires_at = min(expires_at, context.expires_at)
+            token = new_token()
+            row = ToolUserSession(
+                token_hash=hash_token(token),
+                agent_id=agent_id,
+                browser_chat_session_id=context.id,
+                status="pending",
+                idle_expires_at=min(now + timedelta(minutes=30), expires_at),
+                absolute_expires_at=expires_at,
+                last_used_at=now,
+            )
+            self._session.add(row)
+            self._session.flush()
+            self._session.add(
+                ToolSessionCredential(
+                    tool_session_id=row.id,
+                    api_source_id=source.id,
+                    encrypted_credentials=self._cipher.encrypt_json({}),
+                    status="pending",
+                    expires_at=expires_at,
+                    last_used_at=now,
+                )
+            )
+            binding_data = {
+                "browser_chat_session_id": context.id,
+                "popup_origin": popup_origin,
                 "redirect_uri": redirect_uri,
             }
         else:
@@ -634,7 +795,7 @@ class ToolOAuthService:
                     "code_verifier": flow_data["code_verifier"],
                 }
             )
-            response = await self._post(source, config["token_url"], fields)
+            response = await self._post_token(source, config, fields)
             payload = self._response_json(response)
             row = self._session.get(ToolUserSession, row_id)
             if row is None or response.status_code >= 400:
@@ -674,6 +835,10 @@ class ToolOAuthService:
                 embed_session_id=flow_data.get("embed_session_id"),
                 parent_origin=flow_data.get("parent_origin"),
                 target_origin=flow_data.get("target_origin"),
+                browser_chat_session_id=flow_data.get(
+                    "browser_chat_session_id"
+                ),
+                popup_origin=flow_data.get("popup_origin"),
             )
         except BaseException as exc:
             self._fail_claimed_pkce(flow_id, row_id)
@@ -850,7 +1015,7 @@ class ToolOAuthService:
             fields.update(
                 {"grant_type": "refresh_token", "refresh_token": refresh_token}
             )
-            response = await self._post(source, config["token_url"], fields)
+            response = await self._post_token(source, config, fields)
             if response.status_code >= 400:
                 raise OAuthFlowError("oauth.refresh_failed")
             payload = self._response_json(response)

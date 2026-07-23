@@ -9,7 +9,7 @@ from chat4openapi.models.embed import AgentEmbed, EmbedAuthGrant, EmbedSession
 from chat4openapi.models.llm_provider import LlmProvider
 from chat4openapi.models.skill import Skill, SkillTool
 from chat4openapi.models.tool import Tool
-from chat4openapi.models.tool_auth import GlobalToolAuthConfig
+from chat4openapi.models.tool_auth import ApiSourceToolAuthConfig, GlobalToolAuthConfig
 from chat4openapi.models.tool_invocation import ToolInvocation
 from chat4openapi.models.tool_parameter import ToolParameterOverride
 from chat4openapi.models.tool_session import (
@@ -28,6 +28,7 @@ __all__ = [
     "AgentEmbed",
     "ApiSource",
     "ApiSourceOAuthConfig",
+    "ApiSourceToolAuthConfig",
     "AppSetting",
     "BrowserChatSession",
     "ChatMessage",

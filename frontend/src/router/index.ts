@@ -24,7 +24,7 @@ export function createAppRouter(): Router {
           { path: '', name: 'overview', component: () => import('../views/OverviewView.vue'), meta: { requiresSystemAdmin: true } },
           { path: 'sources', name: 'sources', component: () => import('../views/ApiSourcesView.vue') },
           { path: 'tools', name: 'tools', component: () => import('../views/ToolsView.vue') },
-          { path: 'tool-auth', name: 'tool-auth', component: () => import('../views/ToolAuthView.vue') },
+          { path: 'tool-auth', redirect: { name: 'sources' } },
           { path: 'providers', name: 'providers', component: () => import('../views/ProvidersView.vue'), meta: { requiresSystemAdmin: true } },
           { path: 'users', name: 'users', component: () => import('../views/UsersView.vue'), meta: { requiresSystemAdmin: true } },
           { path: 'skills', name: 'skills', component: () => import('../views/SkillsView.vue') },

@@ -21,8 +21,9 @@ function source(id: number, name: string): ApiSourceSummary {
     source_type: 'openapi',
     base_url: `https://${name.toLocaleLowerCase().replaceAll(' ', '-')}.test`,
     document_url: null,
-    allow_private_networks: false,
-    enabled: true,
+  allow_private_networks: false,
+  auth_mode: 'none',
+  enabled: true,
     created_at: '2026-07-22T00:00:00',
   }
 }

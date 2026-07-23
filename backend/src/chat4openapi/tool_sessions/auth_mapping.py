@@ -1,7 +1,7 @@
 import re
 from typing import Any
 
-from chat4openapi.models import GlobalToolAuthConfig
+from chat4openapi.models import ApiSourceToolAuthConfig, GlobalToolAuthConfig
 from chat4openapi.tools.executor import RequestAuth
 
 _PATH_PART = re.compile(r"(?:^|\.)([^.\[\]]+)|\[(\d+)\]")
@@ -28,7 +28,10 @@ def extract_json_path(value: Any, path: str | None) -> Any:
     return current
 
 
-def _auth_value(config: GlobalToolAuthConfig, payload: Any) -> str:
+ToolAuthConfig = GlobalToolAuthConfig | ApiSourceToolAuthConfig
+
+
+def _auth_value(config: ToolAuthConfig, payload: Any) -> str:
     token = extract_json_path(payload, config.token_json_path)
     if token is None:
         raise AuthMappingError("Authentication token is missing")
@@ -36,7 +39,7 @@ def _auth_value(config: GlobalToolAuthConfig, payload: Any) -> str:
     return f"{prefix} {token}" if prefix else str(token)
 
 
-def build_request_auth(config: GlobalToolAuthConfig, payload: Any) -> RequestAuth:
+def build_request_auth(config: ToolAuthConfig, payload: Any) -> RequestAuth:
     value = _auth_value(config, payload)
     name = config.auth_name
     if config.auth_type == "bearer" or config.auth_type == "header":

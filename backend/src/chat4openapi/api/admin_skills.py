@@ -11,6 +11,7 @@ from chat4openapi.db.serialized_write import serialized_write
 from chat4openapi.db.session import get_db_session
 from chat4openapi.models import (
     ApiSource,
+    ApiSourceToolAuthConfig,
     GlobalToolAuthConfig,
     Skill,
     SkillTool,
@@ -38,8 +39,18 @@ def _skill(context: AdminContext, skill_id: int) -> Skill:
 def _eligible_tools(context: AdminContext, tool_ids: list[int]) -> list[Tool]:
     if len(tool_ids) != len(set(tool_ids)):
         raise ApiError(409, "skills.tool_duplicate")
+    source_login_ids = set(
+        context.db.scalars(
+            select(ApiSourceToolAuthConfig.login_tool_id).where(
+                ApiSourceToolAuthConfig.enabled.is_(True),
+                ApiSourceToolAuthConfig.login_tool_id.is_not(None),
+            )
+        )
+    )
     config = context.db.get(GlobalToolAuthConfig, 1)
     login_tool_id = config.login_tool_id if config is not None and config.enabled else None
+    if login_tool_id is not None:
+        source_login_ids.add(login_tool_id)
     tools: list[Tool] = []
     for tool_id in tool_ids:
         tool = context.db.get(Tool, tool_id)
@@ -48,7 +59,7 @@ def _eligible_tools(context: AdminContext, tool_ids: list[int]) -> list[Tool]:
             tool is None
             or tool.deleted_at is not None
             or not tool.enabled
-            or tool.id == login_tool_id
+            or tool.id in source_login_ids
             or source is None
             or source.deleted_at is not None
             or not source.enabled
@@ -123,8 +134,17 @@ def list_admin_skills(
 def list_eligible_tools(
     context: AdminContext = Depends(require_admin),
 ) -> list[ToolSummary]:
+    source_login_ids = set(
+        context.db.scalars(
+            select(ApiSourceToolAuthConfig.login_tool_id).where(
+                ApiSourceToolAuthConfig.enabled.is_(True),
+                ApiSourceToolAuthConfig.login_tool_id.is_not(None),
+            )
+        )
+    )
     config = context.db.get(GlobalToolAuthConfig, 1)
-    login_tool_id = config.login_tool_id if config is not None and config.enabled else None
+    if config is not None and config.enabled and config.login_tool_id is not None:
+        source_login_ids.add(config.login_tool_id)
     statement = (
         select(Tool)
         .join(ApiSource, ApiSource.id == Tool.api_source_id)
@@ -136,8 +156,8 @@ def list_eligible_tools(
         )
         .order_by(Tool.id)
     )
-    if login_tool_id is not None:
-        statement = statement.where(Tool.id != login_tool_id)
+    if source_login_ids:
+        statement = statement.where(Tool.id.not_in(source_login_ids))
     return [_tool_summary(context.db, tool) for tool in context.db.scalars(statement)]
 
 

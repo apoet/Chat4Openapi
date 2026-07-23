@@ -46,7 +46,7 @@ export default {
   },
   nav: { overview: '概览', system: '系统', build: '构建', logout: '退出登录', language: '简体中文' },
   status: { ready: '系统运行正常' },
-  sources: { eyebrow: 'API 目录', title: 'API 来源', subtitle: '通过 URL 或本地文件导入 Swagger 2.0 或 OpenAPI 3.x 文档。', name: '来源名称', baseUrl: '基础 URL（可选）', fileMode: '文件上传', urlMode: 'URL 导入', document: 'OpenAPI 文档', url: 'OpenAPI URL', import: '导入来源', importUrl: '从 URL 导入', importing: '正在导入…', importFailed: '导入失败：{reason}', empty: '尚未导入 API 来源。', editName: '编辑来源名称', editBaseUrl: '编辑基础 URL', editDocumentUrl: '编辑 OpenAPI 文档 URL', allowPrivate: '允许访问私有网络目标', save: '保存更改', viewTools: '查看 Tools', update: '更新', updating: '正在更新…', chooseUpdateFile: '选择更新文件', refreshResult: '新增 {created} 个，更新 {updated} 个，未变化 {unchanged} 个', oauth: { open: 'OAuth 2.0', title: '{name} 的 OAuth 配置', enabled: '启用 OAuth', clientId: 'Client ID', clientSecret: 'Client Secret', keepSecret: '留空则保留已保存的密钥', authorizationUrl: 'OAuth 2.0 授权地址', tokenUrl: 'Token 地址', deviceUrl: '设备授权地址（可选）', scopes: 'Scopes（空格或逗号分隔）', redirectOverride: '回调地址覆盖（可选）', recommended: '推荐回调地址：', effective: '实际回调地址：', baseUrlRequired: '请先配置本系统 Base URL', save: '保存 OAuth 配置' } },
+  sources: { eyebrow: 'API 目录', title: 'API 来源', subtitle: '通过 URL 或本地文件导入 Swagger 2.0 或 OpenAPI 3.x 文档。', name: '来源名称', baseUrl: '基础 URL（可选）', fileMode: '文件上传', urlMode: 'URL 导入', document: 'OpenAPI 文档', url: 'OpenAPI URL', import: '导入来源', importUrl: '从 URL 导入', importing: '正在导入…', importFailed: '导入失败：{reason}', empty: '尚未导入 API 来源。', editName: '编辑来源名称', editBaseUrl: '编辑基础 URL', editDocumentUrl: '编辑 OpenAPI 文档 URL', allowPrivate: '允许访问私有网络目标', save: '保存更改', viewTools: '查看 Tools', update: '更新', updating: '更新中…', chooseUpdateFile: '选择更新文件', refreshResult: '新增 {created} 个，更新 {updated} 个，未变化 {unchanged} 个', auth: { open: '认证配置', eyebrow: 'API 来源认证', title: '{name} 的认证配置', tool: 'Tool 认证' }, oauth: { open: 'OAuth 2.0', title: '{name} 的 OAuth 配置', enabled: '启用 OAuth', clientId: 'Client ID', clientSecret: 'Client Secret', keepSecret: '留空则保留已保存的密钥', tokenAuthMethod: 'Token 端点认证方式', tokenAuthAuto: '自动（POST 优先，按需回退 Basic）', tokenAuthNone: 'none（公共客户端）', authorizationUrl: 'OAuth 2.0 授权地址', tokenUrl: 'Token 地址', deviceUrl: '设备授权地址（可选）', scopes: 'Scopes（空格或逗号分隔）', redirectOverride: '回调地址覆盖（可选）', recommended: '推荐回调地址：', effective: '实际回调地址：', baseUrlRequired: '请先配置本系统 Base URL', save: '保存 OAuth 配置' } },
   settings: { nav: '系统设置', eyebrow: '系统', title: '系统设置', subtitle: '配置嵌入脚本与 OAuth 回调使用的公开访问地址。', baseUrl: '本系统 Base URL', baseUrlHint: '请填写外部可访问的 HTTP 或 HTTPS 地址；公网生产环境建议使用 HTTPS，末尾斜杠会自动移除。', save: '保存设置', saved: '已保存：' },
   embeds: { eyebrow: '传统站点赋能', title: '嵌入式对话', subtitle: '创建一个或多个绑定当前 Agent 的站点脚本。', name: '配置名称', position: 'Logo 位置', bottomRight: '右下角', bottomLeft: '左下角', origins: '允许的宿主站点来源', originsHint: '每行一个精确 Origin，例如 https://portal.example.com', noOrigins: '尚未配置宿主来源', create: '创建嵌入配置', copy: '复制脚本', copied: '已复制', copyFailed: '复制失败，请选择并复制下方脚本。', preview: '预览', edit: '编辑配置', save: '保存配置', loadFailed: '无法加载嵌入配置。' },
   tools: { eyebrow: '运行时目录', title: 'Tools', subtitle: '检查已导入操作，仅开放可信的 Tool。', enabled: '已启用', disabled: '已停用', enable: '启用', disable: '停用', delete: '删除', empty: '没有符合筛选条件的 Tool。', count: '{count} 个 Tools', untagged: '未分组', searchLabel: '搜索 Tools', searchPlaceholder: '按接口名称或描述搜索', descriptionLabel: 'Tool 描述', editDescription: '编辑描述', saveDescription: '保存描述', cancelDescription: '取消', parameters: '{count} 个参数', required: '必填', optional: '可选', parameterDescription: '描述', parameterExample: '示例', editParameter: '编辑参数', parameterDescriptionLabel: '参数描述', parameterExampleLabel: '示例（JSON 或文本）', parameterExampleHint: '有效 JSON 会保留值类型，其他输入将作为文本保存。清空两个字段可恢复 Swagger 指引。', saveParameter: '保存参数', cancelParameter: '取消', parameterSaveSuccess: '参数指引已保存。', parameterSaveError: '无法保存参数指引，请重试。', sourceFilter: 'API 来源：{name}', showAllSources: '显示全部来源', bulk: { label: '批量 Tool 操作', selected: '已选择 {count} 个 Tools', selectVisible: '选择可见项', clear: '清除选择', selectTool: '选择 {name}', enable: '启用所选项', disable: '停用所选项', delete: '删除所选项', limit: '最多可选择 {limit} 个 Tools。请缩小筛选范围或清除选择。', requestError: '批量操作未能完成，请重试。', unknownTool: 'Tool #{id}', confirm: { title: '删除所选 Tools', message: '要删除来自 {sources} 个 API 来源的 {tools} 个 Tools 吗？', cancel: '取消', cancelLabel: '取消批量删除', confirm: '删除 Tools', confirmLabel: '确认删除 Tools' }, summary: { enable: '已启用 {succeeded}/{total} 个 Tools，{failed} 个失败。', disable: '已停用 {succeeded}/{total} 个 Tools，{failed} 个失败。', delete: '已删除 {succeeded}/{total} 个 Tools，{failed} 个失败。' }, errors: { notFound: '此 Tool 已不存在。', sourceUnavailable: '其 API 来源不可用。', loginToolConflict: '无法更改已配置的登录 Tool。', batchItemFailed: '无法更新此 Tool，请重试。', unknown: '无法更新此 Tool，请重试。' } }, location: { path: '路径', query: '查询', header: '请求头', cookie: 'Cookie', body: '请求体', input: '输入' }, filter: { all: '全部', enabled: '已启用', disabled: '已停用' } },
@@ -110,6 +110,8 @@ export default {
     login: '进入对话',
     history: '历史会话',
     newChat: '新建对话',
+    deleteNamed: '删除 {title}',
+    deleteConfirm: '确定删除“{title}”及其已保存消息吗？',
     noHistory: '暂无本地历史会话。',
     untitled: '新会话',
     unknownSkill: '不可用的 Skill',
@@ -122,6 +124,7 @@ export default {
   embed: {
     starting: '正在启动对话…', subtitle: '由 Agent4API 提供支持', assistant: '智能助手',
     welcome: '与 {agent} 对话', welcomeHint: '输入问题，或让它帮你完成操作。',
+    suggestionLabel: '试着问问', suggestionQuestion: '你能帮我做什么？',
     you: '你', placeholder: '输入消息…', send: '发送', cancel: '取消', close: '关闭对话',
     unavailable: '此对话当前不可用。', failed: '请求未能完成，请重试。',
     authorizationTitle: '登录 {source}', authorizationHint: '此受保护 API 需要你的授权，Agent 才能继续。',
@@ -155,6 +158,7 @@ export default {
     chat: {
       agentUnavailable: '此会话使用的 Agent 已不可用。',
       historyUnavailable: '此历史会话已无法继续，请新建会话后重试。',
+      deleteFailed: '无法删除此会话，请重试。',
       browserSessionChanged: '浏览器聊天会话已变化。请新建会话并重新发送消息。',
     },
     unknown: '发生错误，请重试。',

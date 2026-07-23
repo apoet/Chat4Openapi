@@ -4,7 +4,13 @@ import { useI18n } from 'vue-i18n'
 import { routerKey } from 'vue-router'
 
 import { ApiError, request } from '../api/client'
-import type { ApiSourceSummary, OAuthConfigSummary, OAuthConfigWrite } from '../api/contracts'
+import type {
+  ApiSourceSummary,
+  OAuthConfigSummary,
+  OAuthConfigWrite,
+  OAuthTokenEndpointAuthMethod,
+  ToolAuthConfig,
+} from '../api/contracts'
 import { useAuthStore } from '../stores/auth'
 import { useToolsStore } from '../stores/tools'
 
@@ -27,10 +33,25 @@ const editAllowPrivateNetworks = ref(false)
 const refreshingId = ref<number | null>(null)
 const refreshNotice = ref<{ sourceId: number; message: string } | null>(null)
 const oauthSource = ref<ApiSourceSummary | null>(null)
+const authMode = ref<'oauth' | 'tool'>('oauth')
+const toolAuthConfig = ref<ToolAuthConfig>({
+  enabled: false,
+  login_tool_id: null,
+  username_field: 'username',
+  password_field: 'password',
+  token_json_path: '$.access_token',
+  expires_json_path: null,
+  auth_type: 'bearer',
+  auth_name: 'Authorization',
+  auth_prefix: 'Bearer',
+  idle_minutes: 30,
+  absolute_hours: 8,
+})
 const oauthSummary = ref<OAuthConfigSummary | null>(null)
 const oauthEnabled = ref(true)
 const oauthClientId = ref('')
 const oauthClientSecret = ref('')
+const oauthTokenAuthMethod = ref<OAuthTokenEndpointAuthMethod>('auto')
 const oauthAuthorizationUrl = ref('')
 const oauthTokenUrl = ref('')
 const oauthDeviceUrl = ref('')
@@ -159,6 +180,7 @@ function fillOAuth(summary: OAuthConfigSummary | null): void {
   oauthEnabled.value = summary?.enabled ?? true
   oauthClientId.value = summary?.client_id ?? ''
   oauthClientSecret.value = ''
+  oauthTokenAuthMethod.value = summary?.token_endpoint_auth_method ?? 'auto'
   oauthAuthorizationUrl.value = summary?.authorization_url ?? ''
   oauthTokenUrl.value = summary?.token_url ?? ''
   oauthDeviceUrl.value = summary?.device_authorization_url ?? ''
@@ -168,11 +190,34 @@ function fillOAuth(summary: OAuthConfigSummary | null): void {
 
 async function openOAuth(source: ApiSourceSummary): Promise<void> {
   oauthSource.value = source
+  authMode.value = source.auth_mode === 'tool' ? 'tool' : 'oauth'
+  if (store.tools.length === 0) await store.loadTools()
+  toolAuthConfig.value = await request<ToolAuthConfig>(
+    `/api/admin/sources/${source.id}/tool-auth`,
+  )
   try {
     fillOAuth(await request<OAuthConfigSummary>(`/api/admin/sources/${source.id}/oauth`))
   } catch (error) {
     if (!(error instanceof ApiError) || !['oauth.not_configured', 'http.404'].includes(error.code)) throw error
     fillOAuth(null)
+  }
+}
+
+async function saveToolAuth(): Promise<void> {
+  if (!oauthSource.value || oauthPending.value) return
+  oauthPending.value = true
+  try {
+    toolAuthConfig.value = await request<ToolAuthConfig>(
+      `/api/admin/sources/${oauthSource.value.id}/tool-auth`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ ...toolAuthConfig.value, enabled: true }),
+      },
+      auth.csrfToken,
+    )
+    oauthSource.value.auth_mode = 'tool'
+  } finally {
+    oauthPending.value = false
   }
 }
 
@@ -183,6 +228,7 @@ async function saveOAuth(): Promise<void> {
     enabled: oauthEnabled.value,
     client_id: oauthClientId.value.trim(),
     client_secret: oauthClientSecret.value.trim() || null,
+    token_endpoint_auth_method: oauthTokenAuthMethod.value,
     authorization_url: oauthAuthorizationUrl.value.trim() || null,
     token_url: oauthTokenUrl.value.trim(),
     device_authorization_url: oauthDeviceUrl.value.trim() || null,
@@ -193,8 +239,13 @@ async function saveOAuth(): Promise<void> {
     fillOAuth(await request<OAuthConfigSummary>(`/api/admin/sources/${oauthSource.value.id}/oauth`, {
       method: 'PUT', body: JSON.stringify(payload),
     }, auth.csrfToken))
+    oauthSource.value.auth_mode = 'oauth'
   } finally { oauthPending.value = false }
 }
+
+const sourceLoginTools = () => store.tools.filter(
+  (tool) => tool.api_source_id === oauthSource.value?.id && tool.enabled,
+)
 </script>
 
 <template>
@@ -230,16 +281,20 @@ async function saveOAuth(): Promise<void> {
         <template v-else>
           <div><strong>{{ source.name }}</strong><p>{{ source.base_url }}</p><p v-if="source.document_url">{{ source.document_url }}</p><p v-if="refreshNotice?.sourceId === source.id" class="refresh-notice">{{ refreshNotice.message }}</p></div>
           <span :class="['status-pill', source.enabled ? 'enabled' : 'disabled']">{{ source.enabled ? t('tools.enabled') : t('tools.disabled') }}</span>
-          <footer class="row-actions"><button class="secondary-action" @click="viewTools(source)">{{ t('sources.viewTools') }}</button><button class="secondary-action" :data-testid="`source-oauth-${source.id}`" @click="openOAuth(source)">{{ t('sources.oauth.open') }}</button><button v-if="source.document_url" class="secondary-action" :disabled="refreshingId === source.id" @click="refreshSource(source)">{{ refreshingId === source.id ? t('sources.updating') : t('sources.update') }}</button><label v-else class="secondary-action source-refresh-file"><span>{{ t('sources.chooseUpdateFile') }}</span><input type="file" accept=".json,.yaml,.yml,application/json,application/yaml" :aria-label="t('sources.chooseUpdateFile')" :disabled="refreshingId === source.id" @change="refreshSourceFile(source, $event)" /></label><button class="secondary-action" @click="startEdit(source)">{{ t('skills.edit') }}</button><button class="secondary-action" @click="store.setSourceEnabled(source, !source.enabled)">{{ source.enabled ? t('tools.disable') : t('tools.enable') }}</button><button class="danger-action" @click="store.deleteSource(source)">{{ t('tools.delete') }}</button></footer>
+          <footer class="row-actions"><button class="secondary-action" @click="viewTools(source)">{{ t('sources.viewTools') }}</button><button class="secondary-action" :data-testid="`source-oauth-${source.id}`" @click="openOAuth(source)">{{ t('sources.auth.open') }}</button><button v-if="source.document_url" class="secondary-action" :disabled="refreshingId === source.id" @click="refreshSource(source)">{{ refreshingId === source.id ? t('sources.updating') : t('sources.update') }}</button><label v-else class="secondary-action source-refresh-file"><span>{{ t('sources.chooseUpdateFile') }}</span><input type="file" accept=".json,.yaml,.yml,application/json,application/yaml" :aria-label="t('sources.chooseUpdateFile')" :disabled="refreshingId === source.id" @change="refreshSourceFile(source, $event)" /></label><button class="secondary-action" @click="startEdit(source)">{{ t('skills.edit') }}</button><button class="secondary-action" @click="store.setSourceEnabled(source, !source.enabled)">{{ source.enabled ? t('tools.disable') : t('tools.enable') }}</button><button class="danger-action" @click="store.deleteSource(source)">{{ t('tools.delete') }}</button></footer>
         </template>
       </article>
     </section>
     <section v-if="oauthSource" class="import-panel oauth-panel">
-      <div class="panel-heading"><div><p class="eyebrow">OAuth 2.0</p><h2>{{ t('sources.oauth.title', { name: oauthSource.name }) }}</h2></div><button type="button" class="text-button" @click="oauthSource = null">×</button></div>
-      <form class="form-grid" @submit.prevent="saveOAuth">
-        <label class="checkbox-label"><input v-model="oauthEnabled" type="checkbox" />{{ t('sources.oauth.enabled') }}</label>
+      <div class="panel-heading"><div><p class="eyebrow">{{ t('sources.auth.eyebrow') }}</p><h2>{{ t('sources.auth.title', { name: oauthSource.name }) }}</h2></div><button type="button" class="text-button" @click="oauthSource = null">×</button></div>
+      <div class="segmented">
+        <button type="button" :class="{ active: authMode === 'oauth' }" @click="authMode = 'oauth'">OAuth 2.0</button>
+        <button type="button" :class="{ active: authMode === 'tool' }" @click="authMode = 'tool'">{{ t('sources.auth.tool') }}</button>
+      </div>
+      <form v-if="authMode === 'oauth'" class="form-grid" @submit.prevent="saveOAuth">
         <label>{{ t('sources.oauth.clientId') }}<input v-model="oauthClientId" required /></label>
         <label>{{ t('sources.oauth.clientSecret') }}<input v-model="oauthClientSecret" type="password" :placeholder="oauthSummary?.has_client_secret ? t('sources.oauth.keepSecret') : ''" /></label>
+        <label>{{ t('sources.oauth.tokenAuthMethod') }}<select v-model="oauthTokenAuthMethod" data-testid="oauth-token-auth-method"><option value="auto">{{ t('sources.oauth.tokenAuthAuto') }}</option><option value="client_secret_basic">client_secret_basic</option><option value="client_secret_post">client_secret_post</option><option value="none">{{ t('sources.oauth.tokenAuthNone') }}</option></select></label>
         <label>{{ t('sources.oauth.authorizationUrl') }}<input v-model="oauthAuthorizationUrl" type="url" /><small v-if="oauthAuthorizationUrl" class="muted">{{ oauthAuthorizationUrl }}</small></label>
         <label>{{ t('sources.oauth.tokenUrl') }}<input v-model="oauthTokenUrl" type="url" required /></label>
         <label>{{ t('sources.oauth.deviceUrl') }}<input v-model="oauthDeviceUrl" type="url" /></label>
@@ -247,6 +302,15 @@ async function saveOAuth(): Promise<void> {
         <label>{{ t('sources.oauth.redirectOverride') }}<input v-model="oauthRedirectUri" type="url" /></label>
         <div class="oauth-callbacks"><p><strong>{{ t('sources.oauth.recommended') }}</strong> {{ oauthSummary?.recommended_redirect_uri || t('sources.oauth.baseUrlRequired') }}</p><p><strong>{{ t('sources.oauth.effective') }}</strong> {{ oauthSummary?.effective_redirect_uri || oauthRedirectUri || t('sources.oauth.baseUrlRequired') }}</p></div>
         <button class="primary-action" :disabled="oauthPending || !oauthClientId || !oauthTokenUrl">{{ t('sources.oauth.save') }}</button>
+      </form>
+      <form v-else class="form-grid" @submit.prevent="saveToolAuth">
+        <label>{{ t('toolAuth.loginTool') }}<select v-model="toolAuthConfig.login_tool_id" required><option :value="null">{{ t('toolAuth.selectTool') }}</option><option v-for="tool in sourceLoginTools()" :key="tool.id" :value="tool.id">{{ tool.name }} · {{ tool.operation_key }}</option></select></label>
+        <label>{{ t('toolAuth.tokenPath') }}<input v-model="toolAuthConfig.token_json_path" required /></label>
+        <label>{{ t('toolAuth.usernameField') }}<input v-model="toolAuthConfig.username_field" required /></label>
+        <label>{{ t('toolAuth.passwordField') }}<input v-model="toolAuthConfig.password_field" required /></label>
+        <label>{{ t('toolAuth.idle') }}<input v-model.number="toolAuthConfig.idle_minutes" type="number" min="1" /></label>
+        <label>{{ t('toolAuth.absolute') }}<input v-model.number="toolAuthConfig.absolute_hours" type="number" min="1" /></label>
+        <button class="primary-action" :disabled="oauthPending || !toolAuthConfig.login_tool_id || !toolAuthConfig.token_json_path">{{ t('toolAuth.save') }}</button>
       </form>
     </section>
   </main>

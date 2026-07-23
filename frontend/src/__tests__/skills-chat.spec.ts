@@ -159,6 +159,44 @@ describe('Skills and chat', () => {
     expect(JSON.parse(localStorage.getItem(secondKey) ?? '[]')[0].title).toBe('Subject B history')
   })
 
+  it('deletes an owned history conversation and opens the next saved chat', async () => {
+    const session = (id: string, title: string) => ({
+      version: 3, id, conversationId: `conversation-${id}`, title,
+      agentId: 1, agentName: 'Research Agent', loadedSkillIds: [], status: 'completed', pending: null,
+      messages: [{ role: 'user', content: title, kind: 'message' }], updatedAt: '2026-07-22T00:00:00.000Z',
+    })
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify([
+      session('first', 'Delete this chat'),
+      session('second', 'Keep this chat'),
+    ]))
+    const baseFetch = chatFetch()
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (
+        input === '/api/chat/conversations/conversation-first'
+        && init?.method === 'DELETE'
+      ) return Promise.resolve(new Response(null, { status: 204 }))
+      return baseFetch(input, init)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('confirm', vi.fn(() => true))
+
+    render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await screen.findByRole('button', { name: 'Delete this chat' })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete Delete this chat' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/chat/conversations/conversation-first',
+      expect.objectContaining({ method: 'DELETE' }),
+    ))
+    expect(screen.queryByRole('button', { name: 'Delete this chat' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Keep this chat' })).toBeTruthy()
+    expect(JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) ?? '[]'))
+      .toEqual([expect.objectContaining({ id: 'second' })])
+  })
+
   it('rebootstraps an expired in-page browser session without replaying the turn', async () => {
     const subjects = ['subject-a', 'subject-b']
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
@@ -497,6 +535,75 @@ describe('Skills and chat', () => {
     expect(selector.disabled).toBe(true)
   })
 
+  it('shows the browser OAuth popup after the default Agent requires authorization', async () => {
+    const agents = [
+      { id: 1, name: 'Operations', is_default: false },
+      { id: 2, name: 'Research', is_default: true },
+    ]
+    const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      if (input === '/api/tool-session/config') return Promise.resolve(response({ enabled: false }))
+      if (input === '/api/chat/bootstrap') {
+        return Promise.resolve(response({ subject_id: CHAT_SUBJECT, agents }))
+      }
+      if (input === '/api/skills') return Promise.resolve(response([]))
+      if (input === '/api/chat/turns') return Promise.resolve(response({
+        status: 'authorization_required',
+        conversation_id: 'conversation-auth',
+        agent_id: 2,
+        agent_name: 'Research',
+        message: '',
+        loaded_skill_ids: [1],
+        pending: {
+          api_source_id: 7,
+          api_source_name: 'Orders API',
+          flows: ['pkce'],
+        },
+      }))
+      if (input === '/api/chat/oauth/pkce/start') {
+        return Promise.resolve(response({
+          authorization_url: 'https://identity.example/authorize',
+        }, 201))
+      }
+      if (input === '/api/chat/turns/conversation-auth/resume') {
+        return Promise.resolve(response({
+          status: 'completed',
+          conversation_id: 'conversation-auth',
+          agent_id: 2,
+          agent_name: 'Research',
+          message: 'Authorized orders.',
+          loaded_skill_ids: [1],
+          pending: null,
+        }))
+      }
+      return Promise.resolve(response([]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const popup = { closed: false, close: vi.fn() } as unknown as Window
+    const open = vi.spyOn(window, 'open').mockReturnValue(popup)
+
+    render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    const selector = await screen.findByRole('combobox', { name: 'Agent' }) as HTMLSelectElement
+    await waitFor(() => expect(selector.value).toBe('2'))
+    await fireEvent.update(screen.getByLabelText('Message'), 'Show orders')
+    await fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    const authorize = await screen.findByRole('button', { name: 'Authorize' })
+    await fireEvent.click(authorize)
+    await waitFor(() => expect(open).toHaveBeenCalledWith(
+      'https://identity.example/authorize',
+      'chat4openapi-auth',
+      'popup,width=520,height=720',
+    ))
+    window.dispatchEvent(new MessageEvent('message', {
+      origin: window.location.origin,
+      source: popup,
+      data: { type: 'chat4openapi:auth-complete', api_source_id: 7 },
+    }))
+    expect(await screen.findByText('Authorized orders.')).toBeTruthy()
+  })
+
   it('prevents a new turn when no enabled Agent is available', async () => {
     const fetchMock = chatFetch({ agents: [] })
     vi.stubGlobal('fetch', fetchMock)
@@ -509,7 +616,7 @@ describe('Skills and chat', () => {
     expect(screen.queryByRole('option', { name: 'Stopped' })).toBeNull()
   })
 
-  it('migrates legacy Skill history without guessing an Agent and backfills the server Agent on resume', async () => {
+  it('migrates legacy Skill history and restores its server-owned Agent snapshot', async () => {
     localStorage.setItem('chat4openapi.chat.sessions.v1', JSON.stringify([
       {
         id: 'legacy-good',
@@ -531,6 +638,12 @@ describe('Skills and chat', () => {
         agents: [{ id: 1, name: 'Current default', is_default: true }],
       }))
       if (input === '/api/skills') return Promise.resolve(response([]))
+      if (input === '/api/chat/conversations/conversation-abca4') {
+        return Promise.resolve(response({
+          agent_id: 9,
+          agent_name: 'Retired research',
+        }))
+      }
       if (input === '/api/chat/turns') return Promise.resolve(response({
         status: 'completed', conversation_id: 'conversation-abca4', agent_id: 9, agent_name: 'Retired research',
         message: 'Resumed safely.', loaded_skill_ids: [], pending: null,
@@ -547,15 +660,16 @@ describe('Skills and chat', () => {
     expect(screen.getByText('ABCA4 variants found.')).toBeTruthy()
     const selector = await screen.findByRole('combobox', { name: 'Agent' }) as HTMLSelectElement
     expect(selector.disabled).toBe(true)
-    expect(selector.value).toBe('')
+    await waitFor(() => expect(selector.value).toBe('9'))
+    expect(screen.getByRole('option', { name: 'Retired research' })).toBeTruthy()
     const stored = JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) ?? '[]')
     expect(stored).toHaveLength(1)
     expect(stored[0]).toMatchObject({
       version: 3,
       id: 'legacy-good',
       conversationId: 'conversation-abca4',
-      agentId: null,
-      agentName: null,
+      agentId: 9,
+      agentName: 'Retired research',
       loadedSkillIds: [],
       status: 'completed',
       pending: null,

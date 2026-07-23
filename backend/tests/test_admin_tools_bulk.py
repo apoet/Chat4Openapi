@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from cryptography.fernet import Fernet
 from sqlalchemy.orm import Session, sessionmaker
 
 from chat4openapi.api import admin_skills, admin_tools
@@ -12,12 +13,16 @@ from chat4openapi.api.admin_auth import AdminContext
 from chat4openapi.api.errors import ApiError
 from chat4openapi.models import (
     ApiSource,
+    ApiSourceOAuthConfig,
+    ApiSourceToolAuthConfig,
     GlobalToolAuthConfig,
     Skill,
     SkillTool,
     Tool,
 )
+from chat4openapi.security.encryption import SecretCipher
 from chat4openapi.schemas.tools import ApiSourceEnabledRequest, ToolAuthConfigRequest
+from chat4openapi.tool_sessions.oauth import ToolOAuthService
 
 ADMIN = {"username": "admin", "password": "StrongPass!123", "locale": "en-US"}
 
@@ -109,6 +114,52 @@ def seed_tools(factory: sessionmaker[Session]) -> dict[str, int]:
             "deleted_source": deleted_source.id,
             "deleted_source_tool": deleted_source_tool.id,
         }
+
+
+def test_api_source_authentication_modes_are_mutually_exclusive(
+    db_session_factory: sessionmaker[Session],
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as session:
+        source = ApiSource(
+            name="Mode API",
+            source_type="openapi",
+            base_url="https://mode.test",
+            spec_snapshot="{}",
+        )
+        session.add(source)
+        session.flush()
+        login_tool = make_tool(source.id, "mode-login", True)
+        session.add(login_tool)
+        session.commit()
+
+        saved = admin_tools.set_source_tool_auth(
+            source.id,
+            ToolAuthConfigRequest(
+                enabled=True,
+                login_tool_id=login_tool.id,
+                token_json_path="$.token",
+            ),
+            context(session),
+        )
+        assert saved.enabled is True
+        assert session.get(ApiSource, source.id).auth_mode == "tool"
+
+        ToolOAuthService(session, cipher).configure_source(
+            source.id,
+            {
+                "enabled": True,
+                "client_id": "mode-client",
+                "client_secret": "mode-secret",
+                "token_url": "https://identity.test/token",
+                "authorization_url": "https://identity.test/authorize",
+                "scopes": [],
+            },
+        )
+
+        assert session.get(ApiSource, source.id).auth_mode == "oauth"
+        assert session.get(ApiSourceOAuthConfig, source.id).enabled is True
+        assert session.get(ApiSourceToolAuthConfig, source.id).enabled is False
 
 
 @pytest.mark.asyncio

@@ -3,10 +3,12 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -16,17 +18,29 @@ from chat4openapi.api.tool_sessions import (
     get_optional_tool_session_owner,
     get_tool_executor,
     get_tool_secret_cipher,
+    get_tool_session_service,
 )
+from chat4openapi.api.tool_oauth import get_tool_oauth_service
 from chat4openapi.chat.agent import AgentError, AgentRuntime, AgentTurnRequest, AgentTurnResult
 from chat4openapi.db.session import get_db_session
 from chat4openapi.llm.client import CanonicalMessage, LlmClient, LlmProviderError
 from chat4openapi.config import get_settings
-from chat4openapi.models import Agent, AgentSkill, BrowserChatSession, Conversation, LlmProvider, Skill
+from chat4openapi.models import (
+    Agent,
+    AgentSkill,
+    AppSetting,
+    BrowserChatSession,
+    Conversation,
+    LlmProvider,
+    Skill,
+)
 from chat4openapi.schemas.chat import ChatBootstrapResponse, ChatTurnRequest, ChatTurnResponse
 from chat4openapi.security.agent_keys import AgentKeyContext, require_agent_api_key
 from chat4openapi.security.encryption import SecretCipher
 from chat4openapi.security.session_tokens import hash_token, new_token
 from chat4openapi.tools.executor import ToolExecutor
+from chat4openapi.tool_sessions.oauth import ToolOAuthService
+from chat4openapi.tool_sessions.service import ToolSessionService
 
 router = APIRouter(tags=["compatible-chat"])
 BROWSER_CHAT_COOKIE = "chat4openapi_browser_chat"
@@ -36,6 +50,23 @@ BROWSER_CHAT_COOKIE = "chat4openapi_browser_chat"
 class BrowserChatContext:
     session: BrowserChatSession
     token: str | None
+
+
+class BrowserOAuthStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    api_source_id: int = Field(gt=0)
+    agent_id: int = Field(gt=0)
+    flow: Literal["pkce", "swagger"] = "pkce"
+
+
+class BrowserOAuthStartResponse(BaseModel):
+    authorization_url: str
+
+
+class BrowserConversationAgentResponse(BaseModel):
+    agent_id: int
+    agent_name: str
 
 
 def _browser_chat_context(request: Request, db: Session) -> BrowserChatContext:
@@ -136,6 +167,113 @@ def chat_bootstrap(request: Request, response: Response, db: Session = Depends(g
             for agent in agents
         ],
     }
+
+
+@router.get(
+    "/api/chat/conversations/{conversation_id}",
+    response_model=BrowserConversationAgentResponse,
+)
+def browser_conversation_agent(
+    conversation_id: str,
+    request: Request,
+    db: Session = Depends(get_db_session),
+) -> BrowserConversationAgentResponse:
+    context = _required_browser_chat_context(request, db)
+    conversation = db.get(Conversation, conversation_id)
+    if (
+        conversation is None
+        or conversation.deleted_at is not None
+        or conversation.browser_chat_session_id != context.session.id
+    ):
+        raise ApiError(404, "agent.conversation_not_found")
+    agent = db.get(Agent, conversation.agent_id)
+    if agent is None:
+        raise ApiError(404, "agent.unavailable")
+    return BrowserConversationAgentResponse(
+        agent_id=agent.id,
+        agent_name=agent.name,
+    )
+
+
+@router.delete(
+    "/api/chat/conversations/{conversation_id}",
+    status_code=204,
+)
+def delete_browser_conversation(
+    conversation_id: str,
+    request: Request,
+    db: Session = Depends(get_db_session),
+) -> None:
+    context = _required_browser_chat_context(request, db)
+    conversation = db.get(Conversation, conversation_id)
+    if (
+        conversation is None
+        or conversation.deleted_at is not None
+        or conversation.browser_chat_session_id != context.session.id
+    ):
+        raise ApiError(404, "agent.conversation_not_found")
+    db.delete(conversation)
+    db.commit()
+
+
+@router.post(
+    "/api/chat/oauth/pkce/start",
+    response_model=BrowserOAuthStartResponse,
+    status_code=201,
+)
+async def start_browser_oauth(
+    payload: BrowserOAuthStartRequest,
+    request: Request,
+    db: Session = Depends(get_db_session),
+    service: ToolOAuthService = Depends(get_tool_oauth_service),
+    tool_service: ToolSessionService = Depends(get_tool_session_service),
+) -> BrowserOAuthStartResponse:
+    context = _required_browser_chat_context(request, db)
+    settings = db.get(AppSetting, 1)
+    if settings is None or settings.base_url is None:
+        raise ApiError(409, "settings.base_url_required")
+    base_url = settings.base_url.rstrip("/")
+    parsed = urlsplit(base_url)
+    popup_origin = f"{parsed.scheme}://{parsed.netloc}"
+    if payload.flow == "swagger":
+        from chat4openapi.api.embed_auth import _start_swagger
+
+        try:
+            state = _start_swagger(
+                db,
+                context.session,
+                payload.api_source_id,
+                tool_service,
+                agent_id=payload.agent_id,
+            )
+        except ApiError:
+            raise
+        except Exception as exc:
+            from chat4openapi.api.tool_oauth import _oauth_error
+
+            raise _oauth_error(exc) from exc
+        return BrowserOAuthStartResponse(
+            authorization_url=(
+                f"{base_url}/api/embed/auth/swagger?state={state}"
+            )
+        )
+    try:
+        started = await service.start_browser_pkce(
+            context.session,
+            payload.api_source_id,
+            agent_id=payload.agent_id,
+            redirect_uri=(
+                f"{base_url}/api/tool-sessions/oauth/pkce/callback"
+            ),
+            popup_origin=popup_origin,
+        )
+    except Exception as exc:
+        from chat4openapi.api.tool_oauth import _oauth_error
+
+        raise _oauth_error(exc) from exc
+    return BrowserOAuthStartResponse(
+        authorization_url=started.authorization_url
+    )
 
 
 def get_llm_client() -> LlmClient:
@@ -378,6 +516,26 @@ async def _run_agent(
         raise ApiError(409, "chat.failed", reason=str(exc)) from exc
 
 
+def _browser_turn_response(
+    db: Session, result: AgentTurnResult
+) -> ChatTurnResponse:
+    conversation = db.get(Conversation, result.conversation_id)
+    if conversation is None:
+        raise ApiError(404, "agent.conversation_not_found")
+    agent = db.get(Agent, conversation.agent_id)
+    if agent is None:
+        raise ApiError(404, "agent.unavailable")
+    return ChatTurnResponse(
+        status=result.status,
+        conversation_id=result.conversation_id,
+        agent_id=agent.id,
+        agent_name=agent.name,
+        message=result.content,
+        loaded_skill_ids=result.loaded_skill_ids,
+        pending=result.pending,
+    )
+
+
 async def _run(
     body: dict[str, Any],
     request: Request,
@@ -486,21 +644,46 @@ async def browser_turn(
         llm,
         executor,
     )
-    conversation = db.get(Conversation, result.conversation_id)
-    if conversation is None:
+    return _browser_turn_response(db, result)
+
+
+@router.post(
+    "/api/chat/turns/{conversation_id}/resume",
+    response_model=ChatTurnResponse,
+)
+async def resume_browser_turn(
+    conversation_id: str,
+    request: Request,
+    db: Session = Depends(get_db_session),
+    cipher: SecretCipher = Depends(get_tool_secret_cipher),
+    llm: LlmClient = Depends(get_llm_client),
+    executor: ToolExecutor = Depends(get_tool_executor),
+) -> ChatTurnResponse:
+    browser_context = _required_browser_chat_context(request, db)
+    conversation = db.get(Conversation, conversation_id)
+    if (
+        conversation is None
+        or conversation.deleted_at is not None
+        or conversation.browser_chat_session_id != browser_context.session.id
+        or conversation.agent_status != "authorization_required"
+    ):
         raise ApiError(404, "agent.conversation_not_found")
-    agent = db.get(Agent, conversation.agent_id)
-    if agent is None:
-        raise ApiError(404, "agent.unavailable")
-    return ChatTurnResponse(
-        status=result.status,
-        conversation_id=result.conversation_id,
-        agent_id=agent.id,
-        agent_name=agent.name,
-        message=result.content,
-        loaded_skill_ids=result.loaded_skill_ids,
-        pending=result.pending,
+    result = await _run_agent(
+        AgentTurnRequest(
+            agent_id=conversation.agent_id,
+            user_content="",
+            candidate_skill_ids=[],
+            interactive=True,
+            conversation_id=conversation.id,
+            candidate_scope_source="automatic",
+            browser_chat_session_id=browser_context.session.id,
+        ),
+        db,
+        cipher,
+        llm,
+        executor,
     )
+    return _browser_turn_response(db, result)
 
 
 @router.get("/v1/models")

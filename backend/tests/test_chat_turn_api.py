@@ -17,6 +17,7 @@ from chat4openapi.models import (
     AgentApiKey,
     AgentSkill,
     BrowserChatSession,
+    ChatMessage,
     Conversation,
     LlmProvider,
     Skill,
@@ -189,6 +190,80 @@ async def test_browser_turn_without_session_requires_bootstrap_without_creating_
     assert len(llm.responses) == 1
     with db_session_factory() as session:
         assert session.query(BrowserChatSession).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_browser_conversation_restores_its_agent_only_for_its_owner(
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    seed_agent(db_session_factory, cipher)
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: SequencedLlm(
+        [CanonicalResponse(content="Owned answer.")]
+    )
+    assert (await client.get("/api/chat/bootstrap")).status_code == 200
+    created = await client.post(
+        "/api/chat/turns",
+        json={"agent_id": 1, "message": "Create"},
+    )
+    conversation_id = created.json()["conversation_id"]
+
+    restored = await client.get(
+        f"/api/chat/conversations/{conversation_id}"
+    )
+
+    assert restored.status_code == 200
+    assert restored.json() == {
+        "agent_id": 1,
+        "agent_name": "Chat4Openapi Agent",
+    }
+    client.cookies.clear()
+    assert (await client.get("/api/chat/bootstrap")).status_code == 200
+    denied = await client.get(
+        f"/api/chat/conversations/{conversation_id}"
+    )
+    assert denied.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_browser_conversation_delete_is_owner_scoped_and_removes_messages(
+    client: httpx.AsyncClient, app: FastAPI, db_session_factory
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    seed_agent(db_session_factory, cipher)
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_llm_client] = lambda: SequencedLlm(
+        [CanonicalResponse(content="Saved answer.")]
+    )
+    assert (await client.get("/api/chat/bootstrap")).status_code == 200
+    owner_cookie = client.cookies.get(BROWSER_CHAT_COOKIE)
+    created = await client.post(
+        "/api/chat/turns",
+        json={"agent_id": 1, "message": "Save this"},
+    )
+    conversation_id = created.json()["conversation_id"]
+
+    client.cookies.clear()
+    assert (await client.get("/api/chat/bootstrap")).status_code == 200
+    denied = await client.delete(
+        f"/api/chat/conversations/{conversation_id}"
+    )
+    assert denied.status_code == 404
+
+    client.cookies.clear()
+    client.cookies.set(BROWSER_CHAT_COOKIE, owner_cookie)
+    deleted = await client.delete(
+        f"/api/chat/conversations/{conversation_id}"
+    )
+    assert deleted.status_code == 204
+    with db_session_factory() as session:
+        assert session.get(Conversation, conversation_id) is None
+        assert session.scalar(
+            select(ChatMessage).where(
+                ChatMessage.conversation_id == conversation_id
+            )
+        ) is None
 
 
 @pytest.mark.asyncio

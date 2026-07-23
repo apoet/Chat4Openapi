@@ -41,6 +41,15 @@ const { t } = useI18n()
         <img :src="logoUrl" alt="" />
         <strong>{{ t('embed.welcome', { agent: agentName || t('embed.assistant') }) }}</strong>
         <p>{{ t('embed.welcomeHint') }}</p>
+        <div class="embed-suggestion">
+          <span>{{ t('embed.suggestionLabel') }}</span>
+          <button
+            type="button"
+            @click="emit('update:draft', t('embed.suggestionQuestion'))"
+          >
+            {{ t('embed.suggestionQuestion') }}
+          </button>
+        </div>
       </div>
       <article
         v-for="message in messages"
@@ -88,6 +97,11 @@ const { t } = useI18n()
 .embed-empty img { width: 68px; height: 68px; margin-bottom: 14px; object-fit: contain; }
 .embed-empty strong { color: #1b2434; font-size: 17px; }
 .embed-empty p { max-width: 260px; margin: 8px 0 0; font-size: 13px; line-height: 1.6; }
+.embed-suggestion { max-width: 290px; margin-top: 20px; display: grid; justify-items: center; gap: 8px; }
+.embed-suggestion span { color: #8b92a0; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.embed-suggestion button { max-width: 100%; padding: 8px 12px; overflow: hidden; border: 1px solid #d7d1f7; border-radius: 999px; color: #5146ad; background: #f6f4ff; text-overflow: ellipsis; white-space: nowrap; font: inherit; font-size: 12px; cursor: pointer; }
+.embed-suggestion button:hover { border-color: #a89ff5; background: #eeebff; }
+.embed-suggestion button:focus-visible { outline: 3px solid rgba(101,88,232,.22); outline-offset: 2px; }
 .embed-message { max-width: 86%; margin: 0 0 16px; }
 .embed-message > span { display: block; margin: 0 5px 5px; color: #858c98; font-size: 10px; }
 .embed-message p { margin: 0; padding: 11px 13px; border-radius: 14px 14px 14px 4px; white-space: pre-wrap; line-height: 1.55; background: white; box-shadow: 0 2px 12px rgba(17,25,40,.07); }

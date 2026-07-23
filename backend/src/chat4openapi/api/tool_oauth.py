@@ -1,6 +1,7 @@
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 import json
+from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends, Query, Response
@@ -39,6 +40,9 @@ class OAuthConfigRequest(BaseModel):
     enabled: bool = True
     client_id: str = Field(min_length=1, max_length=512)
     client_secret: str | None = Field(default=None, max_length=2048)
+    token_endpoint_auth_method: Literal[
+        "auto", "client_secret_basic", "client_secret_post", "none"
+    ] | None = None
     authorization_url: str | None = Field(default=None, max_length=2048)
     token_url: str = Field(min_length=1, max_length=2048)
     device_authorization_url: str | None = Field(default=None, max_length=2048)
@@ -51,6 +55,9 @@ class OAuthConfigSummary(BaseModel):
     enabled: bool
     client_id: str
     has_client_secret: bool
+    token_endpoint_auth_method: Literal[
+        "auto", "client_secret_basic", "client_secret_post", "none"
+    ]
     authorization_url: str | None
     token_url: str
     device_authorization_url: str | None
@@ -286,6 +293,30 @@ async def pkce_callback(
             separators=(",", ":"),
         )
         target_origin = json.dumps(completed.target_origin)
+        return HTMLResponse(
+            "<!doctype html><script>"
+            f"window.opener.postMessage({payload},{target_origin});window.close()"
+            "</script>",
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Security-Policy": "default-src 'none'",
+                "Referrer-Policy": "no-referrer",
+                "X-Frame-Options": "DENY",
+            },
+        )
+    if (
+        completed.browser_chat_session_id is not None
+        and completed.popup_origin is not None
+    ):
+        payload = json.dumps(
+            {
+                "type": "chat4openapi:auth-complete",
+                "api_source_id": completed.api_source_id,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        target_origin = json.dumps(completed.popup_origin)
         return HTMLResponse(
             "<!doctype html><script>"
             f"window.opener.postMessage({payload},{target_origin});window.close()"

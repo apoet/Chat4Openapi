@@ -22,6 +22,7 @@ from chat4openapi.embed.grants import (
 from chat4openapi.embed.sessions import EmbedUnavailableError, authenticate_embed_session
 from chat4openapi.models import (
     AppSetting,
+    BrowserChatSession,
     EmbedSession,
     ToolOAuthAuthorization,
     ToolSessionCredential,
@@ -112,23 +113,59 @@ def _popup_result(grant: str, target_origin: str) -> HTMLResponse:
     )
 
 
+def _popup_complete(api_source_id: int, target_origin: str) -> HTMLResponse:
+    payload = json.dumps(
+        {
+            "type": "chat4openapi:auth-complete",
+            "api_source_id": api_source_id,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    origin = json.dumps(target_origin)
+    return HTMLResponse(
+        "<!doctype html><script>"
+        f"window.opener.postMessage({payload},{origin});window.close()"
+        "</script>",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": "default-src 'none'",
+            "Referrer-Policy": "no-referrer",
+            "X-Frame-Options": "DENY",
+        },
+    )
+
+
 def _start_swagger(
     db: Session,
-    owner: EmbedSession,
+    owner: EmbedSession | BrowserChatSession,
     source_id: int,
     service: ToolSessionService,
+    *,
+    agent_id: int | None = None,
 ) -> str:
-    config = service._config()
+    config = service._config(source_id)
     login_tool, source = service._login_runtime(config)
     if source.id != source_id:
         raise _unavailable()
     now = utc_now()
-    expires_at = min(now + timedelta(minutes=10), owner.absolute_expires_at)
+    owner_expires_at = (
+        owner.absolute_expires_at
+        if isinstance(owner, EmbedSession)
+        else owner.expires_at
+    )
+    bound_agent_id = owner.agent_id if isinstance(owner, EmbedSession) else agent_id
+    if bound_agent_id is None:
+        raise _unavailable()
+    expires_at = min(now + timedelta(minutes=10), owner_expires_at)
     state = new_token()
     row = ToolUserSession(
         token_hash=hash_token(new_token()),
-        agent_id=owner.agent_id,
-        embed_session_id=owner.id,
+        agent_id=bound_agent_id,
+        embed_session_id=owner.id if isinstance(owner, EmbedSession) else None,
+        browser_chat_session_id=(
+            owner.id if isinstance(owner, BrowserChatSession) else None
+        ),
         status="pending",
         idle_expires_at=expires_at,
         absolute_expires_at=expires_at,
@@ -155,11 +192,12 @@ def _start_swagger(
             encrypted_flow_data=service._cipher.encrypt_json(
                 {
                     "kind": "swagger",
-                    "embed_session_id": owner.id,
-                    "parent_origin": owner.parent_origin,
+                    "owner_kind": (
+                        "embed" if isinstance(owner, EmbedSession) else "browser"
+                    ),
                     "target_origin": _origin(_base_url(db)),
                     "login_tool_id": login_tool.id,
-                    "owner_absolute_expires_at": owner.absolute_expires_at.isoformat(),
+                    "owner_absolute_expires_at": owner_expires_at.isoformat(),
                 }
             ),
             status="pending",
@@ -276,7 +314,7 @@ async def complete_swagger_login(
     db.commit()
     db.refresh(flow)
     try:
-        config = service._config()
+        config = service._config(flow.api_source_id)
         login_data = {config.username_field: username, config.password_field: password}
         auth_payload = await service._login(config, login_data)
         auth = build_request_auth(config, auth_payload)
@@ -324,9 +362,16 @@ async def complete_swagger_login(
         )
         flow.status = "ready"
         flow.encrypted_flow_data = service._cipher.encrypt_json({})
-        grant = create_auth_grant(db, row.embed_session_id, row.id, flow.api_source_id)
+        if data.get("owner_kind", "embed") == "embed":
+            grant = create_auth_grant(
+                db, row.embed_session_id, row.id, flow.api_source_id
+            )
+        else:
+            grant = None
         db.commit()
-        return _popup_result(grant, str(data["target_origin"]))
+        if grant is not None:
+            return _popup_result(grant, str(data["target_origin"]))
+        return _popup_complete(flow.api_source_id, str(data["target_origin"]))
     except Exception:
         row.status = "failed"
         flow.status = "failed"

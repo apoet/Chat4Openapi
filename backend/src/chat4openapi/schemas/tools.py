@@ -27,6 +27,7 @@ class ApiSourceSummary(BaseModel):
     base_url: str
     document_url: str | None
     allow_private_networks: bool
+    auth_mode: Literal["none", "oauth", "tool"]
     enabled: bool
     created_at: datetime
 
@@ -140,6 +141,10 @@ class ToolAuthConfigRequest(BaseModel):
 
 class ToolAuthConfigResponse(ToolAuthConfigRequest):
     id: int = 1
+
+
+class ApiSourceToolAuthConfigResponse(ToolAuthConfigRequest):
+    api_source_id: int
 
 
 class ToolSessionLoginRequest(BaseModel):

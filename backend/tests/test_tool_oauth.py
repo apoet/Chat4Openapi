@@ -23,6 +23,7 @@ from chat4openapi.models import (
     AgentApiKey,
     AdminSession,
     AdminUser,
+    AppSetting,
     ApiSource,
     ApiSourceOAuthConfig,
     ToolOAuthAuthorization,
@@ -613,6 +614,171 @@ async def test_pkce_uses_s256_and_callback_state_is_one_time(db_session_factory)
         with pytest.raises(OAuthFlowError) as replay:
             await service.complete_pkce(started.state, "authorization-code")
         assert replay.value.code == "oauth.state_invalid"
+
+
+@pytest.mark.asyncio
+async def test_pkce_supports_client_secret_basic(db_session_factory) -> None:
+    _secret, agent_id, _key_id, source_id = _seed(db_session_factory)
+    now = datetime(2026, 7, 22, 8, 0, 0)
+    token_requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        token_requests.append(request)
+        return httpx.Response(
+            200,
+            json={"access_token": "pkce-access", "token_type": "Bearer"},
+        )
+
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as db:
+        service = ToolOAuthService(
+            db,
+            cipher,
+            transport=httpx.MockTransport(handler),
+            network_validator=allow_network,
+            now=lambda: now,
+        )
+        _configure(service, source_id)
+        config = db.get(ApiSourceOAuthConfig, source_id)
+        assert config is not None
+        decrypted = cipher.decrypt_json(config.encrypted_config)
+        decrypted["token_endpoint_auth_method"] = "client_secret_basic"
+        config.encrypted_config = cipher.encrypt_json(decrypted)
+        db.commit()
+
+        started = await service.start_pkce(
+            _admin_context(db), source_id, agent_id=agent_id
+        )
+        await service.complete_pkce(started.state, "authorization-code")
+
+    assert len(token_requests) == 1
+    assert token_requests[0].headers["Authorization"].startswith("Basic ")
+    posted = parse_qs(token_requests[0].content.decode())
+    assert "client_id" not in posted
+    assert "client_secret" not in posted
+
+
+@pytest.mark.asyncio
+async def test_pkce_auto_retries_basic_only_after_client_authentication_failure(
+    db_session_factory,
+) -> None:
+    _secret, agent_id, _key_id, source_id = _seed(db_session_factory)
+    now = datetime(2026, 7, 22, 8, 0, 0)
+    token_requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        token_requests.append(request)
+        if "Authorization" not in request.headers:
+            return httpx.Response(401, json={"error": "invalid_client"})
+        return httpx.Response(
+            200,
+            json={"access_token": "pkce-access", "token_type": "Bearer"},
+        )
+
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as db:
+        service = ToolOAuthService(
+            db,
+            cipher,
+            transport=httpx.MockTransport(handler),
+            network_validator=allow_network,
+            now=lambda: now,
+        )
+        _configure(service, source_id)
+        started = await service.start_pkce(
+            _admin_context(db), source_id, agent_id=agent_id
+        )
+        await service.complete_pkce(started.state, "authorization-code")
+
+    assert len(token_requests) == 2
+    first = parse_qs(token_requests[0].content.decode())
+    assert first["client_id"] == ["public-client"]
+    assert first["client_secret"] == ["super-secret"]
+    assert token_requests[1].headers["Authorization"].startswith("Basic ")
+    second = parse_qs(token_requests[1].content.decode())
+    assert "client_id" not in second
+    assert "client_secret" not in second
+
+
+@pytest.mark.asyncio
+async def test_pkce_none_authentication_sends_only_public_client_id(
+    db_session_factory,
+) -> None:
+    _secret, agent_id, _key_id, source_id = _seed(db_session_factory)
+    now = datetime(2026, 7, 22, 8, 0, 0)
+    token_requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        token_requests.append(request)
+        return httpx.Response(
+            200,
+            json={"access_token": "pkce-access", "token_type": "Bearer"},
+        )
+
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as db:
+        service = ToolOAuthService(
+            db,
+            cipher,
+            transport=httpx.MockTransport(handler),
+            network_validator=allow_network,
+            now=lambda: now,
+        )
+        _configure(service, source_id)
+        service.configure_source(
+            source_id,
+            {
+                "client_id": "public-client",
+                "token_endpoint_auth_method": "none",
+                "authorization_url": "https://issuer.example.test/authorize",
+                "token_url": "https://issuer.example.test/token",
+                "redirect_uri": (
+                    "https://app.example.test/api/tool-sessions/oauth/pkce/callback"
+                ),
+            },
+        )
+        started = await service.start_pkce(
+            _admin_context(db), source_id, agent_id=agent_id
+        )
+        await service.complete_pkce(started.state, "authorization-code")
+
+    assert len(token_requests) == 1
+    assert "Authorization" not in token_requests[0].headers
+    posted = parse_qs(token_requests[0].content.decode())
+    assert posted["client_id"] == ["public-client"]
+    assert "client_secret" not in posted
+
+
+@pytest.mark.asyncio
+async def test_pkce_auto_does_not_retry_non_authentication_token_errors(
+    db_session_factory,
+) -> None:
+    _secret, agent_id, _key_id, source_id = _seed(db_session_factory)
+    now = datetime(2026, 7, 22, 8, 0, 0)
+    token_requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        token_requests.append(request)
+        return httpx.Response(400, json={"error": "invalid_grant"})
+
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as db:
+        service = ToolOAuthService(
+            db,
+            cipher,
+            transport=httpx.MockTransport(handler),
+            network_validator=allow_network,
+            now=lambda: now,
+        )
+        _configure(service, source_id)
+        started = await service.start_pkce(
+            _admin_context(db), source_id, agent_id=agent_id
+        )
+        with pytest.raises(OAuthFlowError) as failed:
+            await service.complete_pkce(started.state, "authorization-code")
+
+    assert failed.value.code == "oauth.exchange_failed"
+    assert len(token_requests) == 1
 
 
 @pytest.mark.asyncio
@@ -1276,6 +1442,7 @@ async def test_admin_oauth_config_and_pkce_callback_are_secret_free_and_csrf_saf
         "enabled": True,
         "client_id": "web-client",
         "client_secret": "client-secret-never-return",
+        "token_endpoint_auth_method": "client_secret_basic",
         "authorization_url": "https://issuer.example.test/authorize",
         "token_url": "https://issuer.example.test/token",
         "device_authorization_url": "https://issuer.example.test/device",
@@ -1293,6 +1460,7 @@ async def test_admin_oauth_config_and_pkce_callback_are_secret_free_and_csrf_saf
     assert missing_csrf.status_code == 403
     assert configured.status_code == 200
     assert configured.json()["has_client_secret"] is True
+    assert configured.json()["token_endpoint_auth_method"] == "client_secret_basic"
     assert configured.json()["recommended_redirect_uri"] == (
         "https://chat.example.test/api/tool-sessions/oauth/pkce/callback"
     )
@@ -1326,3 +1494,79 @@ async def test_admin_oauth_config_and_pkce_callback_are_secret_free_and_csrf_saf
     assert replay.status_code == 400
     assert replay.json()["error"]["code"] == "oauth.state_invalid"
     assert len(posted) == 1
+
+
+@pytest.mark.asyncio
+async def test_browser_chat_pkce_binds_credentials_and_returns_popup_completion(
+    client: httpx.AsyncClient, app, db_session_factory
+) -> None:
+    _secret, agent_id, _key_id, source_id = _seed(db_session_factory)
+    cipher = SecretCipher(Fernet.generate_key())
+    token_requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        token_requests.append(request)
+        return httpx.Response(
+            200,
+            json={"access_token": "browser-access", "token_type": "Bearer"},
+        )
+
+    with db_session_factory() as db:
+        db.add(
+            AppSetting(
+                id=1,
+                default_locale="en-US",
+                base_url="https://chat.example",
+            )
+        )
+        db.commit()
+        _configure(ToolOAuthService(db, cipher), source_id)
+
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_oauth_transport] = lambda: httpx.MockTransport(handler)
+    app.dependency_overrides[get_oauth_network_validator] = lambda: allow_network
+    bootstrap = await client.get("/api/chat/bootstrap")
+    assert bootstrap.status_code == 200
+
+    started = await client.post(
+        "/api/chat/oauth/pkce/start",
+        json={"api_source_id": source_id, "agent_id": agent_id},
+    )
+
+    assert started.status_code == 201
+    state = parse_qs(urlsplit(started.json()["authorization_url"]).query)["state"][0]
+    with db_session_factory() as db:
+        flow = db.scalar(select(ToolOAuthAuthorization))
+        assert flow is not None
+        tool_session = db.get(ToolUserSession, flow.tool_session_id)
+        assert tool_session is not None
+        assert tool_session.browser_chat_session_id is not None
+        assert tool_session.agent_key_id is None
+        assert tool_session.admin_session_id is None
+        assert tool_session.embed_session_id is None
+
+    callback = await client.get(
+        "/api/tool-sessions/oauth/pkce/callback",
+        params={"state": state, "code": "browser-code"},
+    )
+
+    assert callback.status_code == 200
+    assert "chat4openapi:auth-complete" in callback.text
+    assert '"api_source_id":' in callback.text
+    assert "browser-access" not in callback.text
+    assert "chat4openapi_tool_session" not in callback.headers.get("set-cookie", "")
+    assert len(token_requests) == 1
+    with db_session_factory() as db:
+        tool_session = db.scalar(select(ToolUserSession))
+        assert tool_session is not None
+        assert tool_session.browser_chat_session_id is not None
+        resolved = await ToolSessionService(
+            db, cipher, NoopExecutor()
+        ).resolve_for_browser(
+            tool_session.browser_chat_session_id,
+            agent_id,
+            source_id,
+        )
+        assert resolved.auth.headers == {
+            "Authorization": "Bearer browser-access"
+        }

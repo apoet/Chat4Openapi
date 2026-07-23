@@ -14,7 +14,7 @@ class ChatTurnRequest(BaseModel):
 
 
 class ChatTurnResponse(BaseModel):
-    status: Literal["completed", "needs_input"]
+    status: Literal["completed", "needs_input", "authorization_required"]
     conversation_id: str
     agent_id: AgentId
     agent_name: str

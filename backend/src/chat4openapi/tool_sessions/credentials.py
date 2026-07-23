@@ -5,7 +5,11 @@ from datetime import UTC, datetime
 from string import ascii_letters, digits
 from typing import Any
 
-from chat4openapi.models import ApiSource, GlobalToolAuthConfig
+from chat4openapi.models import (
+    ApiSource,
+    ApiSourceToolAuthConfig,
+    GlobalToolAuthConfig,
+)
 from chat4openapi.tools.executor import RequestAuth
 
 FORBIDDEN_HEADERS = {
@@ -83,7 +87,8 @@ def _configured_names(source: ApiSource) -> tuple[dict[str, str], dict[str, str]
 
 
 def configured_credential_names(
-    source: ApiSource, legacy_config: GlobalToolAuthConfig | None = None
+    source: ApiSource,
+    legacy_config: GlobalToolAuthConfig | ApiSourceToolAuthConfig | None = None,
 ) -> tuple[dict[str, str], dict[str, str]]:
     headers, cookies = _configured_names(source)
     if legacy_config is not None and legacy_config.enabled:
@@ -138,7 +143,7 @@ def _normalize_fields(
 def validate_and_normalize_credentials(
     source: ApiSource,
     supplied: Mapping[str, Any],
-    legacy_config: GlobalToolAuthConfig | None = None,
+    legacy_config: GlobalToolAuthConfig | ApiSourceToolAuthConfig | None = None,
 ) -> RequestAuth:
     unknown = set(supplied) - {"headers", "cookies"}
     headers = supplied.get("headers", {})

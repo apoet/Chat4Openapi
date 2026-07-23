@@ -7,9 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from chat4openapi.mcp.tool import ManagedMCPTool
-from chat4openapi.models import ApiSource, GlobalToolAuthConfig, Tool
+from chat4openapi.models import ApiSource, Tool
 from chat4openapi.security.encryption import SecretCipher
 from chat4openapi.tools.executor import ToolExecutor
+from chat4openapi.tools.execution_policy import resolve_tool_execution_policy
 
 
 class ManagedToolProvider(Provider):
@@ -26,9 +27,6 @@ class ManagedToolProvider(Provider):
 
     async def _list_tools(self) -> Sequence[FastMCPTool]:
         with self._session_factory() as session:
-            config = session.get(GlobalToolAuthConfig, 1)
-            auth_enabled = bool(config is not None and config.enabled)
-            login_tool_id = config.login_tool_id if auth_enabled else None
             tools = session.scalars(
                 select(Tool)
                 .join(ApiSource, ApiSource.id == Tool.api_source_id)
@@ -37,20 +35,24 @@ class ManagedToolProvider(Provider):
                     Tool.deleted_at.is_(None),
                     ApiSource.enabled.is_(True),
                     ApiSource.deleted_at.is_(None),
-                    Tool.id != login_tool_id if login_tool_id is not None else Tool.id.is_not(None),
                 )
                 .order_by(Tool.id)
             ).all()
-            return [
-                ManagedMCPTool(
-                    tool,
-                    auth_enabled=auth_enabled,
-                    session_factory=self._session_factory,
-                    cipher_factory=self._cipher_factory,
-                    executor=self._executor,
+            exposed: list[FastMCPTool] = []
+            for tool in tools:
+                policy = resolve_tool_execution_policy(session, tool)
+                if policy.is_login_tool:
+                    continue
+                exposed.append(
+                    ManagedMCPTool(
+                        tool,
+                        auth_enabled=policy.authorization_required,
+                        session_factory=self._session_factory,
+                        cipher_factory=self._cipher_factory,
+                        executor=self._executor,
+                    )
                 )
-                for tool in tools
-            ]
+            return exposed
 
 
 def create_mcp_server(

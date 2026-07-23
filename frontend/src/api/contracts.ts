@@ -45,6 +45,7 @@ export interface ApiSourceSummary {
   base_url: string
   document_url: string | null
   allow_private_networks: boolean
+  auth_mode: 'none' | 'oauth' | 'tool'
   enabled: boolean
   created_at: string
 }
@@ -101,6 +102,7 @@ export interface SourceRefreshResult {
 
 export interface ToolAuthConfig {
   id?: number
+  api_source_id?: number
   enabled: boolean
   login_tool_id: number | null
   username_field: string
@@ -158,6 +160,7 @@ export interface OAuthConfigSummary {
   enabled: boolean
   client_id: string
   has_client_secret: boolean
+  token_endpoint_auth_method: OAuthTokenEndpointAuthMethod
   authorization_url: string | null
   token_url: string
   device_authorization_url: string | null
@@ -167,10 +170,17 @@ export interface OAuthConfigSummary {
   effective_redirect_uri: string | null
 }
 
+export type OAuthTokenEndpointAuthMethod =
+  | 'auto'
+  | 'client_secret_basic'
+  | 'client_secret_post'
+  | 'none'
+
 export interface OAuthConfigWrite {
   enabled: boolean
   client_id: string
   client_secret: string | null
+  token_endpoint_auth_method: OAuthTokenEndpointAuthMethod
   authorization_url: string | null
   token_url: string
   device_authorization_url: string | null
@@ -235,7 +245,7 @@ export interface ChatTurnRequest {
 }
 
 export interface ChatTurnResponse {
-  status: 'completed' | 'needs_input'
+  status: 'completed' | 'needs_input' | 'authorization_required'
   conversation_id: string
   agent_id: number
   agent_name: string

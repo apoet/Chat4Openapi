@@ -25,6 +25,8 @@ from chat4openapi.models import (
     Skill,
     SkillTool,
     Tool,
+    ToolSessionCredential,
+    ToolUserSession,
 )
 from chat4openapi.security.encryption import SecretCipher
 from chat4openapi.tool_sessions.service import (
@@ -33,6 +35,8 @@ from chat4openapi.tool_sessions.service import (
     ToolSessionNotFound,
     ToolSessionReauthorizationRequired,
 )
+from chat4openapi.tool_sessions.credentials import auth_to_json
+from chat4openapi.tools.executor import RequestAuth
 from chat4openapi.skills.defaults import (
     VARCARDS2_GENE_SYSTEM_PROMPT,
     VARCARDS2_GENE_TABLE_RULE,
@@ -1459,10 +1463,11 @@ async def test_invalid_tool_session_becomes_a_recoverable_observation(
             )
         )
 
-        assert result.status == "completed"
-        assert llm.calls[2]["messages"][-1].content == {
-            "error": "tool_authorization_required",
-            "tool": "get_gene",
+        assert result.status == "authorization_required"
+        assert result.pending == {
+            "api_source_id": tool.api_source_id,
+            "api_source_name": "Gene API",
+            "flows": ["swagger"],
         }
 
 
@@ -1500,13 +1505,128 @@ async def test_oauth_configured_tool_without_session_requires_authorization(
             turn("lookup", [skill.id], False)
         )
 
-        assert result.status == "completed"
-        assert llm.calls[2]["messages"][-1].content == {
-            "error": "tool_authorization_required",
-            "tool": "get_gene",
+        assert result.status == "authorization_required"
+        assert result.pending == {
+            "api_source_id": tool.api_source_id,
+            "api_source_name": "Gene API",
+            "flows": ["pkce"],
         }
         assert executor.calls == []
         assert "never-observe" not in str(llm.calls)
+
+
+@pytest.mark.asyncio
+async def test_browser_chat_pauses_for_oauth_authorization(
+    db_session_factory,
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    with db_session_factory() as session:
+        skill, tool = seed_runtime(session, cipher)
+        session.add(
+            ApiSourceOAuthConfig(
+                api_source_id=tool.api_source_id,
+                encrypted_config=cipher.encrypt_json({"client_secret": "never-observe"}),
+                enabled=True,
+            )
+        )
+        session.commit()
+        llm = SequencedLlm(
+            [
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[
+                        CanonicalToolCall(
+                            id="load",
+                            name="load_skills",
+                            arguments={"skill_ids": [skill.id]},
+                        )
+                    ],
+                ),
+                CanonicalResponse(
+                    content="",
+                    tool_calls=[
+                        CanonicalToolCall(
+                            id="tool",
+                            name="get_gene",
+                            arguments={"symbol": "ABCA4"},
+                        )
+                    ],
+                ),
+            ]
+        )
+
+        result = await AgentRuntime(session, cipher, llm, RecordingExecutor()).run(
+            turn("lookup", [skill.id], True)
+        )
+
+        assert result.status == "authorization_required"
+        assert result.pending == {
+            "api_source_id": tool.api_source_id,
+            "api_source_name": "Gene API",
+            "flows": ["pkce"],
+        }
+        tool_session = ToolUserSession(
+            token_hash="b" * 64,
+            agent_id=TEST_AGENT_ID,
+            browser_chat_session_id=1,
+            status="ready",
+            idle_expires_at=datetime(2099, 1, 1),
+            absolute_expires_at=datetime(2099, 1, 1),
+            last_used_at=datetime(2026, 7, 23),
+        )
+        session.add(tool_session)
+        session.flush()
+        session.add(
+            ToolSessionCredential(
+                tool_session_id=tool_session.id,
+                api_source_id=tool.api_source_id,
+                encrypted_credentials=cipher.encrypt_json(
+                    auth_to_json(
+                        RequestAuth(
+                            headers={"Authorization": "Bearer browser"}
+                        )
+                    )
+                ),
+                status="ready",
+                expires_at=datetime(2099, 1, 1),
+                last_used_at=datetime(2026, 7, 23),
+            )
+        )
+        session.commit()
+        executor = RecordingExecutor()
+        resumed = await AgentRuntime(
+            session,
+            cipher,
+            SequencedLlm(
+                [
+                    CanonicalResponse(
+                        content="",
+                        tool_calls=[
+                            CanonicalToolCall(
+                                id="retry",
+                                name="get_gene",
+                                arguments={"symbol": "ABCA4"},
+                            )
+                        ],
+                    ),
+                    CanonicalResponse(content="Authorized result."),
+                ]
+            ),
+            executor,
+        ).run(
+            turn(
+                "",
+                [],
+                True,
+                conversation_id=result.conversation_id,
+            )
+        )
+
+        assert resumed.status == "completed"
+        assert resumed.content == "Authorized result."
+        assert executor.calls[0][2].headers == {
+            "Authorization": "Bearer browser"
+        }
 
 
 @pytest.mark.asyncio

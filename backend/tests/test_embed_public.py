@@ -69,6 +69,10 @@ async def test_loader_contains_public_configuration_and_no_secrets(
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/javascript")
     assert "frame.allow = 'tools'" in response.text
+    assert "frame.hidden = true" in response.text
+    assert "button.setAttribute('aria-expanded', 'false')" in response.text
+    assert "width:min(400px,calc(100vw - 32px))" in response.text
+    assert "setOpen(frame.hidden)" in response.text
     assert "chat4openapi:ready" in response.text
     assert "initializeFrame" in response.text
     assert "https://chat.example" in response.text

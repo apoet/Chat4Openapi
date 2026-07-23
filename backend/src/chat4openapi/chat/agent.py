@@ -22,6 +22,7 @@ from chat4openapi.models import (
     AgentSkill,
     ApiSource,
     ApiSourceOAuthConfig,
+    ApiSourceToolAuthConfig,
     ChatMessage,
     Conversation,
     GlobalToolAuthConfig,
@@ -424,10 +425,14 @@ class AgentRuntime:
                             ),
                             admin_session_id=request.admin_session_id,
                             embed_session_id=request.embed_session_id,
+                            browser_chat_session_id=request.browser_chat_session_id,
                         )
                     )
             if (
-                request.embed_session_id is not None
+                (
+                    request.embed_session_id is not None
+                    or request.browser_chat_session_id is not None
+                )
                 and isinstance(observation, dict)
                 and observation.get("error")
                 in {"tool_authorization_required", "tool_reauthorization_required"}
@@ -485,11 +490,22 @@ class AgentRuntime:
             return []
         flows: list[str] = []
         oauth = self._session.get(ApiSourceOAuthConfig, source.id)
-        if oauth is not None and oauth.enabled:
+        if (
+            source.auth_mode in {"none", "oauth"}
+            and oauth is not None
+            and oauth.enabled
+        ):
             flows.append("pkce")
-        login = self._session.get(GlobalToolAuthConfig, 1)
-        if login is not None and login.enabled and login.login_tool_id is not None:
-            login_tool = self._session.get(Tool, login.login_tool_id)
+        login = self._session.get(ApiSourceToolAuthConfig, source.id)
+        if source.auth_mode == "tool" and login is not None and login.enabled:
+            flows.append("swagger")
+        elif source.auth_mode == "none":
+            login = self._session.get(GlobalToolAuthConfig, 1)
+            login_tool = (
+                self._session.get(Tool, login.login_tool_id)
+                if login is not None and login.enabled and login.login_tool_id is not None
+                else None
+            )
             if login_tool is not None and login_tool.api_source_id == source.id:
                 flows.append("swagger")
         return flows
@@ -717,10 +733,20 @@ class AgentRuntime:
         agent_key_id: int | None,
         admin_session_id: int | None,
         embed_session_id: int | None = None,
+        browser_chat_session_id: int | None = None,
     ) -> Any:
         try:
             policy = resolve_tool_execution_policy(self._session, tool)
-            if tool_session_id:
+            if browser_chat_session_id is not None and policy.authorization_required:
+                result = await ToolSessionService(
+                    self._session, self._cipher, self._tool_runner
+                ).execute_for_browser(
+                    tool,
+                    arguments,
+                    browser_chat_session_id=browser_chat_session_id,
+                    agent_id=agent_id,
+                )
+            elif tool_session_id:
                 result = await ToolSessionService(
                     self._session, self._cipher, self._tool_runner
                 ).execute(

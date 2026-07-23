@@ -63,24 +63,32 @@ def _loader_source(base_url: str, public_id: str, position: str) -> str:
   host.dataset.chat4openapi = config.publicId;
   const root = host.attachShadow({{ mode: 'open' }});
   const style = document.createElement('style');
-  style.textContent = `:host{{all:initial}}button{{position:fixed;bottom:24px;width:56px;height:56px;border:0;border-radius:50%;background:#fff;box-shadow:0 8px 28px #0003;cursor:pointer;z-index:2147483646;padding:8px}}img{{width:100%;height:100%;object-fit:contain}}iframe{{position:fixed;bottom:92px;width:min(380px,calc(100vw - 32px));height:min(620px,calc(100vh - 120px));border:0;border-radius:16px;box-shadow:0 12px 40px #0004;z-index:2147483647;background:#fff}}[hidden]{{display:none!important}}@media(max-width:640px){{iframe{{inset:12px;width:calc(100vw - 24px);height:calc(100vh - 24px)}}}}`;
+  style.textContent = `:host{{all:initial}}button{{position:fixed;bottom:24px;width:58px;height:58px;border:1px solid #ebe8e1;border-radius:50%;background:#fff;box-shadow:0 8px 28px #0003;cursor:pointer;z-index:2147483646;padding:8px;transition:transform .18s ease,box-shadow .18s ease}}button:hover{{transform:translateY(-2px);box-shadow:0 12px 32px #0004}}button:focus-visible{{outline:3px solid #6558e866;outline-offset:3px}}img{{width:100%;height:100%;object-fit:contain}}iframe{{position:fixed;bottom:96px;width:min(400px,calc(100vw - 32px));height:min(640px,calc(100vh - 128px));border:1px solid #e5e1d8;border-radius:18px;box-shadow:0 18px 56px #0004;z-index:2147483647;background:#fff}}[hidden]{{display:none!important}}@media(max-width:640px){{iframe{{inset:12px;width:calc(100vw - 24px);height:calc(100vh - 24px)}}}}`;
   const button = document.createElement('button');
   button.type = 'button'; button.setAttribute('aria-label', 'Open Agent4API');
+  button.setAttribute('aria-expanded', 'false');
   button.style[side] = '24px';
   const image = document.createElement('img'); image.alt = ''; image.src = config.baseUrl + '/embed/assets/logo.png';
   button.append(image);
   const frame = document.createElement('iframe');
+  frame.id = 'chat4openapi-' + config.publicId;
   frame.title = 'Agent4API'; frame.allow = 'tools'; frame.hidden = true;
+  button.setAttribute('aria-controls', frame.id);
   frame.style[side] = '24px';
   frame.src = config.baseUrl + '/embed/' + encodeURIComponent(config.publicId);
-  button.addEventListener('click', () => {{ frame.hidden = !frame.hidden; }});
+  const setOpen = (open) => {{
+    frame.hidden = !open;
+    button.setAttribute('aria-expanded', String(open));
+    button.setAttribute('aria-label', open ? 'Close Agent4API' : 'Open Agent4API');
+  }};
+  button.addEventListener('click', () => {{ setOpen(frame.hidden); }});
   const initializeFrame = () => frame.contentWindow?.postMessage(
     {{ type: 'chat4openapi:init', parentOrigin: location.origin }}, config.chatOrigin);
   frame.addEventListener('load', initializeFrame);
   window.addEventListener('message', (event) => {{
     if (event.origin !== config.chatOrigin || event.source !== frame.contentWindow) return;
     if (event.data?.type === 'chat4openapi:ready') initializeFrame();
-    if (event.data?.type === 'chat4openapi:close') frame.hidden = true;
+    if (event.data?.type === 'chat4openapi:close') setOpen(false);
   }});
   root.append(style, button, frame); document.body.append(host);
 }})();"""

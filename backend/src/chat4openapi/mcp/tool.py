@@ -5,9 +5,10 @@ from fastmcp.tools import Tool as FastMCPTool
 from fastmcp.tools.base import ToolResult
 from sqlalchemy.orm import Session, sessionmaker
 
-from chat4openapi.models import ApiSource, GlobalToolAuthConfig, Tool
+from chat4openapi.models import ApiSource, Tool
 from chat4openapi.tools.errors import ToolExecutionError
 from chat4openapi.tools.executor import RequestAuth, ToolExecutor
+from chat4openapi.tools.execution_policy import resolve_tool_execution_policy
 
 
 class ManagedMCPTool(FastMCPTool):
@@ -54,9 +55,9 @@ class ManagedMCPTool(FastMCPTool):
                 or not source.enabled
             ):
                 raise ToolExecutionError("source_disabled", "Tool API Source is unavailable")
-            config = session.get(GlobalToolAuthConfig, 1)
-            if config is not None and config.enabled:
-                if config.login_tool_id == tool.id:
+            policy = resolve_tool_execution_policy(session, tool)
+            if policy.authorization_required:
+                if policy.is_login_tool:
                     raise ToolExecutionError("tool_unavailable", "Login Tool is not callable")
                 session_id = call_arguments.pop("tool_session_id", None)
                 if not session_id:

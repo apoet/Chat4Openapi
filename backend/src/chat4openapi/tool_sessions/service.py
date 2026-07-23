@@ -11,6 +11,8 @@ from chat4openapi.models import (
     Agent,
     AgentApiKey,
     ApiSource,
+    ApiSourceToolAuthConfig,
+    BrowserChatSession,
     EmbedSession,
     GlobalToolAuthConfig,
     Tool,
@@ -113,13 +115,47 @@ class ToolSessionService:
         self._now = now
         self._oauth_refresher = oauth_refresher
 
-    def _config(self) -> GlobalToolAuthConfig:
+    def _config(
+        self, source_id: int | None = None
+    ) -> GlobalToolAuthConfig | ApiSourceToolAuthConfig:
+        if source_id is not None:
+            source = self._session.get(ApiSource, source_id)
+            source_config = self._session.get(ApiSourceToolAuthConfig, source_id)
+            if (
+                source is not None
+                and source.auth_mode == "tool"
+                and source_config is not None
+                and source_config.enabled
+                and source_config.login_tool_id is not None
+            ):
+                return source_config
+        else:
+            source_configs = list(
+                self._session.scalars(
+                    select(ApiSourceToolAuthConfig)
+                    .join(
+                        ApiSource,
+                        ApiSource.id == ApiSourceToolAuthConfig.api_source_id,
+                    )
+                    .where(
+                        ApiSource.auth_mode == "tool",
+                        ApiSourceToolAuthConfig.enabled.is_(True),
+                    )
+                )
+            )
+            if (
+                len(source_configs) == 1
+                and source_configs[0].login_tool_id is not None
+            ):
+                return source_configs[0]
         config = self._session.get(GlobalToolAuthConfig, 1)
         if config is None or not config.enabled or config.login_tool_id is None:
             raise ToolLoginDisabled("Original API login is not enabled")
         return config
 
-    def _login_runtime(self, config: GlobalToolAuthConfig) -> tuple[Tool, ApiSource]:
+    def _login_runtime(
+        self, config: GlobalToolAuthConfig | ApiSourceToolAuthConfig
+    ) -> tuple[Tool, ApiSource]:
         login_tool = self._session.get(Tool, config.login_tool_id)
         if login_tool is None or login_tool.deleted_at is not None:
             raise ToolLoginDisabled("Configured login Tool is unavailable")
@@ -128,7 +164,11 @@ class ToolSessionService:
             raise ToolLoginDisabled("Configured login API Source is unavailable")
         return login_tool, source
 
-    def _auth_expiry(self, config: GlobalToolAuthConfig, payload: Any) -> datetime | None:
+    def _auth_expiry(
+        self,
+        config: GlobalToolAuthConfig | ApiSourceToolAuthConfig,
+        payload: Any,
+    ) -> datetime | None:
         if not config.expires_json_path:
             return None
         raw = extract_json_path(payload, config.expires_json_path)
@@ -144,7 +184,11 @@ class ToolSessionService:
             return _naive_utc(datetime.fromisoformat(raw.replace("Z", "+00:00")))
         return None
 
-    async def _login(self, config: GlobalToolAuthConfig, login_data: Mapping[str, Any]) -> Any:
+    async def _login(
+        self,
+        config: GlobalToolAuthConfig | ApiSourceToolAuthConfig,
+        login_data: Mapping[str, Any],
+    ) -> Any:
         login_tool, source = self._login_runtime(config)
         result = await self._executor.execute(login_tool, source, login_data, RequestAuth())
         build_request_auth(config, result.data)
@@ -283,7 +327,14 @@ class ToolSessionService:
                 or not source.enabled
             ):
                 raise ToolSessionNotFound("API Source was not found")
-            scoped_legacy_config = legacy_config if source.id == legacy_source_id else None
+            source_config = self._session.get(ApiSourceToolAuthConfig, source.id)
+            scoped_legacy_config = (
+                source_config
+                if source.auth_mode == "tool"
+                and source_config is not None
+                and source_config.enabled
+                else legacy_config if source.id == legacy_source_id else None
+            )
             auth = validate_and_normalize_credentials(source, supplied, scoped_legacy_config)
             normalized.append((source, auth, credential_expiry(auth)))
         caps = [expiry for _, _, expiry in normalized if expiry is not None]
@@ -362,7 +413,7 @@ class ToolSessionService:
                 or admin_session.absolute_expires_at <= now
             ):
                 raise ToolSessionNotFound("Tool Session was not found")
-        else:
+        elif row.embed_session_id is not None:
             embed_session = self._session.get(EmbedSession, row.embed_session_id)
             if (
                 embed_session is None
@@ -370,6 +421,16 @@ class ToolSessionService:
                 or embed_session.revoked_at is not None
                 or embed_session.idle_expires_at <= now
                 or embed_session.absolute_expires_at <= now
+            ):
+                raise ToolSessionNotFound("Tool Session was not found")
+        else:
+            browser_session = self._session.get(
+                BrowserChatSession, row.browser_chat_session_id
+            )
+            if (
+                browser_session is None
+                or browser_session.revoked_at is not None
+                or browser_session.expires_at <= now
             ):
                 raise ToolSessionNotFound("Tool Session was not found")
 
@@ -401,7 +462,11 @@ class ToolSessionService:
         self._validate_owner(row, self._now())
         return binding
 
-    async def _refresh(self, row: ToolUserSession, config: GlobalToolAuthConfig) -> None:
+    async def _refresh(
+        self,
+        row: ToolUserSession,
+        config: GlobalToolAuthConfig | ApiSourceToolAuthConfig,
+    ) -> None:
         if row.encrypted_login_data is None:
             raise ToolSessionReauthorizationRequired("Tool Session requires reauthorization")
         login_data = self._cipher.decrypt_json(row.encrypted_login_data)
@@ -495,7 +560,7 @@ class ToolSessionService:
             force_refresh = True
         if force_refresh:
             if row.encrypted_login_data is not None:
-                await self._refresh(row, self._config())
+                await self._refresh(row, self._config(api_source_id))
             else:
                 try:
                     await self._refresh_oauth(row, credential)
@@ -513,7 +578,10 @@ class ToolSessionService:
         if credential.status != "ready":
             raise ToolSessionReauthorizationRequired("Tool Session requires reauthorization")
         auth = auth_from_json(self._cipher.decrypt_json(credential.encrypted_credentials))
-        config = self._session.get(GlobalToolAuthConfig, 1)
+        try:
+            config = self._config(api_source_id)
+        except ToolLoginDisabled:
+            config = None
         idle_minutes = config.idle_minutes if config is not None else 30
         row.last_used_at = now
         row.idle_expires_at = min(
@@ -560,6 +628,39 @@ class ToolSessionService:
         *,
         force_refresh: bool = False,
     ) -> ResolvedToolSession:
+        return await self._resolve_for_session_owner(
+            ToolUserSession.embed_session_id,
+            embed_session_id,
+            agent_id,
+            api_source_id,
+            force_refresh=force_refresh,
+        )
+
+    async def resolve_for_browser(
+        self,
+        browser_chat_session_id: int,
+        agent_id: int,
+        api_source_id: int,
+        *,
+        force_refresh: bool = False,
+    ) -> ResolvedToolSession:
+        return await self._resolve_for_session_owner(
+            ToolUserSession.browser_chat_session_id,
+            browser_chat_session_id,
+            agent_id,
+            api_source_id,
+            force_refresh=force_refresh,
+        )
+
+    async def _resolve_for_session_owner(
+        self,
+        owner_column,
+        owner_id: int,
+        agent_id: int,
+        api_source_id: int,
+        *,
+        force_refresh: bool,
+    ) -> ResolvedToolSession:
         now = self._now()
         row = self._session.scalar(
             select(ToolUserSession)
@@ -568,7 +669,7 @@ class ToolSessionService:
                 ToolSessionCredential.tool_session_id == ToolUserSession.id,
             )
             .where(
-                ToolUserSession.embed_session_id == embed_session_id,
+                owner_column == owner_id,
                 ToolUserSession.agent_id == agent_id,
                 ToolUserSession.agent_key_id.is_(None),
                 ToolUserSession.admin_session_id.is_(None),
@@ -655,6 +756,42 @@ class ToolSessionService:
             force_refresh=True,
         )
         return await self._executor.execute(tool, source, arguments, refreshed.auth)
+
+    async def execute_for_browser(
+        self,
+        tool: Tool,
+        arguments: Mapping[str, Any],
+        *,
+        browser_chat_session_id: int,
+        agent_id: int,
+    ) -> ToolExecutionResult:
+        try:
+            source = resolve_tool_execution_policy(self._session, tool).source
+        except ToolUnavailableError:
+            raise ToolExecutionError(
+                "source_not_found", "Tool API Source was not found"
+            )
+        resolved = await self.resolve_for_browser(
+            browser_chat_session_id,
+            agent_id,
+            source.id,
+        )
+        try:
+            return await self._executor.execute(
+                tool, source, arguments, resolved.auth
+            )
+        except ToolExecutionError as exc:
+            if exc.status_code != 401:
+                raise
+        refreshed = await self.resolve_for_browser(
+            browser_chat_session_id,
+            agent_id,
+            source.id,
+            force_refresh=True,
+        )
+        return await self._executor.execute(
+            tool, source, arguments, refreshed.auth
+        )
 
     async def execute(
         self,

@@ -5,7 +5,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from chat4openapi.api.errors import ApiError
-from chat4openapi.models import ApiSource, GlobalToolAuthConfig, Skill, SkillTool, Tool
+from chat4openapi.models import (
+    ApiSource,
+    ApiSourceToolAuthConfig,
+    GlobalToolAuthConfig,
+    Skill,
+    SkillTool,
+    Tool,
+)
 
 ToolAction = Literal["enable", "disable", "delete"]
 ToolActionStatus = Literal["enabled", "disabled", "deleted"]
@@ -25,6 +32,14 @@ def _ensure_source_available(db: Session, tool: Tool) -> None:
 
 
 def _ensure_not_login_tool(db: Session, tool_id: int) -> None:
+    source_config = db.scalar(
+        select(ApiSourceToolAuthConfig).where(
+            ApiSourceToolAuthConfig.enabled.is_(True),
+            ApiSourceToolAuthConfig.login_tool_id == tool_id,
+        )
+    )
+    if source_config is not None:
+        raise ApiError(409, "tools.login_tool_conflict")
     config = db.get(GlobalToolAuthConfig, 1)
     if config is not None and config.enabled and config.login_tool_id == tool_id:
         raise ApiError(409, "tools.login_tool_conflict")

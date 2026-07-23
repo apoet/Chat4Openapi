@@ -96,6 +96,20 @@ describe('embedded Agent Chat', () => {
     expect(sessionStorage.getItem('chat4openapi.embed.public-id')).toBe('embed-token')
   })
 
+  it('offers one suggested question and places it in the composer', async () => {
+    const wrapper = await mountEmbed()
+
+    expect(wrapper.text()).toContain('Try asking')
+    const suggestion = wrapper.get('.embed-suggestion button')
+    expect(suggestion.text()).toBe('What can you help me with?')
+
+    await suggestion.trigger('click')
+
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value)
+      .toBe('What can you help me with?')
+    expect(wrapper.findAll('.embed-suggestion button')).toHaveLength(1)
+  })
+
   it('stays silent when WebMCP is unavailable', async () => {
     const wrapper = await mountEmbed()
 

@@ -2,11 +2,18 @@
 
 Tool Sessions carry the upstream business user's identity separately from Agent4API access. An Agent API key authenticates a compatible client; an administrator cookie authenticates browser administration. Neither is injected into imported APIs.
 
-Each Tool Session is bound to one Agent, exactly one owner (the creating Agent key or administrator session), and one or more API sources. Cross-Agent, cross-key, cross-administrator-session, and cross-source reuse is rejected. Session states are `authorization_required`, `pending`, `ready`, `expired`, `revoked`, and `failed`.
+Each Tool Session is bound to one Agent, exactly one owner (the creating Agent key, administrator session, Embed session, or public Chat browser session), and one or more API sources. Cross-Agent, cross-key, cross-browser-session, and cross-source reuse is rejected. Session states are `authorization_required`, `pending`, `ready`, `expired`, `revoked`, and `failed`.
 
 ## Before choosing a mode
 
-Import and enable the API source and required Tools. For OAuth, configure the source through `PUT /api/admin/sources/{source_id}/oauth`; endpoint URLs and client material are stored encrypted. For injected credentials, the requested Header/Cookie names must be declared by the source's OpenAPI security schemes or the legacy-compatible allow-list extension.
+Import and enable the API source and required Tools. Each API source selects
+one interactive authentication mode: OAuth 2.0 or a login Tool. Saving one
+mode disables the other for that source. Configure OAuth through
+`PUT /api/admin/sources/{source_id}/oauth`, or traditional login through
+`PUT /api/admin/sources/{source_id}/tool-auth`. OAuth endpoint URLs and client
+material are stored encrypted. For injected credentials, the requested
+Header/Cookie names must be declared by the source's OpenAPI security schemes
+or the legacy-compatible allow-list extension.
 
 Administrator writes require the administrator cookie plus `X-CSRF-Token`. CLI/headless calls use `Authorization: Bearer <Agent API Key>`. Examples below assume:
 
@@ -49,6 +56,25 @@ GET /api/tool-sessions/oauth/pkce/callback?state=...&code=...
 
 The callback atomically consumes the high-entropy state, exchanges the code, stores encrypted credentials, and sets the HTTP-only `chat4openapi_tool_session` cookie. State is single-use. PKCE verifier and transient secrets are erased on success, failure, expiry, or cancellation.
 
+Public Chat uses the same PKCE exchange through
+`POST /api/chat/oauth/pkce/start`. Its credentials are bound to the current
+HTTP-only browser Chat session. The callback notifies and closes only the
+same-origin popup; it does not expose a Tool Session token. Chat then resumes
+the paused conversation through
+`POST /api/chat/turns/{conversation_id}/resume`.
+
+OAuth source configuration supports four token endpoint authentication methods:
+
+- `auto` (the default, including legacy configurations) sends credentials in
+  the form first, then retries once with HTTP Basic authentication only after
+  `invalid_client` or HTTP 401.
+- `client_secret_basic` sends credentials only in the HTTP Basic
+  `Authorization` header.
+- `client_secret_post` sends credentials in the request form.
+- `none` sends only `client_id` for public PKCE clients.
+
+Automatic fallback does not retry grant errors such as `invalid_grant`.
+
 ## Pre-authorized Header or Cookie injection
 
 Use injection when an external authentication system has already obtained a supported credential:
@@ -68,7 +94,8 @@ The response exposes the opaque Tool Session token, not the injected credential.
 
 ## Swagger login automation
 
-Swagger login supports traditional username/password login Tools configured under **Tool authentication**:
+Swagger login supports traditional username/password login Tools configured
+under the API source's **Authentication → Tool authentication** mode:
 
 ```powershell
 $body = @{ username = "business-user"; password = $env:UPSTREAM_PASSWORD } | ConvertTo-Json
@@ -77,7 +104,11 @@ $created = Invoke-RestMethod -Method Post -Uri "$base/v1/tool-sessions" -Headers
 
 The login Tool runs once and its mapped Token/Header/Cookie is scoped to that Tool's API source. Declared expiry and JWT `exp` can only shorten the Session. Swagger login does not solve or bypass CAPTCHA, MFA, consent pages, or other interactive challenges; use Device Flow, PKCE, or external injection instead.
 
-Browser-oriented login uses `POST /api/tool-session/login`, stores the opaque token only in an HTTP-only cookie, reads `GET /api/tool-session/status`, and revokes through `POST /api/tool-session/logout`. It still requires a Tool Session owner: an administrator browser sends its administrator cookie plus CSRF token. A public Chat browser subject by itself is not a Tool Session owner.
+Browser-oriented Swagger login opens a source-scoped popup only when a Tool
+from that source needs authorization. Public Chat and Embed bind the resulting
+credential to their own browser session. The legacy
+`POST /api/tool-session/login` endpoint remains available for compatible
+single-source clients.
 
 ## Use, inspect, refresh, and revoke
 
