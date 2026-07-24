@@ -2,9 +2,11 @@
 
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 
 import AutoAgentifyPanel from '../components/AutoAgentifyPanel.vue'
+import ApiSourcesView from '../views/ApiSourcesView.vue'
 import { i18n } from '../i18n'
 import { useAuthStore } from '../stores/auth'
 
@@ -54,6 +56,34 @@ beforeEach(() => {
   vi.stubGlobal('EventSource', FakeEventSource)
 })
 
+afterEach(() => {
+  document.body.innerHTML = ''
+})
+
+it('opens the generator in the document overlay layer from the import action', async () => {
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce(response([]))
+    .mockResolvedValueOnce(response([provider]))
+    .mockResolvedValueOnce(response(null)))
+  const wrapper = mount(ApiSourcesView, {
+    attachTo: document.body,
+    global: { plugins: [i18n] },
+  })
+  await flushPromises()
+
+  await wrapper.get('[data-testid="open-auto-agentify"]').trigger('click')
+  await flushPromises()
+
+  expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
+  expect(document.body.querySelector('.modal-backdrop')).not.toBeNull()
+  wrapper.unmount()
+})
+
+it('removes primary button top margin inside every row action group', () => {
+  const styles = readFileSync('src/styles.css', 'utf8')
+  expect(styles).toMatch(/\.row-actions \.primary-action\s*\{[^}]*margin:\s*0/)
+})
+
 it('starts from the current URL import input and displays live capability analysis', async () => {
   vi.stubGlobal('fetch', vi.fn()
     .mockResolvedValueOnce(response([provider]))
@@ -70,7 +100,7 @@ it('starts from the current URL import input and displays live capability analys
         allowPrivateNetworks: false,
       },
     },
-    global: { plugins: [i18n] },
+    global: { plugins: [i18n], stubs: { teleport: true } },
   })
   await flushPromises()
 
@@ -134,7 +164,7 @@ it('uses the current file input and keeps the background job when closed', async
         allowPrivateNetworks: false,
       },
     },
-    global: { plugins: [i18n] },
+    global: { plugins: [i18n], stubs: { teleport: true } },
   })
   await flushPromises()
 

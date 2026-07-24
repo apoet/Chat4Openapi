@@ -81,73 +81,75 @@ function eventLabel(kind: string): string {
 </script>
 
 <template>
-  <div class="modal-backdrop" role="presentation">
-    <section class="auto-agentify-modal" role="dialog" aria-modal="true" :aria-label="t('autoAgentify.title')">
-      <header class="panel-heading">
-        <div>
-          <p class="eyebrow">{{ t('autoAgentify.eyebrow') }}</p>
-          <h2>{{ t('autoAgentify.title') }}</h2>
-          <p class="muted">{{ t('autoAgentify.subtitle') }}</p>
+  <Teleport to="body">
+    <div class="modal-backdrop" role="presentation">
+      <section class="auto-agentify-modal" role="dialog" aria-modal="true" :aria-label="t('autoAgentify.title')">
+        <header class="panel-heading">
+          <div>
+            <p class="eyebrow">{{ t('autoAgentify.eyebrow') }}</p>
+            <h2>{{ t('autoAgentify.title') }}</h2>
+            <p class="muted">{{ t('autoAgentify.subtitle') }}</p>
+          </div>
+          <button data-testid="auto-close" type="button" class="text-button" :aria-label="t('autoAgentify.close')" @click="emit('close')">×</button>
+        </header>
+
+        <div class="source-summary">
+          <strong>{{ source.name || t('autoAgentify.missingName') }}</strong>
+          <span>{{ source.mode === 'url' ? source.sourceUrl : source.file?.name }}</span>
         </div>
-        <button data-testid="auto-close" type="button" class="text-button" :aria-label="t('autoAgentify.close')" @click="emit('close')">×</button>
-      </header>
+        <label>{{ t('autoAgentify.provider') }}
+          <select v-model="providerId" data-testid="auto-provider" :disabled="active">
+            <option value="">{{ t('autoAgentify.selectProvider') }}</option>
+            <option v-for="provider in providers" :key="provider.id" :value="String(provider.id)">
+              {{ provider.name }} · {{ provider.default_model }}
+            </option>
+          </select>
+        </label>
 
-      <div class="source-summary">
-        <strong>{{ source.name || t('autoAgentify.missingName') }}</strong>
-        <span>{{ source.mode === 'url' ? source.sourceUrl : source.file?.name }}</span>
-      </div>
-      <label>{{ t('autoAgentify.provider') }}
-        <select v-model="providerId" data-testid="auto-provider" :disabled="active">
-          <option value="">{{ t('autoAgentify.selectProvider') }}</option>
-          <option v-for="provider in providers" :key="provider.id" :value="String(provider.id)">
-            {{ provider.name }} · {{ provider.default_model }}
-          </option>
-        </select>
-      </label>
+        <p v-if="!sourceReady" class="form-error" role="alert">{{ t('autoAgentify.sourceIncomplete') }}</p>
+        <button data-testid="auto-submit" class="primary-action" :disabled="!ready" @click="start(source, Number(providerId))">
+          {{ starting ? t('autoAgentify.starting') : active ? t('autoAgentify.running') : t('autoAgentify.confirm') }}
+        </button>
 
-      <p v-if="!sourceReady" class="form-error" role="alert">{{ t('autoAgentify.sourceIncomplete') }}</p>
-      <button data-testid="auto-submit" class="primary-action" :disabled="!ready" @click="start(source, Number(providerId))">
-        {{ starting ? t('autoAgentify.starting') : active ? t('autoAgentify.running') : t('autoAgentify.confirm') }}
-      </button>
+        <section v-if="job" class="live-analysis" aria-live="polite">
+          <div class="progress-heading">
+            <strong>{{ t('autoAgentify.liveProgress') }}</strong>
+            <span>{{ job.progress }}%</span>
+          </div>
+          <progress data-testid="auto-progress" :value="job.progress" max="100"></progress>
 
-      <section v-if="job" class="live-analysis" aria-live="polite">
-        <div class="progress-heading">
-          <strong>{{ t('autoAgentify.liveProgress') }}</strong>
-          <span>{{ job.progress }}%</span>
-        </div>
-        <progress data-testid="auto-progress" :value="job.progress" max="100"></progress>
+          <div v-if="capabilities.length" class="capability-list">
+            <h3>{{ t('autoAgentify.capabilities') }}</h3>
+            <article v-for="capability in capabilities" :key="capability.name" class="capability-card">
+              <div><strong>{{ capability.name }}</strong><span v-if="capability.high_impact" class="impact-pill">{{ t('autoAgentify.highImpact') }}</span></div>
+              <p>{{ capability.description }}</p>
+              <p class="capability-value">{{ capability.value }}</p>
+              <ol><li v-for="step in capability.workflow" :key="step">{{ step }}</li></ol>
+            </article>
+          </div>
 
-        <div v-if="capabilities.length" class="capability-list">
-          <h3>{{ t('autoAgentify.capabilities') }}</h3>
-          <article v-for="capability in capabilities" :key="capability.name" class="capability-card">
-            <div><strong>{{ capability.name }}</strong><span v-if="capability.high_impact" class="impact-pill">{{ t('autoAgentify.highImpact') }}</span></div>
-            <p>{{ capability.description }}</p>
-            <p class="capability-value">{{ capability.value }}</p>
-            <ol><li v-for="step in capability.workflow" :key="step">{{ step }}</li></ol>
-          </article>
-        </div>
+          <ol class="event-list">
+            <li v-for="event in events" :key="event.sequence">
+              <span>{{ eventLabel(event.kind) }}</span><small>{{ event.progress }}%</small>
+            </li>
+          </ol>
+        </section>
 
-        <ol class="event-list">
-          <li v-for="event in events" :key="event.sequence">
-            <span>{{ eventLabel(event.kind) }}</span><small>{{ event.progress }}%</small>
-          </li>
-        </ol>
+        <p v-if="errorCode || job?.error_code" data-testid="auto-error" class="form-error" role="alert">
+          {{ t('autoAgentify.errors.unknown') }} ({{ errorCode || job?.error_code }})
+        </p>
+
+        <section v-if="job?.result" class="auto-result" data-testid="auto-result">
+          <h3>{{ t('autoAgentify.resultTitle') }}</h3>
+          <p>{{ t('autoAgentify.counts', { tools: job.result.enabled_tool_count, imported: job.result.imported_tool_count, skills: job.result.skills.length, agents: job.result.agents.length }) }}</p>
+          <div class="auto-result-grid">
+            <section><h4>{{ t('autoAgentify.skills') }}</h4><article v-for="skill in job.result.skills" :key="skill.id" class="auto-result-card"><strong>{{ skill.name }}</strong><p>{{ skill.value }}</p></article></section>
+            <section><h4>{{ t('autoAgentify.agents') }}</h4><article v-for="agent in job.result.agents" :key="agent.id" class="auto-result-card"><strong>{{ agent.name }}</strong><p>{{ agent.value }}</p><ul><li v-for="useCase in agent.use_cases" :key="useCase">{{ useCase }}</li></ul></article></section>
+          </div>
+        </section>
       </section>
-
-      <p v-if="errorCode || job?.error_code" data-testid="auto-error" class="form-error" role="alert">
-        {{ t('autoAgentify.errors.unknown') }} ({{ errorCode || job?.error_code }})
-      </p>
-
-      <section v-if="job?.result" class="auto-result" data-testid="auto-result">
-        <h3>{{ t('autoAgentify.resultTitle') }}</h3>
-        <p>{{ t('autoAgentify.counts', { tools: job.result.enabled_tool_count, imported: job.result.imported_tool_count, skills: job.result.skills.length, agents: job.result.agents.length }) }}</p>
-        <div class="auto-result-grid">
-          <section><h4>{{ t('autoAgentify.skills') }}</h4><article v-for="skill in job.result.skills" :key="skill.id" class="auto-result-card"><strong>{{ skill.name }}</strong><p>{{ skill.value }}</p></article></section>
-          <section><h4>{{ t('autoAgentify.agents') }}</h4><article v-for="agent in job.result.agents" :key="agent.id" class="auto-result-card"><strong>{{ agent.name }}</strong><p>{{ agent.value }}</p><ul><li v-for="useCase in agent.use_cases" :key="useCase">{{ useCase }}</li></ul></article></section>
-        </div>
-      </section>
-    </section>
-  </div>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
