@@ -19,6 +19,7 @@ ALLOWED_PHASES = {
     "persisting_configuration",
     "completed",
     "failed",
+    "cancelled",
 }
 
 

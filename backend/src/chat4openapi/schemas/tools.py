@@ -20,7 +20,7 @@ class SourceUrlImportRequest(BaseModel):
 
 class SourceAutoAgentifyJobSummary(BaseModel):
     public_id: str
-    status: Literal["queued", "running", "completed", "failed"]
+    status: Literal["queued", "running", "completed", "failed", "cancelled"]
     phase: str
     progress: int
     updated_at: datetime
@@ -69,6 +69,7 @@ class ToolSummary(BaseModel):
     input_schema: dict[str, Any]
     execution_schema: dict[str, Any]
     tags: list[str] = Field(default_factory=list)
+    needs_schema_review: bool
     enabled: bool
 
 

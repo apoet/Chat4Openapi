@@ -1,3 +1,4 @@
+import json
 from dataclasses import asdict, dataclass
 from typing import Any, Sequence
 
@@ -192,6 +193,87 @@ def find_body_schema_issues(spec: dict[str, Any]) -> list[BodySchemaIssue]:
     return issues
 
 
+def find_candidate_schema_issues(
+    candidates: Sequence[ToolCandidate],
+) -> list[BodySchemaIssue]:
+    issues: list[BodySchemaIssue] = []
+    for candidate in candidates:
+        properties = candidate.input_schema.get("properties", {})
+        if not isinstance(properties, dict):
+            properties = {}
+        schemas: list[Any] = []
+        request_body = candidate.execution_schema.get("request_body")
+        if isinstance(request_body, dict):
+            argument = request_body.get("argument")
+            arguments = request_body.get("arguments")
+            if isinstance(argument, str):
+                schemas.append(properties.get(argument))
+            elif isinstance(arguments, list):
+                schemas.append(
+                    {
+                        "type": "object",
+                        "properties": {
+                            name: properties.get(name)
+                            for name in arguments
+                            if isinstance(name, str)
+                        },
+                    }
+                )
+            else:
+                schemas.append(None)
+        for parameter in candidate.execution_schema.get("parameters", []):
+            if not isinstance(parameter, dict):
+                continue
+            argument = parameter.get("argument")
+            parameter_schema = properties.get(argument)
+            schema_type = (
+                str(parameter_schema.get("type", "")).casefold()
+                if isinstance(parameter_schema, dict)
+                else ""
+            )
+            schema_format = (
+                str(parameter_schema.get("format", "")).casefold()
+                if isinstance(parameter_schema, dict)
+                else ""
+            )
+            if (
+                parameter.get("in") == "body"
+                or str(parameter.get("name", "")).casefold() == "body"
+                or schema_type in {"object", "json"}
+                or schema_format == "json"
+            ):
+                schemas.append(parameter_schema)
+        if not schemas:
+            for name, schema in properties.items():
+                if not isinstance(schema, dict):
+                    continue
+                if (
+                    str(name).casefold() == "body"
+                    or str(schema.get("type", "")).casefold() == "json"
+                    or str(schema.get("format", "")).casefold() == "json"
+                ):
+                    schemas.append(schema)
+        reasons = tuple(
+            dict.fromkeys(
+                reason
+                for schema in schemas
+                for reason in _body_schema_reasons(schema, {})
+            )
+        )
+        if reasons:
+            issues.append(
+                BodySchemaIssue(
+                    operation_key=candidate.operation_key,
+                    reasons=reasons,
+                )
+            )
+    return issues
+
+
+def candidate_needs_schema_review(candidate: ToolCandidate) -> bool:
+    return bool(find_candidate_schema_issues([candidate]))
+
+
 def build_operation_catalog(
     spec: dict[str, Any],
     candidates: Sequence[ToolCandidate],
@@ -233,6 +315,33 @@ def build_operation_catalog(
     return items
 
 
+def build_candidate_operation_catalog(
+    candidates: Sequence[ToolCandidate],
+) -> list[OperationCatalogItem]:
+    items: list[OperationCatalogItem] = []
+    for candidate in candidates:
+        method, path = candidate.operation_key.split(" ", 1)
+        properties = candidate.input_schema.get("properties", {})
+        fields = (
+            tuple(str(name)[:160] for name in properties)
+            if isinstance(properties, dict)
+            else ()
+        )
+        items.append(
+            OperationCatalogItem(
+                operation_key=candidate.operation_key,
+                name=candidate.name,
+                method=method,
+                path=path,
+                tags=(),
+                summary="",
+                description=_clean_text(candidate.description, 800),
+                input_fields=fields[:24],
+            )
+        )
+    return items
+
+
 def catalog_batches(
     items: Sequence[OperationCatalogItem],
     maximum: int = 150,
@@ -244,6 +353,48 @@ def catalog_batches(
         ordered[index : index + maximum]
         for index in range(0, len(ordered), maximum)
     ]
+
+
+def catalog_analysis_domains(
+    items: Sequence[OperationCatalogItem],
+    maximum_chars: int = 60_000,
+) -> list[list[OperationCatalogItem]]:
+    if maximum_chars < 1:
+        raise ValueError("maximum_chars must be positive")
+    ordered = sorted(items, key=lambda item: (item.tags, item.path, item.method))
+    if _catalog_chars(ordered) <= maximum_chars:
+        return [ordered]
+
+    domains: list[list[OperationCatalogItem]] = []
+    current: list[OperationCatalogItem] = []
+    current_tag: tuple[str, ...] | None = None
+    for item in ordered:
+        item_tag = item.tags[:1]
+        if current and (
+            item_tag != current_tag
+            or _catalog_chars([*current, item]) > maximum_chars
+        ):
+            domains.append(current)
+            current = []
+        current.append(item)
+        current_tag = item_tag
+    if current:
+        domains.append(current)
+    return domains
+
+
+def catalog_prompt_chars(items: Sequence[OperationCatalogItem]) -> int:
+    return _catalog_chars(items)
+
+
+def _catalog_chars(items: Sequence[OperationCatalogItem]) -> int:
+    return len(
+        json.dumps(
+            [item.as_prompt_data() for item in items],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    )
 
 
 def is_high_impact(item: OperationCatalogItem) -> bool:

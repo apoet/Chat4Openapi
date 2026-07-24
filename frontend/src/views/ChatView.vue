@@ -18,6 +18,7 @@ import ChatAuthorization, {
 } from '../components/ChatAuthorization.vue'
 import ChatLoadingIndicator from '../components/ChatLoadingIndicator.vue'
 import MarkdownMessage from '../components/MarkdownMessage.vue'
+import { confirmDestructiveAction } from '../ui/confirmDestructiveAction'
 
 type ChatMessage = {
   role: 'user' | 'assistant'
@@ -351,8 +352,16 @@ async function deleteSession(session: LocalChatSessionV3): Promise<void> {
   if (
     deletingSessionId.value !== null
     || (sending.value && session.id === activeSessionId.value)
-    || !window.confirm(t('chat.deleteConfirm', { title: session.title }))
   ) return
+  const confirmed = await confirmDestructiveAction({
+    title: t('confirmations.dialog.deleteTitle', { item: t('confirmations.dialog.items.chat') }),
+    message: t('chat.deleteConfirm', { title: session.title }),
+    subject: session.title,
+    warning: t('confirmations.dialog.irreversible'),
+    confirmLabel: t('confirmations.dialog.deleteAction', { item: t('confirmations.dialog.items.chat') }),
+    cancelLabel: t('confirmations.dialog.cancel'),
+  })
+  if (!confirmed) return
 
   deletingSessionId.value = session.id
   try {
@@ -578,9 +587,30 @@ async function resumeAfterAuthorization(): Promise<void> {
   }
 }
 
+let sendAfterComposition = false
+let composing = false
+
 function handleEnter(event: KeyboardEvent): void {
-  if (event.isComposing || event.shiftKey) return
+  if (event.key !== 'Enter' && event.code !== 'NumpadEnter') return
+  if (event.shiftKey) return
+  if (event.isComposing || composing) {
+    sendAfterComposition = true
+    return
+  }
   event.preventDefault()
+  sendAfterComposition = false
+  void send()
+}
+
+function handleCompositionStart(): void {
+  composing = true
+}
+
+async function handleCompositionEnd(): Promise<void> {
+  composing = false
+  if (!sendAfterComposition) return
+  sendAfterComposition = false
+  await nextTick()
   void send()
 }
 
@@ -668,7 +698,9 @@ function useSuggestedQuestion(question: string): void {
             v-model="input"
             :placeholder="status === 'needs_input' ? t('chat.answerPlaceholder') : t('chat.placeholder')"
             rows="3"
-            @keydown.enter="handleEnter"
+            @keydown="handleEnter"
+            @compositionstart="handleCompositionStart"
+            @compositionend="handleCompositionEnd"
           />
           <button
             :disabled="sending || status === 'authorization_required' || (conversationId === null && selectedAgentId === null)"

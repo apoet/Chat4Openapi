@@ -211,6 +211,22 @@ describe('Agent administration', () => {
     expect(within(bindings).getByRole('button', { name: 'Remove Billing' })).toBeTruthy()
   })
 
+  it('searches the scrollable Agent roster by name and description', async () => {
+    vi.stubGlobal('fetch', vi.fn(adminGet))
+    const { container } = renderView()
+    const search = await screen.findByRole('searchbox', { name: 'Search Agents' })
+    await screen.findByRole('button', { name: /Draft Agent/ })
+
+    await fireEvent.update(search, 'draft')
+    expect(screen.getByRole('button', { name: /Draft Agent/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Operations Agent/ })).toBeNull()
+
+    await fireEvent.update(search, 'operational work')
+    expect(screen.getByRole('button', { name: /Operations Agent/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Draft Agent/ })).toBeNull()
+    expect(container.querySelector('.agent-list-scroll')).toBeTruthy()
+  })
+
   it('keeps a missing bound Skill visible so removing it repairs the saved bindings', async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       if (input === '/api/admin/agents') return Promise.resolve(response([{ ...agents[0], skill_ids: [10, 99] }]))
@@ -384,9 +400,11 @@ describe('Agent administration', () => {
     const remove = await screen.findByRole('button', { name: 'Delete Agent' }) as HTMLButtonElement
     await waitFor(() => expect(remove.disabled).toBe(false))
     await fireEvent.click(remove)
-    expect(window.confirm).toHaveBeenCalledWith(
+    const deleteDialog = screen.getByRole('dialog', { name: 'Delete Agent?' })
+    expect(deleteDialog.textContent).toContain(
       'Delete Agent “Operations Agent”? Its client access and configuration will no longer be available.',
     )
+    await fireEvent.click(within(deleteDialog).getByRole('button', { name: 'Delete Agent' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/1', expect.objectContaining({ method: 'DELETE' })))
     for (const url of ['/api/admin/agents/2/set-default', '/api/admin/agents/1/disable', '/api/admin/agents/1']) {
       const call = fetchMock.mock.calls.find(([called]) => called === url)
@@ -522,6 +540,8 @@ describe('Agent administration', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Revoke Deployments' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/1/keys/7/revoke', expect.objectContaining({ method: 'POST' })))
     await fireEvent.click(screen.getByRole('button', { name: 'Delete Deployments' }))
+    const deleteDialog = screen.getByRole('dialog', { name: 'Delete API key?' })
+    await fireEvent.click(within(deleteDialog).getByRole('button', { name: 'Delete API key' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/1/keys/7', expect.objectContaining({ method: 'DELETE' })))
   })
 
@@ -551,6 +571,8 @@ describe('Agent administration', () => {
       await fireEvent.click(screen.getByRole('button', { name: 'Revoke Automation' }))
     } else {
       await fireEvent.click(screen.getByRole('button', { name: 'Delete Automation' }))
+      const deleteDialog = screen.getByRole('dialog', { name: 'Delete API key?' })
+      await fireEvent.click(within(deleteDialog).getByRole('button', { name: 'Delete API key' }))
     }
     await fireEvent.click(screen.getByRole('button', { name: /Draft Agent/ }))
     await waitFor(() => expect(screen.getByRole('button', { name: /Draft Agent/ }).getAttribute('aria-current')).toBe('true'))

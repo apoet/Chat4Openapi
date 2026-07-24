@@ -17,7 +17,7 @@
 - Accept at most 64 frontend Tools and 256 KiB encoded definitions per run.
 - Accept at most 64 KiB arguments and 1 MiB results; time out execution after 30 seconds; execute one frontend Tool at a time.
 - Node.js is managed by nvm; run `nvm use 20.19.4` before npm commands.
-- Python is managed by Conda; run backend commands with `conda run -n chat4openapi`.
+- Python is managed by Conda; run backend commands with `conda run -n agent4api`.
 - Every task follows RED → GREEN → focused regression → review → commit.
 
 ---
@@ -64,7 +64,7 @@ def test_encode_sse_uses_compact_json():
 
 - [ ] **Step 2: Run tests and verify RED**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_agui_contracts.py backend/tests/test_agui_events.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_agui_contracts.py backend/tests/test_agui_events.py -q`
 
 Expected: import failure for `chat4openapi.agui`.
 
@@ -84,7 +84,7 @@ Reject more than 64 Tools, encoded catalogs above 256 KiB, schema depth above 16
 
 - [ ] **Step 4: Run protocol tests**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_agui_contracts.py backend/tests/test_agui_events.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_agui_contracts.py backend/tests/test_agui_events.py -q`
 
 Expected: PASS.
 
@@ -127,7 +127,7 @@ async def test_backend_tool_still_uses_executor(runtime, executor):
 
 - [ ] **Step 2: Run tests and verify RED**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_agui_runtime.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_agui_runtime.py -q`
 
 Expected: missing AG-UI runtime and client Tool branch.
 
@@ -146,7 +146,7 @@ When a client Tool is selected, emit the three Tool Call events and end that run
 
 - [ ] **Step 4: Run runtime and existing Agent tests**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_agui_runtime.py backend/tests/test_agent_runtime.py backend/tests/test_chat_turn_api.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_agui_runtime.py backend/tests/test_agent_runtime.py backend/tests/test_chat_turn_api.py -q`
 
 Expected: PASS.
 
@@ -188,7 +188,7 @@ def test_agui_endpoint_hides_owner_mismatch(client, other_session_headers, embed
 
 - [ ] **Step 2: Run API tests and verify RED**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_embed_agent_api.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_embed_agent_api.py -q`
 
 Expected: 404 for the endpoint.
 
@@ -207,7 +207,7 @@ async def run_embed_agent(public_id: str, payload: AguiRunInput,
 
 - [ ] **Step 4: Run endpoint and owner-isolation tests**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_embed_agent_api.py backend/tests/test_embed_sessions.py backend/tests/test_agent_runtime.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_embed_agent_api.py backend/tests/test_embed_sessions.py backend/tests/test_agent_runtime.py -q`
 
 Expected: PASS.
 
@@ -381,7 +381,7 @@ git commit -m "feat: add embedded Agent chat widget"
 
 - [ ] **Step 1: Run all backend tests and lint**
 
-Run: `conda run -n chat4openapi ruff check backend && conda run -n chat4openapi pytest backend/tests -q`
+Run: `conda run -n agent4api ruff check backend && conda run -n agent4api pytest backend/tests -q`
 
 Expected: PASS.
 

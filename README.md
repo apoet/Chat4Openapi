@@ -105,7 +105,7 @@ Conda:
 
 ```shell
 conda env create --solver libmamba -f environment.yml
-conda activate chat4openapi
+conda activate agent4api
 ```
 
 #### 2. Install the frontend and create the configuration

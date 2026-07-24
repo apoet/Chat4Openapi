@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 
 import pytest
@@ -7,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from chat4openapi.models import AdminUser, ApiSource, LlmProvider
+from chat4openapi.models import AdminUser, ApiSource, LlmProvider, Tool
 from chat4openapi.models.auto_agentify_job import (
     AutoAgentifyJob,
     AutoAgentifyJobEvent,
@@ -298,9 +299,14 @@ async def test_job_api_creates_and_recovers_latest_job(
     app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
     app.dependency_overrides[get_auto_agentify_planner] = lambda: object()
     scheduled: list[dict] = []
+
+    def capture_scheduled_job(**kwargs) -> None:
+        asyncio.get_running_loop()
+        scheduled.append(kwargs)
+
     monkeypatch.setattr(
         "chat4openapi.api.admin_auto_agentify.schedule_auto_agentify_job",
-        lambda **kwargs: scheduled.append(kwargs),
+        capture_scheduled_job,
     )
 
     first = await client.post(
@@ -356,6 +362,26 @@ async def test_source_job_is_bound_to_imported_source_and_listed_by_source(
     cipher = SecretCipher(Fernet.generate_key())
     provider_id = _seed_owner_and_provider(db_session_factory)[1]
     source_id = _seed_source(db_session_factory)
+    with db_session_factory() as session:
+        source = session.get(ApiSource, source_id)
+        assert source is not None
+        source.spec_snapshot = ""
+        session.add(
+            Tool(
+                api_source_id=source_id,
+                operation_key="GET /projects",
+                name="list_projects",
+                description="Lists current projects.",
+                input_schema={"type": "object", "properties": {}},
+                execution_schema={
+                    "method": "GET",
+                    "path": "/projects",
+                    "parameters": [],
+                },
+                enabled=False,
+            )
+        )
+        session.commit()
     app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
     app.dependency_overrides[get_auto_agentify_planner] = lambda: object()
     scheduled: list[dict] = []
@@ -377,7 +403,7 @@ async def test_source_job_is_bound_to_imported_source_and_listed_by_source(
 
     assert response.status_code == 202
     assert response.json()["source_id"] == source_id
-    assert scheduled[0]["raw_document"].startswith(b'{"openapi"')
+    assert scheduled[0]["raw_document"] is None
     sources = await client.get("/api/admin/sources")
     source_summary = next(
         item for item in sources.json() if item["id"] == source_id
@@ -386,3 +412,64 @@ async def test_source_job_is_bound_to_imported_source_and_listed_by_source(
     assert source_job["public_id"] == response.json()["public_id"]
     assert source_job["status"] == "queued"
     assert source_job["progress"] == 0
+
+
+@pytest.mark.asyncio
+async def test_active_source_job_can_be_stopped(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = await _login(client)
+    provider_id = _seed_owner_and_provider(db_session_factory)[1]
+    source_id = _seed_source(db_session_factory)
+    with db_session_factory() as session:
+        session.add(
+            Tool(
+                api_source_id=source_id,
+                operation_key="GET /projects",
+                name="listProjects",
+                description="List projects",
+                input_schema={"type": "object", "properties": {}},
+                execution_schema={
+                    "method": "GET",
+                    "path": "/projects",
+                    "parameters": [],
+                },
+                enabled=False,
+            )
+        )
+        session.commit()
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: SecretCipher(
+        Fernet.generate_key()
+    )
+    app.dependency_overrides[get_auto_agentify_planner] = lambda: object()
+    monkeypatch.setattr(
+        "chat4openapi.api.admin_auto_agentify.schedule_auto_agentify_job",
+        lambda **kwargs: None,
+    )
+
+    created = await client.post(
+        f"/api/admin/auto-agentify/sources/{source_id}/jobs",
+        json={"provider_id": provider_id},
+        headers={"X-CSRF-Token": token},
+    )
+    public_id = created.json()["public_id"]
+
+    stopped = await client.post(
+        f"/api/admin/auto-agentify/jobs/{public_id}/cancel",
+        headers={"X-CSRF-Token": token},
+    )
+
+    assert stopped.status_code == 200
+    assert stopped.json()["status"] == "cancelled"
+    assert stopped.json()["phase"] == "cancelled"
+    recovered = await client.get(f"/api/admin/auto-agentify/jobs/{public_id}")
+    assert recovered.json()["status"] == "cancelled"
+    sources = await client.get("/api/admin/sources")
+    assert sources.status_code == 200
+    source_summary = next(
+        item for item in sources.json() if item["id"] == source_id
+    )
+    assert source_summary["auto_agentify_job"]["status"] == "cancelled"

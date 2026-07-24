@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Python commands run through Conda environment `chat4openapi`.
+- Python commands run through Conda environment `agent4api`.
 - Node.js commands run through the nvm-managed executables under `D:\nvm\nodejs`.
 - English and Simplified Chinese are required; English remains the default locale.
 - The system has exactly one built-in Agent; multiple Agents and Agent delegation are out of scope.
@@ -103,7 +103,7 @@ Also assert a `ToolParameterOverride(tool_id, argument_name)` pair is unique and
 Run:
 
 ```powershell
-conda run -n chat4openapi pytest backend/tests/test_agent_models.py backend/tests/test_database.py -q
+conda run -n agent4api pytest backend/tests/test_agent_models.py backend/tests/test_database.py -q
 ```
 
 Expected: collection/import failures for missing Agent models or missing migration columns.
@@ -154,7 +154,7 @@ Add `candidate_skill_ids`, `loaded_skill_ids`, `agent_mode`, `agent_status`, and
 Run:
 
 ```powershell
-conda run -n chat4openapi pytest backend/tests/test_agent_models.py backend/tests/test_database.py -q
+conda run -n agent4api pytest backend/tests/test_agent_models.py backend/tests/test_database.py -q
 ```
 
 Expected: all selected tests pass.
@@ -205,7 +205,7 @@ Assert `mode="invalid"`, `max_iterations=0`, a disabled provider, and a deleted 
 - [ ] **Step 2: Run tests and verify RED**
 
 ```powershell
-conda run -n chat4openapi pytest backend/tests/test_agent_api.py backend/tests/test_skills_api.py -q
+conda run -n agent4api pytest backend/tests/test_agent_api.py backend/tests/test_skills_api.py -q
 ```
 
 Expected: Agent routes return 404 and old Skill schema expectations fail.
@@ -232,7 +232,7 @@ Remove Skill provider validation and fields from `_write_skill`, `SkillWriteRequ
 - [ ] **Step 4: Run focused tests**
 
 ```powershell
-conda run -n chat4openapi pytest backend/tests/test_agent_api.py backend/tests/test_skills_api.py -q
+conda run -n agent4api pytest backend/tests/test_agent_api.py backend/tests/test_skills_api.py -q
 ```
 
 Expected: all selected tests pass.
@@ -278,7 +278,7 @@ Refresh the Tool with the same argument and assert preservation; refresh without
 - [ ] **Step 2: Run tests and verify RED**
 
 ```powershell
-conda run -n chat4openapi pytest backend/tests/test_tool_parameter_overrides.py backend/tests/test_tool_api.py -q
+conda run -n agent4api pytest backend/tests/test_tool_parameter_overrides.py backend/tests/test_tool_api.py -q
 ```
 
 Expected: missing module/route failures.
@@ -312,7 +312,7 @@ Call reconciliation immediately after a refreshed Tool receives its latest `inpu
 - [ ] **Step 4: Run focused tests**
 
 ```powershell
-conda run -n chat4openapi pytest backend/tests/test_tool_parameter_overrides.py backend/tests/test_tool_api.py -q
+conda run -n agent4api pytest backend/tests/test_tool_parameter_overrides.py backend/tests/test_tool_api.py -q
 ```
 
 Expected: all selected tests pass.
@@ -369,7 +369,7 @@ class AgentTurnResult:
 - [ ] **Step 2: Run the routing test and verify RED**
 
 ```powershell
-conda run -n chat4openapi pytest backend/tests/test_agent_runtime.py::test_routes_loads_skill_and_executes_only_bound_tools -q
+conda run -n agent4api pytest backend/tests/test_agent_runtime.py::test_routes_loads_skill_and_executes_only_bound_tools -q
 ```
 
 Expected: import failure for `AgentRuntime`.
@@ -411,7 +411,7 @@ Build the initial system context from Agent prompt plus a JSON Skill catalog con
 The fake LLM calls `load_skills`, then `ask_user`. Assert interactive execution returns `needs_input`, stores `pending_clarification` including the Tool call ID, and performs no business Tool call. Resume with `GRCh38`; assert the next LLM context includes an internal Tool result containing that answer and finishes normally.
 
 ```powershell
-conda run -n chat4openapi pytest backend/tests/test_agent_runtime.py::test_human_in_loop_pauses_and_resumes_without_tool_approval -q
+conda run -n agent4api pytest backend/tests/test_agent_runtime.py::test_human_in_loop_pauses_and_resumes_without_tool_approval -q
 ```
 
 Expected: FAIL because `ask_user` is not handled.
@@ -429,7 +429,7 @@ Add tests for two loaded Skills in a compound task, invalid loads, stopped candi
 Run:
 
 ```powershell
-conda run -n chat4openapi pytest backend/tests/test_agent_runtime.py backend/tests/test_chat_orchestrator.py -q
+conda run -n agent4api pytest backend/tests/test_agent_runtime.py backend/tests/test_chat_orchestrator.py -q
 ```
 
 Expected: all selected tests pass. Keep `ChatOrchestrator` as a compatibility shim that constructs `AgentTurnRequest`; remove Skill-owned provider lookup from it.
@@ -473,7 +473,7 @@ Assert a clarification response contains `status="needs_input"`, its conversatio
 - [ ] **Step 2: Run tests and verify RED**
 
 ```powershell
-conda run -n chat4openapi pytest backend/tests/test_chat_turn_api.py backend/tests/test_compatible_api.py -q
+conda run -n agent4api pytest backend/tests/test_chat_turn_api.py backend/tests/test_compatible_api.py -q
 ```
 
 Expected: browser route 404 and old compatibility tests fail after switching expectations to Agent output.
@@ -507,7 +507,7 @@ Map `model="agent-default"` to an empty candidate list and `model="skill-7"` to 
 - [ ] **Step 5: Run focused API tests**
 
 ```powershell
-conda run -n chat4openapi pytest backend/tests/test_chat_turn_api.py backend/tests/test_compatible_api.py -q
+conda run -n agent4api pytest backend/tests/test_chat_turn_api.py backend/tests/test_compatible_api.py -q
 ```
 
 Expected: all selected tests pass.
@@ -800,7 +800,7 @@ In the Agent runtime test, assert this Skill prompt is present after dynamic loa
 
 ```powershell
 & 'D:\nvm\nodejs\npm.cmd' test -- --run src/__tests__/markdown-message.spec.ts src/__tests__/skills-chat.spec.ts
-conda run -n chat4openapi pytest backend/tests/test_agent_runtime.py -q
+conda run -n agent4api pytest backend/tests/test_agent_runtime.py -q
 ```
 
 Expected: all selected tests pass.
@@ -827,7 +827,7 @@ git commit -m "feat: render safe markdown agent responses"
 - [ ] **Step 1: Apply the migration to the application database**
 
 ```powershell
-conda run -n chat4openapi alembic -c backend/alembic.ini upgrade head
+conda run -n agent4api alembic -c backend/alembic.ini upgrade head
 ```
 
 Expected: database revision is `0005_agent_runtime`; Agent ID 1 points to the first enabled provider and Skills have no provider/model columns.
@@ -835,8 +835,8 @@ Expected: database revision is `0005_agent_runtime`; Agent ID 1 points to the fi
 - [ ] **Step 2: Run complete backend verification**
 
 ```powershell
-conda run -n chat4openapi pytest backend/tests -q
-conda run -n chat4openapi ruff check backend/src backend/tests
+conda run -n agent4api pytest backend/tests -q
+conda run -n agent4api ruff check backend/src backend/tests
 ```
 
 Expected: zero failing tests and `All checks passed!`.

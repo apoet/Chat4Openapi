@@ -6,6 +6,22 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from chat4openapi.schemas.tools import ApiSourceSummary
 
 BUILTIN_SYSTEM_CAPABILITIES = {
+    "order_query": "order query / 订单查询",
+    "order_fulfillment": "order fulfillment / 订单履约",
+    "public_services": "public services / 公共服务",
+    "intelligent_customer_service": (
+        "intelligent customer service / 智能客服"
+    ),
+    "information_search": "information search / 信息查询",
+    "reporting_analytics": "reporting and analytics / 报表分析",
+    "appointment_booking": "appointment and booking / 预约预订",
+    "application_approval": "application and approval / 申请审批",
+    "case_ticket_management": "case and ticket management / 工单处理",
+    "customer_management": "customer management / 客户管理",
+    "product_service_catalog": "product and service catalog / 产品服务",
+    "billing_payments": "billing and payments / 账单支付",
+    "logistics_tracking": "logistics tracking / 物流跟踪",
+    "task_collaboration": "task collaboration / 任务协作",
     "system_configuration": "system configuration / 系统配置",
     "user_permissions": "users and permissions / 用户与权限",
     "organization_management": "organization management / 组织管理",
@@ -190,7 +206,7 @@ class AutoAgentifyJobResponse(BaseModel):
     source_id: int | None
     input_mode: Literal["url", "file"]
     source_name: str
-    status: Literal["queued", "running", "completed", "failed"]
+    status: Literal["queued", "running", "completed", "failed", "cancelled"]
     phase: str
     progress: int
     metrics: dict[str, Any]

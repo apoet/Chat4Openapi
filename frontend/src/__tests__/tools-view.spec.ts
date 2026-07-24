@@ -21,6 +21,18 @@ function deferred<T>(): { promise: Promise<T>, resolve: (value: T) => void } {
   return { promise, resolve }
 }
 
+function apiSource(id = 1, name = 'Test API') {
+  return {
+    id,
+    name,
+    source_type: 'openapi',
+    base_url: 'https://api.test',
+    allow_private_networks: false,
+    enabled: true,
+    created_at: '2026-07-21T00:00:00',
+  }
+}
+
 beforeEach(() => {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -76,7 +88,7 @@ describe('Tool administration views', () => {
     expect(screen.getByText('Optional')).toBeTruthy()
   })
 
-  it('groups Tools by API source name', async () => {
+  it('shows the selected API source name above its Tools', async () => {
     const tools = [
       { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, enabled: false },
       { id: 2, api_source_id: 2, operation_key: 'GET /orders', name: 'listOrders', description: null, input_schema: {}, enabled: false },
@@ -93,7 +105,39 @@ describe('Tool administration views', () => {
     render(ToolsView, { global: { plugins: [i18n] } })
 
     expect(await screen.findByRole('heading', { name: 'Pet API' })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: 'Orders API' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Orders API' })).toBeNull()
+    expect(screen.getByRole('option', { name: 'Orders API' })).toBeTruthy()
+  })
+
+  it('loads Tools only for the selected API source', async () => {
+    const sources = [
+      { id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://pets.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+      { id: 2, name: 'Orders API', source_type: 'openapi', base_url: 'https://orders.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+    ]
+    const tools = {
+      1: [{ id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: ['Pets'], enabled: false }],
+      2: [{ id: 2, api_source_id: 2, operation_key: 'GET /orders', name: 'listOrders', description: null, input_schema: {}, execution_schema: {}, tags: ['Orders'], enabled: false }],
+    }
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input)
+      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse(sources))
+      const selectedSourceId = Number(new URL(path, 'https://agent4api.test').searchParams.get('source_id'))
+      return Promise.resolve(jsonResponse(tools[selectedSourceId as keyof typeof tools] ?? []))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+
+    const sourceSelect = await screen.findByRole('combobox', { name: 'API source' })
+    expect(await screen.findByText('listPets')).toBeTruthy()
+    expect(screen.queryByText('listOrders')).toBeNull()
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/admin/tools?source_id=1')).toBe(true)
+
+    await fireEvent.update(sourceSelect, '2')
+
+    expect(await screen.findByText('listOrders')).toBeTruthy()
+    expect(screen.queryByText('listPets')).toBeNull()
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/admin/tools?source_id=2')).toBe(true)
   })
 
   it('searches Tools by interface name or description', async () => {
@@ -119,6 +163,26 @@ describe('Tool administration views', () => {
     expect(screen.queryByText('listOrders')).toBeNull()
   })
 
+  it('quickly filters Tools whose parameter schemas need review', async () => {
+    const tools = [
+      { id: 1, api_source_id: 1, operation_key: 'POST /pets', name: 'createPet', description: 'Create a pet', input_schema: {}, execution_schema: {}, tags: ['Pets'], needs_schema_review: true, enabled: false },
+      { id: 2, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: 'List pets', input_schema: {}, execution_schema: {}, tags: ['Pets'], needs_schema_review: false, enabled: true },
+    ]
+    const sources = [
+      { id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://api.test', document_url: null, allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
+    ]
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => Promise.resolve(
+      jsonResponse(String(input).endsWith('/sources') ? sources : tools),
+    )))
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    await screen.findByText('createPet')
+    await fireEvent.click(screen.getByRole('button', { name: 'Needs review' }))
+
+    expect(screen.getByText('createPet')).toBeTruthy()
+    expect(screen.queryByText('listPets')).toBeNull()
+  })
+
   it('preserves Swagger tag groups inside each API source', async () => {
     const tools = [
       { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: ['Pet operations', 'Public'], enabled: false },
@@ -142,7 +206,7 @@ describe('Tool administration views', () => {
     const tools = [
       { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: 'Pet catalog', input_schema: {}, execution_schema: {}, tags: ['Pets'], enabled: true },
       { id: 2, api_source_id: 1, operation_key: 'GET /orders', name: 'listOrders', description: 'Order catalog', input_schema: {}, execution_schema: {}, tags: ['Orders'], enabled: false },
-      { id: 3, api_source_id: 2, operation_key: 'GET /genes', name: 'listGenes', description: 'Gene catalog', input_schema: {}, execution_schema: {}, tags: ['Genes'], enabled: true },
+      { id: 3, api_source_id: 1, operation_key: 'GET /genes', name: 'listGenes', description: 'Gene catalog', input_schema: {}, execution_schema: {}, tags: ['Genes'], enabled: true },
     ]
     const sources = [
       { id: 1, name: 'Commerce API', source_type: 'openapi', base_url: 'https://commerce.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
@@ -174,11 +238,11 @@ describe('Tool administration views', () => {
     expect(screen.getByText('2 Tools selected')).toBeTruthy()
   })
 
-  it('select visible excludes Tools hidden by collapsed source and tag groups', async () => {
+  it('select visible excludes Tools hidden by a collapsed tag group', async () => {
     const tools = [
       { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: ['Pets'], enabled: false },
-      { id: 2, api_source_id: 2, operation_key: 'GET /orders', name: 'listOrders', description: null, input_schema: {}, execution_schema: {}, tags: ['Orders'], enabled: false },
-      { id: 3, api_source_id: 2, operation_key: 'GET /private', name: 'listPrivateOrders', description: null, input_schema: {}, execution_schema: {}, tags: ['Private'], enabled: false },
+      { id: 2, api_source_id: 1, operation_key: 'GET /orders', name: 'listOrders', description: null, input_schema: {}, execution_schema: {}, tags: ['Orders'], enabled: false },
+      { id: 3, api_source_id: 1, operation_key: 'GET /private', name: 'listPrivateOrders', description: null, input_schema: {}, execution_schema: {}, tags: ['Private'], enabled: false },
     ]
     const sources = [
       { id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://pets.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
@@ -189,19 +253,17 @@ describe('Tool administration views', () => {
     )))
 
     render(ToolsView, { global: { plugins: [i18n] } })
-    const petSource = (await screen.findByRole('heading', { name: 'Pet API' })).closest('details') as HTMLDetailsElement
+    await screen.findByRole('heading', { name: 'Pet API' })
     const privateTag = screen.getByRole('heading', { name: 'Private' }).closest('details') as HTMLDetailsElement
-    await fireEvent.click(petSource.querySelector(':scope > summary') as HTMLElement)
     await fireEvent.click(privateTag.querySelector(':scope > summary') as HTMLElement)
-    expect(petSource.open).toBe(false)
     expect(privateTag.open).toBe(false)
 
     await fireEvent.click(screen.getByRole('button', { name: 'Select visible' }))
 
-    expect(screen.getByRole('checkbox', { name: 'Select listPets' })).toHaveProperty('checked', false)
+    expect(screen.getByRole('checkbox', { name: 'Select listPets' })).toHaveProperty('checked', true)
     expect(screen.getByRole('checkbox', { name: 'Select listOrders' })).toHaveProperty('checked', true)
     expect(screen.getByRole('checkbox', { name: 'Select listPrivateOrders' })).toHaveProperty('checked', false)
-    expect(screen.getByText('1 Tools selected')).toBeTruthy()
+    expect(screen.getByText('2 Tools selected')).toBeTruthy()
   })
 
   it('rejects selection above 200 without truncation', async () => {
@@ -312,7 +374,7 @@ describe('Tool administration views', () => {
   it('removes single-deleted Tools from bulk counts, confirmation, and request snapshots', async () => {
     const tools = [
       { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: false },
-      { id: 2, api_source_id: 2, operation_key: 'GET /genes', name: 'listGenes', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: false },
+      { id: 2, api_source_id: 1, operation_key: 'GET /genes', name: 'listGenes', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: false },
     ]
     const sources = [
       { id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://pets.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
@@ -338,6 +400,8 @@ describe('Tool administration views', () => {
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Select listGenes' }))
     const petCard = screen.getByText('listPets').closest('article') as HTMLElement
     await fireEvent.click(within(petCard).getByRole('button', { name: 'Delete' }))
+    const singleDeleteDialog = await screen.findByRole('dialog', { name: 'Delete Tool?' })
+    await fireEvent.click(within(singleDeleteDialog).getByRole('button', { name: 'Delete Tool' }))
 
     await waitFor(() => expect(screen.queryByText('listPets')).toBeNull())
     expect(screen.getByText('1 Tools selected')).toBeTruthy()
@@ -354,10 +418,6 @@ describe('Tool administration views', () => {
     const tool = { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: false }
     const source = { id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://pets.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' }
     const skill = { id: 5, name: 'Pet helper', description: null, system_prompt: 'Help', running: true, tools: [tool] }
-    const confirmMock = vi.fn()
-      .mockReturnValueOnce(false)
-      .mockReturnValueOnce(true)
-    vi.stubGlobal('confirm', confirmMock)
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input)
       if (path.endsWith('/sources')) return Promise.resolve(jsonResponse([source]))
@@ -374,14 +434,16 @@ describe('Tool administration views', () => {
       .getByRole('button', { name: 'Delete' })
     await fireEvent.click(deleteButton)
 
-    await waitFor(() => expect(confirmMock).toHaveBeenCalledWith(
-      'Tool “listPets” is referenced by these Skills: Pet helper. Delete it anyway?',
-    ))
+    const cancelDialog = await screen.findByRole('dialog', { name: 'Delete Tool?' })
+    expect(cancelDialog.textContent).toContain('Tool “listPets” is referenced by these Skills: Pet helper. Delete it anyway?')
+    await fireEvent.click(within(cancelDialog).getByRole('button', { name: 'Cancel' }))
     expect(fetchMock.mock.calls.some(([url, init]) => (
       String(url).endsWith('/tools/1') && (init as RequestInit)?.method === 'DELETE'
     ))).toBe(false)
 
     await fireEvent.click(deleteButton)
+    const confirmDialog = await screen.findByRole('dialog', { name: 'Delete Tool?' })
+    await fireEvent.click(within(confirmDialog).getByRole('button', { name: 'Delete Tool' }))
     await waitFor(() => expect(fetchMock.mock.calls.some(([url, init]) => (
       String(url).endsWith('/tools/1') && (init as RequestInit)?.method === 'DELETE'
     ))).toBe(true))
@@ -390,7 +452,7 @@ describe('Tool administration views', () => {
   it('confirms bulk delete with Tool and source counts while cancel sends no request', async () => {
     const tools = [
       { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: false },
-      { id: 2, api_source_id: 2, operation_key: 'GET /genes', name: 'listGenes', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: false },
+      { id: 2, api_source_id: 1, operation_key: 'GET /genes', name: 'listGenes', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: false },
     ]
     const sources = [
       { id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://pets.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' },
@@ -420,7 +482,7 @@ describe('Tool administration views', () => {
     await fireEvent.click(deleteTrigger)
 
     const dialog = screen.getByRole('dialog', { name: 'Delete selected Tools' })
-    expect(dialog.textContent).toContain('Delete 2 Tools from 2 API sources?')
+    expect(dialog.textContent).toContain('Delete 2 Tools from 1 API sources?')
     const cancelButton = screen.getByRole('button', { name: 'Cancel bulk delete' })
     const confirmButton = screen.getByRole('button', { name: 'Confirm delete Tools' })
     expect(document.querySelector('main')?.hasAttribute('inert')).toBe(true)
@@ -452,7 +514,7 @@ describe('Tool administration views', () => {
     const batch = deferred<Response>()
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input)
-      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse([]))
+      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse([apiSource()]))
       if (path.endsWith('/batch')) return batch.promise
       if (path.endsWith('/tools/1') && init?.method === 'DELETE') return Promise.resolve(jsonResponse(null))
       return Promise.resolve(jsonResponse([tool]))
@@ -498,7 +560,7 @@ describe('Tool administration views', () => {
     const batch = deferred<Response>()
     const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
       const path = String(input)
-      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse([]))
+      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse([apiSource()]))
       if (path.endsWith('/batch')) return batch.promise
       return Promise.resolve(jsonResponse(tools))
     })
@@ -550,7 +612,7 @@ describe('Tool administration views', () => {
     const batch = deferred<Response>()
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input)
-      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse([]))
+      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse([apiSource()]))
       if (path.endsWith('/batch')) return batch.promise
       if (path.endsWith('/tools/2/enabled') && init?.method === 'PATCH') {
         return Promise.resolve(jsonResponse({ ...tools[1], enabled: true }))
@@ -590,7 +652,7 @@ describe('Tool administration views', () => {
     const tool = { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: true }
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const path = String(input)
-      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse([]))
+      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse([apiSource()]))
       if (path.endsWith('/batch')) {
         return Promise.resolve(jsonResponse({
           error: { code: 'tools.batch_item_failed', params: { internal: 'secret transaction detail' } },
@@ -740,7 +802,7 @@ describe('Tool administration views', () => {
       enabled: true,
     }
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).endsWith('/sources')) return Promise.resolve(jsonResponse([]))
+      if (String(input).endsWith('/sources')) return Promise.resolve(jsonResponse([apiSource()]))
       if (init?.method === 'PUT') return Promise.resolve(jsonResponse(tool))
       return Promise.resolve(jsonResponse([tool]))
     })
@@ -797,7 +859,7 @@ describe('Tool administration views', () => {
     }
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input)
-      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse([]))
+      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse([apiSource()]))
       if (init?.method === 'PUT') return Promise.resolve(jsonResponse(swaggerTool))
       return Promise.resolve(jsonResponse([tool]))
     })
@@ -835,7 +897,7 @@ describe('Tool administration views', () => {
       enabled: true,
     }
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).endsWith('/sources')) return Promise.resolve(jsonResponse([]))
+      if (String(input).endsWith('/sources')) return Promise.resolve(jsonResponse([apiSource()]))
       if (init?.method === 'PUT') {
         return Promise.resolve(jsonResponse({ error: { code: 'unknown', params: {} } }, 500))
       }
@@ -970,9 +1032,11 @@ describe('Tool administration views', () => {
     expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/sources/1')
     await screen.findByText('Pet API v2')
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
-    expect(window.confirm).toHaveBeenCalledWith(
+    const deleteDialog = screen.getByRole('dialog', { name: 'Delete source?' })
+    expect(deleteDialog.textContent).toContain(
       'Delete source “Pet API v2”? All Tools in this source will be deleted and Skills that reference them may be affected.',
     )
+    await fireEvent.click(within(deleteDialog).getByRole('button', { name: 'Delete source' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
     expect(fetchMock.mock.calls[2][0]).toBe('/api/admin/sources/1')
     await waitFor(() => expect(screen.queryByText('Pet API v2')).toBeNull())
@@ -1055,45 +1119,23 @@ describe('Tool administration views', () => {
   })
 
   it('lists default-disabled Tools and enables one', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        jsonResponse([
-          {
-            id: 4,
-            api_source_id: 1,
-            operation_key: 'GET /pets',
-            name: 'listPets',
-            description: 'List pets',
-            input_schema: { type: 'object' },
-            enabled: false,
-          },
-        ]),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse([
-          {
-            id: 1,
-            name: 'Pet API',
-            source_type: 'openapi',
-            base_url: 'https://api.test',
-            allow_private_networks: false,
-            enabled: true,
-            created_at: '2026-07-21T00:00:00',
-          },
-        ]),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({
-          id: 4,
-          api_source_id: 1,
-          operation_key: 'GET /pets',
-          name: 'listPets',
-          description: 'List pets',
-          input_schema: { type: 'object' },
-          enabled: true,
-        }),
-      )
+    const tool = {
+      id: 4,
+      api_source_id: 1,
+      operation_key: 'GET /pets',
+      name: 'listPets',
+      description: 'List pets',
+      input_schema: { type: 'object' },
+      enabled: false,
+    }
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse([apiSource(1, 'Pet API')]))
+      if (path.endsWith('/tools/4/enabled') && init?.method === 'PATCH') {
+        return Promise.resolve(jsonResponse({ ...tool, enabled: true }))
+      }
+      return Promise.resolve(jsonResponse([tool]))
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     render(ToolsView, { global: { plugins: [i18n] } })
@@ -1131,6 +1173,7 @@ describe('Tool administration views', () => {
 
     const { container } = render(ApiSourcesView, { global: { plugins: [i18n] } })
     await screen.findByText('No API sources imported yet.')
+    await fireEvent.click(screen.getByRole('button', { name: 'File upload' }))
     await fireEvent.update(screen.getByLabelText('Source name'), 'Pet API')
     const file = new File(['openapi: 3.0.3'], 'openapi.yaml', { type: 'application/yaml' })
     const input = container.querySelector('input[type="file"]') as HTMLInputElement
@@ -1165,7 +1208,10 @@ describe('Tool administration views', () => {
 
     render(ApiSourcesView, { global: { plugins: [i18n] } })
     await screen.findByText('No API sources imported yet.')
-    await fireEvent.click(screen.getByRole('button', { name: 'URL import' }))
+    expect(
+      screen.getByRole('button', { name: 'URL import' }).classList.contains('active'),
+    ).toBe(true)
+    expect(screen.getByLabelText('OpenAPI URL')).toBeTruthy()
     await fireEvent.update(screen.getByLabelText('Source name'), 'Remote API')
     await fireEvent.update(screen.getByLabelText('OpenAPI URL'), 'https://api.test/openapi.json')
     await fireEvent.click(screen.getByLabelText('Allow private network targets'))
@@ -1198,7 +1244,6 @@ describe('Tool administration views', () => {
 
     render(ApiSourcesView, { global: { plugins: [i18n] } })
     await screen.findByText('No API sources imported yet.')
-    await fireEvent.click(screen.getByRole('button', { name: 'URL import' }))
     await fireEvent.update(screen.getByLabelText('Source name'), 'Broken API')
     await fireEvent.update(screen.getByLabelText('OpenAPI URL'), 'https://api.test/openapi.json')
     await fireEvent.click(screen.getByRole('button', { name: 'Import from URL' }))

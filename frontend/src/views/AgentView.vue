@@ -10,6 +10,7 @@ import AgentApiUsagePanel from '../components/AgentApiUsagePanel.vue'
 import AgentKeyPanel from '../components/AgentKeyPanel.vue'
 import AgentEmbedPanel from '../components/AgentEmbedPanel.vue'
 import { AgentSavePartialError, useAgentsStore } from '../stores/agents'
+import { confirmDestructiveAction } from '../ui/confirmDestructiveAction'
 
 const store = useAgentsStore()
 const { t } = useI18n()
@@ -20,8 +21,17 @@ const errorMessage = ref('')
 const savePending = ref(false)
 const actionPending = ref(false)
 const keyBusy = ref(false)
+const agentQuery = ref('')
 let selectionGeneration = 0
 const selectedAgent = computed(() => store.agents.find((agent) => agent.id === selectedId.value) ?? null)
+const filteredAgents = computed(() => {
+  const query = agentQuery.value.trim().toLocaleLowerCase()
+  if (!query) return store.agents
+  return store.agents.filter((agent) => (
+    agent.name.toLocaleLowerCase().includes(query)
+    || (agent.description ?? '').toLocaleLowerCase().includes(query)
+  ))
+})
 const interactionLocked = computed(() => savePending.value || actionPending.value || keyBusy.value)
 
 onMounted(async () => {
@@ -106,7 +116,15 @@ async function lifecycle(action: 'enable' | 'disable' | 'set-default'): Promise<
 
 async function remove(): Promise<void> {
   if (!selectedAgent.value || actionPending.value) return
-  if (!window.confirm(t('confirmations.deleteAgent', { name: selectedAgent.value.name }))) return
+  const confirmed = await confirmDestructiveAction({
+    title: t('confirmations.dialog.deleteTitle', { item: t('confirmations.dialog.items.agent') }),
+    message: t('confirmations.deleteAgent', { name: selectedAgent.value.name }),
+    subject: selectedAgent.value.name,
+    warning: t('confirmations.dialog.irreversible'),
+    confirmLabel: t('confirmations.dialog.deleteAction', { item: t('confirmations.dialog.items.agent') }),
+    cancelLabel: t('confirmations.dialog.cancel'),
+  })
+  if (!confirmed) return
   const generation = selectionGeneration
   actionPending.value = true
   errorMessage.value = ''
@@ -132,9 +150,13 @@ async function remove(): Promise<void> {
 
     <div class="agent-workspace">
       <aside class="agent-roster" :aria-label="t('agent.listTitle')">
-        <div class="panel-heading compact-heading"><h2>{{ t('agent.listTitle') }}</h2><span>{{ store.agents.length }}</span></div>
-        <div class="agent-list">
-          <div v-for="agent in store.agents" :key="agent.id" class="agent-list-row">
+        <div class="panel-heading compact-heading"><h2>{{ t('agent.listTitle') }}</h2><span aria-live="polite">{{ agentQuery ? `${filteredAgents.length}/${store.agents.length}` : store.agents.length }}</span></div>
+        <label class="agent-roster-search">
+          <span class="sr-only">{{ t('agent.searchAgents') }}</span>
+          <input v-model="agentQuery" type="search" :aria-label="t('agent.searchAgents')" :placeholder="t('agent.searchAgentsHint')" />
+        </label>
+        <div class="agent-list agent-list-scroll">
+          <div v-for="agent in filteredAgents" :key="agent.id" class="agent-list-row">
             <button type="button" :class="['agent-list-item', { active: selectedId === agent.id && !creating }]" :disabled="interactionLocked" :aria-current="selectedId === agent.id && !creating ? 'true' : undefined" @click="select(agent)">
               <span class="agent-avatar" aria-hidden="true">{{ agent.name.slice(0, 2).toUpperCase() }}</span>
               <span>
@@ -155,6 +177,7 @@ async function remove(): Promise<void> {
           </div>
         </div>
         <p v-if="store.agents.length === 0" class="empty-inline">{{ t('agent.empty') }}</p>
+        <p v-else-if="filteredAgents.length === 0" class="empty-inline">{{ t('agent.noSearchResults') }}</p>
       </aside>
 
       <div class="agent-detail">

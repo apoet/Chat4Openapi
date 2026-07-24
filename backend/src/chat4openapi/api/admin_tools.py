@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from chat4openapi.api.admin_auth import AdminContext, require_admin, require_csrf
 from chat4openapi.api.errors import ApiError
 from chat4openapi.api.tool_sessions import get_tool_executor, get_tool_secret_cipher
+from chat4openapi.auto_agentify.catalog import candidate_needs_schema_review
 from chat4openapi.db.serialized_write import serialized_write
 from chat4openapi.models import (
     ApiSource,
@@ -49,7 +50,7 @@ from chat4openapi.schemas.tools import (
 )
 from chat4openapi.security.encryption import SecretCipher
 from chat4openapi.tool_sessions.auth_mapping import AuthMappingError, build_request_auth
-from chat4openapi.tools.candidates import build_candidates
+from chat4openapi.tools.candidates import ToolCandidate, build_candidates
 from chat4openapi.tools.effective_schema import (
     effective_input_schema,
     reconcile_parameter_overrides,
@@ -134,6 +135,18 @@ def _tool_summary(
     tags = operation.get("tags", []) if isinstance(operation, dict) else []
     return summary.model_copy(
         update={"tags": [str(tag) for tag in tags if isinstance(tag, str)]}
+    )
+
+
+def _refresh_tool_schema_review(db: Session, tool: Tool) -> None:
+    tool.needs_schema_review = candidate_needs_schema_review(
+        ToolCandidate(
+            operation_key=tool.operation_key,
+            name=tool.name,
+            description=tool.description or tool.operation_key,
+            input_schema=effective_input_schema(db, tool),
+            execution_schema=tool.execution_schema,
+        )
     )
 
 
@@ -402,7 +415,7 @@ async def _refresh_source_document(
         raise ApiError(422, "tools.openapi_unsupported", reason=str(exc)) from exc
 
     existing = {
-        tool.name: tool
+        tool.operation_key: tool
         for tool in context.db.scalars(
             select(Tool).where(
                 Tool.api_source_id == source.id,
@@ -412,7 +425,7 @@ async def _refresh_source_document(
     }
     created = updated = unchanged = 0
     for candidate in candidates:
-        tool = existing.get(candidate.name)
+        tool = existing.get(candidate.operation_key)
         if tool is None:
             context.db.add(
                 Tool(
@@ -427,14 +440,16 @@ async def _refresh_source_document(
             )
             created += 1
             continue
-        parameters_changed = (
-            tool.input_schema != candidate.input_schema
+        tool_changed = (
+            tool.name != candidate.name
+            or tool.description != candidate.description
+            or tool.input_schema != candidate.input_schema
             or tool.execution_schema != candidate.execution_schema
         )
-        if not parameters_changed:
+        if not tool_changed:
             unchanged += 1
             continue
-        tool.operation_key = candidate.operation_key
+        tool.name = candidate.name
         tool.description = candidate.description
         tool.input_schema = candidate.input_schema
         reconcile_parameter_overrides(context.db, tool)
@@ -522,11 +537,14 @@ def delete_source(
 @router.get("/tools", response_model=list[ToolSummary])
 def list_tools(
     enabled: bool | None = Query(default=None),
+    source_id: int | None = Query(default=None, gt=0),
     context: AdminContext = Depends(require_admin),
 ) -> list[ToolSummary]:
     statement = select(Tool).where(Tool.deleted_at.is_(None))
     if enabled is not None:
         statement = statement.where(Tool.enabled.is_(enabled))
+    if source_id is not None:
+        statement = statement.where(Tool.api_source_id == source_id)
     tools = context.db.scalars(statement.order_by(Tool.id)).all()
     source_ids = {tool.api_source_id for tool in tools}
     source_specs = {
@@ -603,6 +621,7 @@ def update_tool(
     tool = _managed_tool(context, tool_id)
     description = payload.description.strip() if payload.description else ""
     tool.description = description or None
+    _refresh_tool_schema_review(context.db, tool)
     context.db.commit()
     source = context.db.get(ApiSource, tool.api_source_id)
     spec = json.loads(source.spec_snapshot) if source is not None else None
@@ -641,6 +660,7 @@ def update_tool_parameter(
             context.db.add(override)
         override.description = payload.description
         override.example = payload.example
+    _refresh_tool_schema_review(context.db, tool)
     context.db.commit()
     source = context.db.get(ApiSource, tool.api_source_id)
     spec = json.loads(source.spec_snapshot) if source is not None else None

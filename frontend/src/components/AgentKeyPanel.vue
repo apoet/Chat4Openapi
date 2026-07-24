@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 
 import type { AgentApiKey } from '../api/contracts'
 import { useAgentsStore } from '../stores/agents'
+import { confirmDestructiveAction } from '../ui/confirmDestructiveAction'
 
 const props = defineProps<{ agentId: number }>()
 const emit = defineEmits<{
@@ -133,6 +134,15 @@ async function revoke(key: AgentApiKey): Promise<void> {
 }
 
 async function remove(key: AgentApiKey): Promise<void> {
+  const confirmed = await confirmDestructiveAction({
+    title: t('confirmations.dialog.deleteTitle', { item: t('confirmations.dialog.items.key') }),
+    message: t('confirmations.deleteKey', { name: key.label }),
+    subject: key.label,
+    warning: t('confirmations.dialog.irreversible'),
+    confirmLabel: t('confirmations.dialog.deleteAction', { item: t('confirmations.dialog.items.key') }),
+    cancelLabel: t('confirmations.dialog.cancel'),
+  })
+  if (!confirmed) return
   const agentId = props.agentId
   const generation = contextGeneration
   try { await store.deleteKey(agentId, key.id) } catch (error) {

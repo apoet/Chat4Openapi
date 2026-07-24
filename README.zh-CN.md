@@ -100,7 +100,7 @@ python -m pip install -r requirements.txt
 
 ```shell
 conda env create --solver libmamba -f environment.yml
-conda activate chat4openapi
+conda activate agent4api
 ```
 
 #### 2. 安装前端依赖并创建配置

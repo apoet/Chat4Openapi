@@ -7,7 +7,8 @@ from pydantic import ValidationError
 
 from chat4openapi.auto_agentify.catalog import (
     OperationCatalogItem,
-    catalog_batches,
+    catalog_analysis_domains,
+    catalog_prompt_chars,
     is_high_impact,
 )
 from chat4openapi.auto_agentify.progress import ProgressEvent
@@ -77,6 +78,91 @@ CAPABILITY_SHAPE = {
 }
 
 FORBIDDEN_CAPABILITY_TERMS = {
+    "order_query": (
+        "order query",
+        "order lookup",
+        "订单查询",
+        "查询订单",
+    ),
+    "order_fulfillment": (
+        "order fulfillment",
+        "fulfill order",
+        "订单履约",
+        "订单处理",
+    ),
+    "public_services": (
+        "public service",
+        "citizen service",
+        "公共服务",
+        "政务服务",
+    ),
+    "intelligent_customer_service": (
+        "intelligent customer service",
+        "customer support assistant",
+        "smart customer service",
+        "智能客服",
+        "客服助手",
+    ),
+    "information_search": (
+        "information search",
+        "information lookup",
+        "信息查询",
+        "信息检索",
+    ),
+    "reporting_analytics": (
+        "reporting and analytics",
+        "business report",
+        "报表分析",
+        "统计分析",
+    ),
+    "appointment_booking": (
+        "appointment booking",
+        "reservation management",
+        "预约预订",
+        "预约管理",
+    ),
+    "application_approval": (
+        "application approval",
+        "approval workflow",
+        "申请审批",
+        "审批流程",
+    ),
+    "case_ticket_management": (
+        "case management",
+        "ticket management",
+        "工单处理",
+        "工单管理",
+    ),
+    "customer_management": (
+        "customer management",
+        "customer profile",
+        "客户管理",
+        "客户档案",
+    ),
+    "product_service_catalog": (
+        "product catalog",
+        "service catalog",
+        "产品服务",
+        "商品目录",
+    ),
+    "billing_payments": (
+        "billing and payments",
+        "invoice payment",
+        "账单支付",
+        "支付管理",
+    ),
+    "logistics_tracking": (
+        "logistics tracking",
+        "shipment tracking",
+        "物流跟踪",
+        "物流查询",
+    ),
+    "task_collaboration": (
+        "task collaboration",
+        "work collaboration",
+        "任务协作",
+        "协同工作",
+    ),
     "system_configuration": (
         "system configuration",
         "system settings",
@@ -272,6 +358,20 @@ class AutoAgentifyPlanner:
             custom_capability_labels,
             result_language,
         )
+        if len(catalog_analysis_domains(catalog)) > 1:
+            capabilities = await self._consolidate_capabilities(
+                provider_type,
+                base_url,
+                api_key,
+                model,
+                catalog,
+                capabilities,
+                reporter,
+                source_name,
+                allowed_system_capabilities,
+                custom_capability_labels,
+                result_language,
+            )
         await _emit(
             reporter,
             ProgressEvent(
@@ -427,7 +527,27 @@ class AutoAgentifyPlanner:
         result_language: str,
     ) -> list[CapabilitySummary]:
         summaries: list[CapabilitySummary] = []
-        batches = catalog_batches(catalog)
+        batches = catalog_analysis_domains(catalog)
+        strategy = "holistic" if len(batches) == 1 else "domain_groups"
+        await _emit(
+            reporter,
+            ProgressEvent(
+                kind="analysis_strategy_selected",
+                phase="analyzing_capabilities",
+                progress=23,
+                message_key="autoAgentify.events.analysisStrategySelected",
+                params={
+                    "mode": strategy,
+                    "operation_count": len(catalog),
+                    "domain_count": len(batches),
+                    "estimated_chars": catalog_prompt_chars(catalog),
+                },
+                metrics={
+                    "analysis_mode": strategy,
+                    "analysis_domain_count": len(batches),
+                },
+            ),
+        )
         guidance = _capability_guidance(
             source_name,
             allowed_system_capabilities,
@@ -447,6 +567,8 @@ class AutoAgentifyPlanner:
                         "batch": index,
                         "total": len(batches),
                         "operation_count": len(batch),
+                        "domain": _domain_label(batch),
+                        "mode": strategy,
                     },
                 ),
             )
@@ -600,6 +722,122 @@ class AutoAgentifyPlanner:
             )
         return summaries
 
+    async def _consolidate_capabilities(
+        self,
+        provider_type: str,
+        base_url: str,
+        api_key: str,
+        model: str,
+        catalog: list[OperationCatalogItem],
+        capabilities: list[CapabilitySummary],
+        reporter: Any | None,
+        source_name: str,
+        allowed_system_capabilities: list[str] | tuple[str, ...],
+        custom_capability_labels: list[str] | tuple[str, ...],
+        result_language: str,
+    ) -> list[CapabilitySummary]:
+        input_count = len(capabilities)
+        await _emit(
+            reporter,
+            ProgressEvent(
+                kind="capability_consolidation_started",
+                phase="analyzing_capabilities",
+                progress=56,
+                message_key="autoAgentify.events.capabilityConsolidationStarted",
+                params={
+                    "input_count": input_count,
+                    "domain_count": len(catalog_analysis_domains(catalog)),
+                },
+            ),
+        )
+        compact_catalog = [
+            {
+                "operation_key": item.operation_key,
+                "name": item.name,
+                "tags": item.tags,
+                "summary": item.summary,
+            }
+            for item in catalog
+        ]
+        prompt = (
+            "Globally consolidate these business capabilities across API domains. "
+            "Return one JSON object only. Merge duplicates, reconstruct cross-domain "
+            "end-to-end workflows, and keep distinct capabilities separate. Preserve "
+            "only exact operation_keys from the compact catalog. Prefer a small set of "
+            "high-value capabilities over CRUD groupings.\n"
+            f"{_capability_guidance(source_name, allowed_system_capabilities, custom_capability_labels, result_language)}\n"
+            f"Required shape:\n{json.dumps(CAPABILITY_SHAPE, ensure_ascii=False)}\n"
+            f"Domain capability summaries:\n"
+            f"{json.dumps([item.model_dump() for item in capabilities], ensure_ascii=False)}\n"
+            f"Compact global catalog:\n"
+            f"{json.dumps(compact_catalog, ensure_ascii=False, separators=(',', ':'))}"
+        )
+        try:
+            content = await self._complete(
+                provider_type,
+                base_url,
+                api_key,
+                model,
+                prompt,
+                max_tokens=6_000,
+            )
+            parsed = CapabilityBatch.model_validate_json(_json_object(content))
+            parsed.validate_references(
+                {item.operation_key for item in catalog}
+            )
+            _validate_capability_language(parsed, result_language)
+            consolidated: list[CapabilitySummary] = []
+            for capability in parsed.capabilities:
+                if (
+                    _forbidden_capability_id(
+                        capability, allowed_system_capabilities
+                    )
+                    is not None
+                ):
+                    continue
+                capability.category = _normalize_capability_category(
+                    capability,
+                    allowed_system_capabilities,
+                    custom_capability_labels,
+                )
+                consolidated.append(capability)
+            if consolidated:
+                capabilities = consolidated
+        except (ValidationError, ValueError):
+            capabilities = _deduplicate_capabilities(capabilities)
+        output_count = len(capabilities)
+        for capability in capabilities:
+            await _emit(
+                reporter,
+                ProgressEvent(
+                    kind="capability_consolidated",
+                    phase="analyzing_capabilities",
+                    progress=59,
+                    message_key="autoAgentify.events.capabilityConsolidated",
+                    params={
+                        "name": capability.name,
+                        "operation_count": len(capability.operation_keys),
+                    },
+                    capability=capability.model_dump(),
+                ),
+            )
+        await _emit(
+            reporter,
+            ProgressEvent(
+                kind="capability_consolidation_completed",
+                phase="analyzing_capabilities",
+                progress=60,
+                message_key="autoAgentify.events.capabilityConsolidationCompleted",
+                params={
+                    "input_count": input_count,
+                    "output_count": output_count,
+                    "merged_count": max(0, input_count - output_count),
+                },
+                metrics={"capability_count": output_count},
+            ),
+        )
+        return capabilities
+
     @staticmethod
     def _plan_prompt(
         catalog: list[OperationCatalogItem],
@@ -706,6 +944,34 @@ class AutoAgentifyPlanner:
 async def _emit(reporter: Any | None, event: ProgressEvent) -> None:
     if reporter is not None:
         await reporter.emit(event)
+
+
+def _domain_label(items: list[OperationCatalogItem]) -> str:
+    tags = sorted({tag for item in items for tag in item.tags if tag})
+    if len(tags) == 1:
+        return tags[0][:160]
+    if tags:
+        return " / ".join(tags[:3])[:160]
+    paths = [item.path.strip("/").split("/", 1)[0] for item in items]
+    roots = sorted({path for path in paths if path})
+    return (" / ".join(roots[:3]) or "API")[:160]
+
+
+def _deduplicate_capabilities(
+    capabilities: list[CapabilitySummary],
+) -> list[CapabilitySummary]:
+    unique: list[CapabilitySummary] = []
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+    for capability in capabilities:
+        key = (
+            capability.name.strip().casefold(),
+            tuple(sorted(capability.operation_keys)),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(capability)
+    return unique
 
 
 def _validate_visible_language(text: str, result_language: str) -> None:

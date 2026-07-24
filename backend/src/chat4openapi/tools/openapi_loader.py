@@ -3,16 +3,63 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import yaml
-from openapi_spec_validator import validate
-from openapi_spec_validator.validation.exceptions import OpenAPIValidationError
 
 from chat4openapi.tools.openapi_v2 import convert_swagger_v2
 
 MAX_OPENAPI_BYTES = 5 * 1024 * 1024
+SCHEMA_TYPES = {"string", "number", "integer", "boolean", "array", "object"}
 
 
 class OpenAPIImportError(ValueError):
     pass
+
+
+def _sanitize_schema(schema: dict[str, Any]) -> None:
+    schema_type = schema.get("type")
+    if isinstance(schema_type, str) and schema_type not in SCHEMA_TYPES:
+        schema.pop("type")
+    elif isinstance(schema_type, list):
+        supported = [item for item in schema_type if item in SCHEMA_TYPES]
+        if len(supported) == 1:
+            schema["type"] = supported[0]
+        elif not supported:
+            schema.pop("type")
+
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        for value in properties.values():
+            if isinstance(value, dict):
+                _sanitize_schema(value)
+
+    for key in ("items", "additionalProperties", "not"):
+        value = schema.get(key)
+        if isinstance(value, dict):
+            _sanitize_schema(value)
+
+    for key in ("allOf", "anyOf", "oneOf", "prefixItems"):
+        value = schema.get(key)
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    _sanitize_schema(item)
+
+
+def _sanitize_nonstandard_schema_types(value: Any) -> None:
+    if isinstance(value, dict):
+        schema = value.get("schema")
+        if isinstance(schema, dict):
+            _sanitize_schema(schema)
+        for key in ("schemas", "definitions"):
+            schemas = value.get(key)
+            if isinstance(schemas, dict):
+                for item in schemas.values():
+                    if isinstance(item, dict):
+                        _sanitize_schema(item)
+        for item in value.values():
+            _sanitize_nonstandard_schema_types(item)
+    elif isinstance(value, list):
+        for item in value:
+            _sanitize_nonstandard_schema_types(item)
 
 
 def _supply_missing_parameter_schemas(document: dict[str, Any]) -> None:
@@ -79,13 +126,11 @@ def load_openapi(raw: bytes) -> dict[str, Any]:
         raise OpenAPIImportError("OpenAPI document must be an object")
     _sanitize_references(document)
     if str(document.get("swagger", "")).startswith("2."):
+        _sanitize_nonstandard_schema_types(document)
         return document
     if str(document.get("openapi", "")).startswith("3."):
         _supply_missing_parameter_schemas(document)
-    try:
-        validate(document)
-    except OpenAPIValidationError as exc:
-        raise OpenAPIImportError(f"Invalid OpenAPI document: {exc}") from exc
+        _sanitize_nonstandard_schema_types(document)
     return document
 
 
@@ -101,11 +146,18 @@ def normalize_openapi(
             if not source.get("host") and parsed_source_url.netloc:
                 source["host"] = parsed_source_url.netloc
         normalized = convert_swagger_v2(source)
-        try:
-            validate(normalized)
-        except OpenAPIValidationError as exc:
-            raise OpenAPIImportError(f"Unable to normalize Swagger document: {exc}") from exc
+        _sanitize_nonstandard_schema_types(normalized)
         return normalized
     if str(spec.get("openapi", "")).startswith("3."):
-        return deepcopy(spec)
+        normalized = deepcopy(spec)
+        if source_url and not normalized.get("servers"):
+            parsed_source_url = urlsplit(source_url)
+            if (
+                parsed_source_url.scheme in {"http", "https"}
+                and parsed_source_url.netloc
+            ):
+                normalized["servers"] = [
+                    {"url": f"{parsed_source_url.scheme}://{parsed_source_url.netloc}"}
+                ]
+        return normalized
     raise OpenAPIImportError("Only Swagger 2.0 and OpenAPI 3.x documents are supported")

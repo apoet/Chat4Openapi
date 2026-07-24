@@ -54,8 +54,11 @@ export const useToolsStore = defineStore('tools', () => {
     sources.value = await perform(() => request<ApiSourceSummary[]>('/api/admin/sources'))
   }
 
-  async function loadTools(): Promise<void> {
-    tools.value = await perform(() => request<ToolSummary[]>('/api/admin/tools'))
+  async function loadTools(sourceId?: number): Promise<void> {
+    const query = sourceId === undefined
+      ? ''
+      : `?source_id=${encodeURIComponent(sourceId)}`
+    tools.value = await perform(() => request<ToolSummary[]>(`/api/admin/tools${query}`))
   }
 
   async function loadAuthConfig(): Promise<void> {

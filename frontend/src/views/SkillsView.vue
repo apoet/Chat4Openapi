@@ -6,12 +6,14 @@ import type { SkillSummary } from '../api/contracts'
 import ToolCatalogPanel from '../components/ToolCatalogPanel.vue'
 import { type IndexedTool, useToolCatalog } from '../composables/useToolCatalog'
 import { useSkillsStore } from '../stores/skills'
+import { confirmDestructiveAction } from '../ui/confirmDestructiveAction'
 
 const store = useSkillsStore()
 const { t } = useI18n()
 const name = ref('')
 const description = ref('')
 const systemPrompt = ref('')
+const skillQuery = ref('')
 const selectedToolIds = ref<number[]>([])
 const promptInput = ref<HTMLTextAreaElement | null>(null)
 const editingId = ref<number | null>(null)
@@ -30,6 +32,18 @@ const mentionResult = computed(() => {
   return catalog.query({ query: mentionQuery.value, skillEligible: true }, 50)
 })
 const mentionTools = computed(() => mentionResult.value.tools)
+const filteredSkills = computed(() => {
+  const tokens = normalizeSearch(skillQuery.value).split(/\s+/).filter(Boolean)
+  if (!tokens.length) return store.skills
+  return store.skills.filter((skill) => {
+    const searchable = normalizeSearch([
+      skill.name,
+      skill.description ?? '',
+      skill.system_prompt,
+    ].join(' '))
+    return tokens.every((token) => searchable.includes(token))
+  })
+})
 
 onMounted(async () => {
   await Promise.all([store.loadTools(), store.loadSources(), store.loadSkills()])
@@ -37,6 +51,10 @@ onMounted(async () => {
 
 function canonicalReference(tool: IndexedTool): string {
   return `{{tool:${tool.name}}}`
+}
+
+function normalizeSearch(value: string): string {
+  return value.normalize('NFKC').toLocaleLowerCase()
 }
 
 function bindTool(tool: IndexedTool): void {
@@ -149,7 +167,15 @@ function resetEditor(): void {
 }
 
 async function remove(skill: SkillSummary): Promise<void> {
-  if (!window.confirm(t('confirmations.deleteSkill', { name: skill.name }))) return
+  const confirmed = await confirmDestructiveAction({
+    title: t('confirmations.dialog.deleteTitle', { item: t('confirmations.dialog.items.skill') }),
+    message: t('confirmations.deleteSkill', { name: skill.name }),
+    subject: skill.name,
+    warning: t('confirmations.dialog.irreversible'),
+    confirmLabel: t('confirmations.dialog.deleteAction', { item: t('confirmations.dialog.items.skill') }),
+    cancelLabel: t('confirmations.dialog.cancel'),
+  })
+  if (!confirmed) return
   await store.remove(skill)
   if (editingId.value === skill.id) resetEditor()
 }
@@ -178,7 +204,12 @@ async function remove(skill: SkillSummary): Promise<void> {
           <div class="row-actions editor-actions"><button class="primary-action" :disabled="!name || !systemPrompt" @click="save">{{ t('skills.save') }}</button><button v-if="editingId" class="secondary-action" @click="resetEditor">{{ t('skills.cancel') }}</button></div>
         </section>
         <section class="skill-list">
-          <article v-for="skill in store.skills" :key="skill.id" class="resource-row"><span class="resource-icon">SK</span><div><strong>{{ skill.name }}</strong><p>{{ skill.tools.length }} Tools</p></div><footer class="row-actions"><button class="secondary-action" @click="edit(skill)">{{ t('skills.edit') }}</button><button class="secondary-action" @click="store.setRunning(skill, !skill.running)">{{ skill.running ? t('skills.stop') : t('skills.start') }}</button><button class="danger-action" @click="remove(skill)">{{ t('tools.delete') }}</button></footer></article>
+          <div class="skill-list-search">
+            <label><span>{{ t('skills.search') }}</span><input v-model="skillQuery" type="search" :placeholder="t('skills.searchHint')" /></label>
+            <small>{{ t('skills.showing', { shown: filteredSkills.length, total: store.skills.length }) }}</small>
+          </div>
+          <article v-for="skill in filteredSkills" :key="skill.id" class="resource-row"><span class="resource-icon">SK</span><div><strong>{{ skill.name }}</strong><p>{{ skill.tools.length }} Tools</p></div><footer class="row-actions"><button class="secondary-action" @click="edit(skill)">{{ t('skills.edit') }}</button><button class="secondary-action" @click="store.setRunning(skill, !skill.running)">{{ skill.running ? t('skills.stop') : t('skills.start') }}</button><button class="danger-action" @click="remove(skill)">{{ t('tools.delete') }}</button></footer></article>
+          <p v-if="skillQuery.trim() && !filteredSkills.length" class="empty-inline">{{ t('skills.noMatches') }}</p>
         </section>
       </div>
       <ToolCatalogPanel v-model="selectedToolIds" :catalog="catalog" @reference="referenceTool" />

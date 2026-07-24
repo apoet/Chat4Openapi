@@ -55,7 +55,7 @@ export interface ApiSourceSummary {
   created_at: string
   auto_agentify_job?: {
     public_id: string
-    status: 'queued' | 'running' | 'completed' | 'failed'
+    status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
     phase: string
     progress: number
     updated_at: string
@@ -71,6 +71,7 @@ export interface ToolSummary {
   input_schema: Record<string, unknown>
   execution_schema: Record<string, unknown>
   tags: string[]
+  needs_schema_review: boolean
   enabled: boolean
 }
 
@@ -161,7 +162,7 @@ export interface AutoAgentifyJob {
   source_id: number | null
   input_mode: 'url' | 'file'
   source_name: string
-  status: 'queued' | 'running' | 'completed' | 'failed'
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
   phase: string
   progress: number
   metrics: Record<string, unknown>

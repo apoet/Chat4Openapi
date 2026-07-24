@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 
 import type { AgentEmbedConfig, AgentEmbedWrite } from '../api/contracts'
 import { useEmbedsStore } from '../stores/embeds'
+import { confirmDestructiveAction } from '../ui/confirmDestructiveAction'
 
 const props = defineProps<{ agentId: number }>()
 const store = useEmbedsStore()
@@ -79,6 +80,19 @@ function legacyCopy(value: string): boolean {
   }
 }
 
+async function remove(embed: AgentEmbedConfig): Promise<void> {
+  const confirmed = await confirmDestructiveAction({
+    title: t('confirmations.dialog.deleteTitle', { item: t('confirmations.dialog.items.embed') }),
+    message: t('confirmations.deleteEmbed', { name: embed.name }),
+    subject: embed.name,
+    warning: t('confirmations.dialog.irreversible'),
+    confirmLabel: t('confirmations.dialog.deleteAction', { item: t('confirmations.dialog.items.embed') }),
+    cancelLabel: t('confirmations.dialog.cancel'),
+  })
+  if (!confirmed) return
+  await store.remove(props.agentId, embed.id)
+}
+
 async function copy(embed: AgentEmbedConfig): Promise<void> {
   if (!embed.script) return
   copyFailedId.value = null
@@ -121,7 +135,7 @@ async function copy(embed: AgentEmbedConfig): Promise<void> {
           <button type="button" class="secondary-action" data-testid="copy-script" :disabled="!embed.script" @click="copy(embed)">{{ copiedId === embed.id ? t('embeds.copied') : t('embeds.copy') }}</button>
           <a v-if="embed.script" class="secondary-action" :href="`/embed/${embed.public_id}`" target="_blank" rel="noopener">{{ t('embeds.preview') }}</a>
           <button type="button" class="secondary-action" @click="toggle(embed)">{{ embed.enabled ? t('tools.disable') : t('tools.enable') }}</button>
-          <button type="button" class="danger-action" @click="store.remove(agentId, embed.id)">{{ t('tools.delete') }}</button>
+          <button type="button" class="danger-action" @click="remove(embed)">{{ t('tools.delete') }}</button>
         </footer>
         <p v-if="copyFailedId === embed.id" class="page-error" role="alert">{{ t('embeds.copyFailed') }}</p>
         <code v-if="copyFailedId === embed.id" data-testid="embed-script-fallback">{{ embed.script }}</code>

@@ -4,7 +4,7 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -20,7 +20,7 @@ from chat4openapi.schemas.auto_agentify import (
 )
 from chat4openapi.security.encryption import SecretCipher
 
-_tasks: set[asyncio.Task[None]] = set()
+_tasks: dict[int, asyncio.Task[None]] = {}
 
 
 def session_factory_for(db: Session) -> sessionmaker[Session]:
@@ -186,8 +186,58 @@ def schedule_auto_agentify_job(
             result_language=result_language,
         )
     )
-    _tasks.add(task)
-    task.add_done_callback(_tasks.discard)
+    _tasks[job_id] = task
+    task.add_done_callback(lambda completed: _discard_task(job_id, completed))
+
+
+def _discard_task(job_id: int, task: asyncio.Task[None]) -> None:
+    if _tasks.get(job_id) is task:
+        _tasks.pop(job_id, None)
+
+
+async def cancel_auto_agentify_job(
+    *,
+    factory: sessionmaker[Session],
+    job_id: int,
+) -> AutoAgentifyJob:
+    task = _tasks.get(job_id)
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    with factory() as db:
+        job = db.get(AutoAgentifyJob, job_id)
+        if job is None:
+            raise ApiError(404, "auto_agentify.job_not_found")
+        if job.status not in ("queued", "running"):
+            return job
+        last_sequence = db.scalar(
+            select(func.max(AutoAgentifyJobEvent.sequence)).where(
+                AutoAgentifyJobEvent.job_id == job.id
+            )
+        ) or 0
+        job.status = "cancelled"
+        job.phase = "cancelled"
+        job.error_code = None
+        job.error_params = None
+        job.completed_at = datetime.now(UTC).replace(tzinfo=None)
+        db.add(
+            AutoAgentifyJobEvent(
+                job_id=job.id,
+                sequence=last_sequence + 1,
+                kind="cancelled",
+                phase="cancelled",
+                progress=job.progress,
+                message_key="autoAgentify.events.cancelled",
+                params={},
+            )
+        )
+        db.commit()
+        db.refresh(job)
+        return job
 
 
 async def _run_job(
@@ -208,7 +258,7 @@ async def _run_job(
         reporter = JobProgressReporter(db, job.id)
         try:
             document = raw_document
-            if document is None:
+            if document is None and job.source_id is None:
                 try:
                     document = await _fetch_openapi_document(
                         job.source_url or "", job.allow_private_networks

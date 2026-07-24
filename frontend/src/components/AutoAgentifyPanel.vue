@@ -36,6 +36,7 @@ const emit = defineEmits<{
   generated: [result: AutoAgentifyResult]
   sourceImported: [source: ApiSourceSummary]
   started: [job: AutoAgentifyJob]
+  stopped: []
   close: []
 }>()
 const { t, locale } = useI18n()
@@ -45,6 +46,7 @@ const providerId = ref('')
 const activeSource = ref<ApiSourceSummary | null>(props.sourceRecord ?? null)
 const importingSource = ref(false)
 const importErrorCode = ref<string | null>(null)
+const importErrorParams = ref<Record<string, unknown>>({})
 const currentStep = ref<1 | 2 | 3 | 4>(1)
 const showActivityHistory = ref(false)
 const showAllBodySchemaIssues = ref(false)
@@ -52,29 +54,39 @@ const selectedSystemCapabilities = ref<string[]>([])
 const customCapabilityInput = ref('')
 const customCapabilityLabels = ref<string[]>([])
 const systemCapabilities = [
+  'order_query',
+  'order_fulfillment',
+  'public_services',
+  'intelligent_customer_service',
+  'information_search',
+  'reporting_analytics',
+  'appointment_booking',
+  'application_approval',
+  'case_ticket_management',
+  'customer_management',
+  'product_service_catalog',
+  'billing_payments',
+  'logistics_tracking',
+  'task_collaboration',
   'system_configuration',
   'user_permissions',
-  'organization_management',
   'file_management',
   'messaging_notifications',
-  'task_scheduling',
   'audit_compliance',
-  'reference_data',
-  'monitoring_operations',
-  'authentication_authorization',
   'sensitive_data_security',
-  'developer_tools',
-  'ai_platform',
 ] as const
 const {
   job,
   events,
   capabilities,
   starting,
+  stopping,
   active,
   errorCode,
+  errorParams,
   load,
   start,
+  stop,
 } = useAutoAgentifyJob()
 
 const sourceReady = computed(() => (
@@ -164,25 +176,79 @@ const failed = computed(
     || Boolean(importErrorCode.value)
     || Boolean(errorCode.value),
 )
+const stopped = computed(() => job.value?.status === 'cancelled')
 const submitLabel = computed(() => {
   if (importingSource.value) return t('autoAgentify.importingSource')
   if (starting.value) return t('autoAgentify.starting')
   if (active.value) return t('autoAgentify.running')
-  if (failed.value) return t('autoAgentify.retry')
+  if (failed.value || stopped.value) return t('autoAgentify.retry')
   return t('autoAgentify.confirm')
 })
 const failureMessage = computed(() => {
+  if (failureCode.value === 'auth.session_invalid') {
+    return t('error.auth.session_invalid')
+  }
+  if (failureCode.value === 'auto_agentify.source_tools_missing') {
+    return t('autoAgentify.sourceToolsMissing')
+  }
   const suffix = failureCode.value?.split('.').at(-1) ?? 'unknown'
   return t(`autoAgentify.errors.${suffix}`, t('autoAgentify.errors.unknown'))
 })
+const failureReason = computed(() => {
+  if (failureCode.value === 'auth.session_invalid') return null
+  const params = importErrorCode.value
+    ? importErrorParams.value
+    : (errorCode.value ? errorParams.value : (job.value?.error_params ?? {}))
+  return typeof params.reason === 'string' && params.reason.trim()
+    ? params.reason.trim()
+    : null
+})
+const showFailureCode = computed(() => failureCode.value !== 'auth.session_invalid')
 const currentStageDetail = computed(() => {
+  if (stopped.value) return t('autoAgentify.stopped')
   const event = currentEvent.value
   if (!event) return t('autoAgentify.events.queued')
+  if (event.kind === 'analysis_strategy_selected') {
+    return event.params.mode === 'holistic'
+      ? t('autoAgentify.analysisHolistic', {
+        operations: event.params.operation_count,
+      })
+      : t('autoAgentify.analysisDomainStrategy', {
+        operations: event.params.operation_count,
+        domains: event.params.domain_count,
+      })
+  }
   if (event.kind === 'capability_batch_started') {
+    if (event.params.mode === 'holistic') {
+      return t('autoAgentify.analysisHolisticRunning', {
+        operations: event.params.operation_count,
+      })
+    }
+    if (event.params.mode === 'domain_groups') {
+      return t('autoAgentify.analysisDomainRunning', {
+        domain: event.params.domain,
+        index: event.params.batch,
+        total: event.params.total,
+        operations: event.params.operation_count,
+      })
+    }
     return t('autoAgentify.batchScope', {
       batch: event.params.batch,
       total: event.params.total,
       operations: event.params.operation_count,
+    })
+  }
+  if (event.kind === 'capability_consolidation_started') {
+    return t('autoAgentify.analysisConsolidating', {
+      capabilities: event.params.input_count,
+      domains: event.params.domain_count,
+    })
+  }
+  if (event.kind === 'capability_consolidation_completed') {
+    return t('autoAgentify.analysisConsolidated', {
+      input: event.params.input_count,
+      output: event.params.output_count,
+      merged: event.params.merged_count,
     })
   }
   if (event.kind === 'operations_discovered') {
@@ -198,6 +264,26 @@ const currentActivityDetails = computed(() => {
     details.push({
       label: t('autoAgentify.activityBatch'),
       value: `${String(event.params.batch)} / ${String(event.params.total)}`,
+    })
+  }
+  if (event.params.domain) {
+    details.push({
+      label: t('autoAgentify.activityDomain'),
+      value: String(event.params.domain),
+    })
+  }
+  if (event.params.domain_count) {
+    details.push({
+      label: t('autoAgentify.activityDomains'),
+      value: String(event.params.domain_count),
+    })
+  }
+  if (event.params.estimated_chars) {
+    details.push({
+      label: t('autoAgentify.activityContextSize'),
+      value: new Intl.NumberFormat(resultLanguage.value).format(
+        Number(event.params.estimated_chars),
+      ),
     })
   }
   const operationCount = event.params.operation_count
@@ -251,7 +337,12 @@ watch(
   () => job.value?.status,
   (status) => {
     if (status === 'completed' && job.value?.result) currentStep.value = 4
-    else if (status === 'queued' || status === 'running' || status === 'failed') {
+    else if (
+      status === 'queued'
+      || status === 'running'
+      || status === 'failed'
+      || status === 'cancelled'
+    ) {
       currentStep.value = 3
     }
   },
@@ -286,6 +377,8 @@ function eventLabel(event: Pick<AutoAgentifyJobEvent, 'kind' | 'params'>): strin
   const labels: Record<string, string> = {
     queued: t('autoAgentify.events.queued'),
     document_loaded: t('autoAgentify.events.documentLoaded'),
+    source_tools_loaded: t('autoAgentify.sourceToolsLoaded'),
+    analysis_strategy_selected: t('autoAgentify.analysisStrategySelected'),
     openapi_validated: t('autoAgentify.events.openapiValidated'),
     operations_discovered: t('autoAgentify.events.operationsDiscovered'),
     capability_batch_started: t('autoAgentify.events.capabilityBatchStarted'),
@@ -296,6 +389,9 @@ function eventLabel(event: Pick<AutoAgentifyJobEvent, 'kind' | 'params'>): strin
     capability_filtered: t('autoAgentify.events.capabilityFiltered'),
     capability_discovered: t('autoAgentify.events.capabilityDiscovered'),
     capability_batch_completed: t('autoAgentify.events.capabilityBatchCompleted'),
+    capability_consolidation_started: t('autoAgentify.analysisConsolidationStarted'),
+    capability_consolidated: t('autoAgentify.capabilityConsolidated'),
+    capability_consolidation_completed: t('autoAgentify.analysisConsolidationCompleted'),
     body_schema_warning: t('autoAgentify.events.bodySchemaWarning'),
     plan_synthesis_started: t('autoAgentify.events.planSynthesisStarted'),
     plan_correction_started: t('autoAgentify.events.planCorrectionStarted'),
@@ -334,6 +430,7 @@ function removeCustomCapability(label: string): void {
 async function runGeneration(): Promise<void> {
   currentStep.value = 3
   importErrorCode.value = null
+  importErrorParams.value = {}
   if (!activeSource.value) {
     importingSource.value = true
     try {
@@ -353,6 +450,7 @@ async function runGeneration(): Promise<void> {
       emit('sourceImported', activeSource.value)
     } catch (error) {
       importErrorCode.value = error instanceof ApiError ? error.code : 'unknown'
+      importErrorParams.value = error instanceof ApiError ? error.params : {}
       return
     } finally {
       importingSource.value = false
@@ -364,6 +462,11 @@ async function runGeneration(): Promise<void> {
     resultLanguage: resultLanguage.value,
   })
   if (job.value) emit('started', job.value)
+}
+
+async function stopGeneration(): Promise<void> {
+  await stop()
+  emit('stopped')
 }
 
 function continueToScope(): void {
@@ -509,7 +612,12 @@ function continueToScope(): void {
               <span>5%</span>
             </div>
             <div data-testid="auto-current-stage" class="current-activity">
-              <div class="activity-orbit" aria-hidden="true"><Loading /></div>
+              <div class="activity-orbit is-loading" aria-hidden="true">
+                <Loading
+                  class="analysis-loading-icon"
+                  data-testid="auto-analysis-loading"
+                />
+              </div>
               <div class="activity-copy">
                 <small>{{ t('autoAgentify.currentActivity') }}</small>
                 <strong>{{ t('autoAgentify.importingSourceDetail') }}</strong>
@@ -527,8 +635,12 @@ function continueToScope(): void {
               <span>{{ job.progress }}%</span>
             </div>
             <div data-testid="auto-current-stage" class="current-activity">
-              <div class="activity-orbit" aria-hidden="true">
-                <Loading v-if="active" />
+              <div class="activity-orbit" :class="{ 'is-loading': active }" aria-hidden="true">
+                <Loading
+                  v-if="active"
+                  class="analysis-loading-icon"
+                  data-testid="auto-analysis-loading"
+                />
                 <Clock v-else />
               </div>
               <div class="activity-copy">
@@ -574,7 +686,8 @@ function continueToScope(): void {
             <div v-if="failureCode" data-testid="auto-error" class="auto-error-panel" role="alert">
               <strong>{{ t('autoAgentify.failedTitle') }}</strong>
               <p>{{ failureMessage }}</p>
-              <small>{{ failureCode }}</small>
+              <p v-if="failureReason" class="auto-error-reason">{{ failureReason }}</p>
+              <small v-if="showFailureCode">{{ failureCode }}</small>
             </div>
 
             <div v-if="activityHistory.length" class="event-section">
@@ -595,16 +708,29 @@ function continueToScope(): void {
             </div>
           </section>
 
+          <div v-if="currentStep === 3 && active" class="wizard-actions">
+            <button
+              data-testid="auto-stop"
+              type="button"
+              class="danger-action"
+              :disabled="stopping"
+              @click="stopGeneration"
+            >
+              {{ stopping ? t('autoAgentify.stopping') : t('autoAgentify.stop') }}
+            </button>
+          </div>
+
           <div v-if="currentStep === 3 && failureCode && !job" data-testid="auto-error" class="auto-error-panel" role="alert">
             <strong>{{ t('autoAgentify.failedTitle') }}</strong>
             <p>{{ failureMessage }}</p>
-            <small>{{ failureCode }}</small>
+            <p v-if="failureReason" class="auto-error-reason">{{ failureReason }}</p>
+            <small v-if="showFailureCode">{{ failureCode }}</small>
           </div>
 
           <div v-if="currentStep === 3 && job?.result" class="wizard-actions">
             <button type="button" class="primary-action" @click="currentStep = 4">{{ t('autoAgentifyWizard.viewResults') }}</button>
           </div>
-          <div v-if="currentStep === 3 && failed" class="wizard-actions split">
+          <div v-if="currentStep === 3 && (failed || stopped)" class="wizard-actions split">
             <button type="button" class="secondary-action" @click="currentStep = 2">{{ t('autoAgentifyWizard.adjust') }}</button>
             <button data-testid="auto-submit" class="primary-action" :disabled="!ready" @click="runGeneration">{{ submitLabel }}</button>
           </div>
@@ -639,22 +765,58 @@ function continueToScope(): void {
             </div>
 
             <div v-if="job?.result" class="auto-result" data-testid="auto-result">
-              <div class="result-summary">
-                <strong>{{ t('autoAgentify.resultTitle') }}</strong>
-                <p>{{ t('autoAgentify.counts', { tools: job.result.enabled_tool_count, imported: job.result.imported_tool_count, skills: job.result.skills.length, agents: job.result.agents.length }) }}</p>
+              <div class="result-hero">
+                <span class="result-hero-icon"><MagicStick aria-hidden="true" /></span>
+                <div class="result-summary">
+                  <strong>{{ t('autoAgentify.resultTitle') }}</strong>
+                  <p>{{ t('autoAgentify.counts', { tools: job.result.enabled_tool_count, imported: job.result.imported_tool_count, skills: job.result.skills.length, agents: job.result.agents.length }) }}</p>
+                </div>
+                <div class="result-actions">
+                  <RouterLink class="secondary-action" to="/admin/skills">{{ t('autoAgentify.reviewSkills') }}</RouterLink>
+                  <RouterLink class="secondary-action" to="/admin/agent">{{ t('autoAgentify.reviewAgents') }}</RouterLink>
+                </div>
               </div>
-              <div class="result-actions">
-                <RouterLink class="secondary-action" to="/admin/skills">{{ t('autoAgentify.reviewSkills') }}</RouterLink>
-                <RouterLink class="secondary-action" to="/admin/agent">{{ t('autoAgentify.reviewAgents') }}</RouterLink>
+              <div class="result-metrics">
+                <div><strong>{{ job.result.enabled_tool_count }}<small>/{{ job.result.imported_tool_count }}</small></strong><span>{{ t('autoAgentify.enabledTools') }}</span></div>
+                <div><strong>{{ job.result.skills.length }}</strong><span>{{ t('autoAgentify.skills') }}</span></div>
+                <div><strong>{{ job.result.agents.length }}</strong><span>{{ t('autoAgentify.agents') }}</span></div>
               </div>
               <div class="auto-result-grid">
-                <section><h4>{{ t('autoAgentify.skills') }}</h4><article v-for="skill in job.result.skills" :key="skill.id" class="auto-result-card"><strong>{{ skill.name }}</strong><p>{{ skill.description }}</p><p>{{ skill.value }}</p></article></section>
-                <section><h4>{{ t('autoAgentify.agents') }}</h4><article v-for="agent in job.result.agents" :key="agent.id" class="auto-result-card"><strong>{{ agent.name }}</strong><p>{{ agent.description }}</p><p>{{ agent.value }}</p><ul><li v-for="useCase in agent.use_cases" :key="useCase">{{ useCase }}</li></ul></article></section>
+                <section class="result-column">
+                  <header><span>S</span><h4>{{ t('autoAgentify.skills') }}</h4><small>{{ job.result.skills.length }}</small></header>
+                  <article v-for="(skill, index) in job.result.skills" :key="skill.id" class="auto-result-card skill-result-card">
+                    <div class="result-card-title"><span>{{ String(index + 1).padStart(2, '0') }}</span><strong>{{ skill.name }}</strong></div>
+                    <p class="result-card-value">{{ skill.value }}</p>
+                    <p class="result-card-description">{{ skill.description }}</p>
+                  </article>
+                </section>
+                <section class="result-column">
+                  <header><span>A</span><h4>{{ t('autoAgentify.agents') }}</h4><small>{{ job.result.agents.length }}</small></header>
+                  <article v-for="(agent, index) in job.result.agents" :key="agent.id" class="auto-result-card agent-result-card">
+                    <div class="result-card-title"><span>{{ String(index + 1).padStart(2, '0') }}</span><strong>{{ agent.name }}</strong></div>
+                    <p class="result-card-value">{{ agent.value }}</p>
+                    <p class="result-card-description">{{ agent.description }}</p>
+                    <div v-if="agent.use_cases.length" class="result-use-cases">
+                      <strong>{{ t('autoAgentify.useCases') }}</strong>
+                      <ul><li v-for="useCase in agent.use_cases" :key="useCase">{{ useCase }}</li></ul>
+                    </div>
+                  </article>
+                </section>
               </div>
             </div>
             <div class="wizard-actions split result-footer">
-              <button type="button" class="secondary-action" @click="currentStep = 3">{{ t('autoAgentifyWizard.reviewAnalysis') }}</button>
-              <button type="button" class="secondary-action" @click="currentStep = 2">{{ t('autoAgentifyWizard.generateAgain') }}</button>
+              <div class="result-footer-left" data-testid="result-footer-left">
+                <button type="button" class="secondary-action" @click="currentStep = 3">{{ t('autoAgentifyWizard.reviewAnalysis') }}</button>
+                <button type="button" class="secondary-action" @click="currentStep = 2">{{ t('autoAgentifyWizard.generateAgain') }}</button>
+              </div>
+              <button
+                data-testid="auto-complete"
+                type="button"
+                class="primary-action"
+                @click="emit('close')"
+              >
+                {{ t('autoAgentifyWizard.complete') }}
+              </button>
             </div>
           </section>
         </div>
@@ -689,6 +851,7 @@ function continueToScope(): void {
 .wizard-actions.split { justify-content: space-between; }
 .wizard-actions .primary-action { margin: 0; }
 .result-footer { margin-top: 4px; padding-top: 14px; border-top: 1px solid #e6e2da; }
+.result-footer-left { display: flex; flex-wrap: wrap; gap: 9px; }
 .modal-close { width: 36px; height: 36px; flex: 0 0 auto; display: grid; place-items: center; padding: 0; border: 0; border-radius: 9px; color: #727987; background: transparent; }
 .modal-close:hover { color: var(--ink); background: #f3f1ec; }
 .modal-close:focus-visible { outline: 3px solid rgba(101,88,232,.2); outline-offset: 1px; }
@@ -740,7 +903,8 @@ progress::-moz-progress-bar { border-radius: 99px; background: linear-gradient(9
 .current-activity { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 13px; padding: 14px; border: 1px solid rgba(115,102,220,.2); border-radius: 12px; background: rgba(255,255,255,.76); box-shadow: 0 8px 24px rgba(69,57,155,.08); backdrop-filter: blur(8px); }
 .activity-orbit { width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid #dcd6ff; border-radius: 50%; color: #6558e8; background: #f0edff; box-shadow: 0 0 0 5px rgba(101,88,232,.06); }
 .activity-orbit svg { width: 18px; height: 18px; }
-.analysis-process .activity-orbit svg.el-icon-loading { animation: activity-spin 1.3s linear infinite; }
+.analysis-process .activity-orbit.is-loading { animation: activity-pulse 1.6s ease-in-out infinite; }
+.analysis-process .analysis-loading-icon { animation: activity-spin 1s linear infinite; }
 .activity-copy { min-width: 0; display: grid; gap: 4px; }
 .activity-copy > small { color: #777f8d; font-size: 11px; font-weight: 750; }
 .activity-copy > strong { color: #343b4a; font-size: 14px; line-height: 1.45; }
@@ -748,6 +912,10 @@ progress::-moz-progress-bar { border-radius: 99px; background: linear-gradient(9
 .activity-details > span { display: inline-flex; align-items: baseline; gap: 5px; padding: 4px 7px; border-radius: 7px; color: #454d5d; background: #f2f1f7; font-size: 11px; font-weight: 750; }
 .activity-details small { color: #7a8190; font-size: 10px; font-weight: 650; }
 @keyframes activity-spin { to { transform: rotate(360deg); } }
+@keyframes activity-pulse {
+  0%, 100% { box-shadow: 0 0 0 5px rgba(101,88,232,.06); }
+  50% { box-shadow: 0 0 0 9px rgba(101,88,232,.14); }
+}
 .body-schema-warning { display: grid; gap: 10px; padding: 13px; border: 1px solid #e8c77c; border-radius: 11px; color: #694d12; background: #fff9e9; }
 .schema-warning-heading { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 9px; }
 .schema-warning-heading > svg { width: 18px; height: 18px; margin-top: 1px; color: #c18212; }
@@ -789,12 +957,35 @@ progress::-moz-progress-bar { border-radius: 99px; background: linear-gradient(9
 .event-list:empty { display: none; }
 .event-list li { justify-content: space-between; gap: 12px; color: #5f6674; font-size: 12px; }
 .event-list small { color: #626b7b; }
-.auto-result { padding-top: 14px; border-top: 1px solid #e1ddd4; }
-.result-summary p { margin: 5px 0 0; color: #646c7b; font-size: 13px; }
-.result-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.auto-result { display: grid; gap: 14px; padding-top: 16px; border-top: 1px solid #e1ddd4; }
+.result-hero { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 14px; border: 1px solid #ddd8fb; border-radius: 13px; background: linear-gradient(135deg, #f4f1ff 0%, #fbfaff 58%, #fff 100%); }
+.result-hero-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; color: #fff; background: linear-gradient(145deg, #6558e8, #8b80f1); box-shadow: 0 7px 18px rgba(89,76,211,.24); }
+.result-hero-icon svg { width: 20px; height: 20px; }
+.result-summary { min-width: 0; }
+.result-summary > strong { color: #312b77; font-size: 15px; }
+.result-summary p { margin: 4px 0 0; color: #646c7b; font-size: 12px; line-height: 1.45; }
+.result-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .result-actions a { display: inline-flex; align-items: center; text-decoration: none; }
-.auto-result-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.auto-result-card { margin-top: 8px; padding: 12px; border: 1px solid #e1ddd4; border-radius: 10px; }
+.result-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.result-metrics > div { min-width: 0; display: grid; gap: 2px; padding: 11px 13px; border: 1px solid #e6e2da; border-radius: 11px; background: #faf9f6; }
+.result-metrics strong { color: #373e4d; font-size: 20px; line-height: 1.1; }
+.result-metrics strong small { color: #8b91a0; font-size: 12px; }
+.result-metrics span { overflow: hidden; color: #747b89; font-size: 10px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.auto-result-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 14px; }
+.result-column { min-width: 0; display: grid; gap: 9px; }
+.result-column > header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 0 2px; }
+.result-column > header > span { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 7px; color: #554abd; background: #ece9ff; font-size: 11px; font-weight: 900; }
+.result-column > header h4 { margin: 0; color: #3d4452; font-size: 13px; }
+.result-column > header small { min-width: 24px; height: 22px; display: grid; place-items: center; border-radius: 99px; color: #696f7b; background: #f0eee9; font-size: 10px; font-weight: 800; }
+.auto-result-card { min-width: 0; padding: 13px; border: 1px solid #e2ded6; border-radius: 11px; background: #fff; box-shadow: 0 3px 10px rgba(31,35,48,.035); }
+.result-card-title { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; }
+.result-card-title > span { color: #9188df; font-size: 10px; font-weight: 850; letter-spacing: .08em; }
+.result-card-title > strong { overflow-wrap: anywhere; color: #343b49; font-size: 13px; }
+.result-card-value { margin: 10px 0 0; padding: 8px 9px; border-left: 3px solid #8b80ea; border-radius: 0 7px 7px 0; color: #4d45a1; background: #f5f3ff; font-size: 11px; font-weight: 700; line-height: 1.5; }
+.result-card-description { margin: 9px 0 0; color: #646c7b; font-size: 11px; line-height: 1.55; }
+.result-use-cases { margin-top: 10px; padding-top: 9px; border-top: 1px dashed #e2ded6; }
+.result-use-cases > strong { color: #737987; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+.result-use-cases ul { display: grid; gap: 4px; margin: 6px 0 0; padding-left: 17px; color: #555d6c; font-size: 11px; line-height: 1.45; }
 @media (max-width: 760px) {
   .auto-agentify-backdrop { padding: 12px; }
   .auto-agentify-modal { max-height: calc(100vh - 24px); }
@@ -803,10 +994,14 @@ progress::-moz-progress-bar { border-radius: 99px; background: linear-gradient(9
   .wizard-steps small { font-size: 9px; }
   .wizard-context { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .auto-result-grid { grid-template-columns: 1fr; }
+  .result-hero { grid-template-columns: auto minmax(0, 1fr); }
+  .result-actions { grid-column: 1 / -1; justify-content: stretch; }
+  .result-actions a { flex: 1; justify-content: center; }
   .current-activity { grid-template-columns: 1fr; }
   .custom-capability-entry > div { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .analysis-process .activity-orbit svg.el-icon-loading { animation: none; }
+  .analysis-process .activity-orbit.is-loading,
+  .analysis-process .analysis-loading-icon { animation: none; }
 }
 </style>

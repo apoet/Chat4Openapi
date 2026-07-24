@@ -12,6 +12,7 @@ from chat4openapi.api.errors import ApiError
 from chat4openapi.api.tool_sessions import get_tool_secret_cipher
 from chat4openapi.auto_agentify.planner import AutoAgentifyPlanner
 from chat4openapi.auto_agentify.jobs import (
+    cancel_auto_agentify_job,
     create_job,
     event_response,
     job_response,
@@ -25,6 +26,7 @@ from chat4openapi.models import (
     ApiSource,
     AutoAgentifyJob,
     AutoAgentifyJobEvent,
+    Tool,
 )
 from chat4openapi.schemas.auto_agentify import (
     AutoAgentifyJobResponse,
@@ -162,7 +164,7 @@ def get_latest_job(
     response_model=AutoAgentifyJobResponse,
     status_code=202,
 )
-def create_source_job(
+async def create_source_job(
     source_id: int,
     payload: AutoAgentifySourceJobRequest,
     context: AdminContext = Depends(require_csrf),
@@ -172,8 +174,16 @@ def create_source_job(
     source = context.db.get(ApiSource, source_id)
     if source is None or source.deleted_at is not None:
         raise ApiError(404, "tools.source_not_found")
-    if not source.spec_snapshot:
-        raise ApiError(409, "auto_agentify.source_document_missing")
+    tool_id = context.db.scalar(
+        select(Tool.id)
+        .where(
+            Tool.api_source_id == source.id,
+            Tool.deleted_at.is_(None),
+        )
+        .limit(1)
+    )
+    if tool_id is None:
+        raise ApiError(409, "auto_agentify.source_tools_missing")
     factory = session_factory_for(context.db)
     job, created = create_job(
         context.db,
@@ -193,7 +203,7 @@ def create_source_job(
         schedule_auto_agentify_job(
             factory=factory,
             job_id=job.id,
-            raw_document=source.spec_snapshot.encode("utf-8"),
+            raw_document=None,
             planner=planner,
             cipher=cipher,
             allowed_system_capabilities=payload.allowed_system_capabilities,
@@ -201,6 +211,22 @@ def create_source_job(
             result_language=payload.result_language,
         )
     return job_response(job)
+
+
+@router.post(
+    "/jobs/{public_id}/cancel",
+    response_model=AutoAgentifyJobResponse,
+)
+async def cancel_job(
+    public_id: str,
+    context: AdminContext = Depends(require_csrf),
+) -> AutoAgentifyJobResponse:
+    job = owned_job(context.db, context.admin.id, public_id)
+    cancelled = await cancel_auto_agentify_job(
+        factory=session_factory_for(context.db),
+        job_id=job.id,
+    )
+    return job_response(cancelled)
 
 
 @router.get("/jobs/{public_id}", response_model=AutoAgentifyJobResponse)
@@ -243,7 +269,11 @@ def stream_job_events(
                     cursor = row.sequence
                     payload = event_response(row).model_dump(mode="json")
                     yield f"id: {row.sequence}\ndata: {json.dumps(payload, separators=(',', ':'))}\n\n"
-                terminal = current is None or current.status in ("completed", "failed")
+                terminal = current is None or current.status in (
+                    "completed",
+                    "failed",
+                    "cancelled",
+                )
             if terminal:
                 break
             if await request.is_disconnected():

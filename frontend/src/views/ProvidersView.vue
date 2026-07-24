@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { request } from '../api/client'
 import type { LlmProviderSummary } from '../api/contracts'
 import { useAuthStore } from '../stores/auth'
+import { confirmDestructiveAction } from '../ui/confirmDestructiveAction'
 
 const { t } = useI18n()
 const auth = useAuthStore()
@@ -82,6 +83,15 @@ async function setEnabled(provider: LlmProviderSummary): Promise<void> {
 }
 
 async function remove(provider: LlmProviderSummary): Promise<void> {
+  const confirmed = await confirmDestructiveAction({
+    title: t('confirmations.dialog.deleteTitle', { item: t('confirmations.dialog.items.provider') }),
+    message: t('confirmations.deleteProvider', { name: provider.name }),
+    subject: provider.name,
+    warning: t('confirmations.dialog.irreversible'),
+    confirmLabel: t('confirmations.dialog.deleteAction', { item: t('confirmations.dialog.items.provider') }),
+    cancelLabel: t('confirmations.dialog.cancel'),
+  })
+  if (!confirmed) return
   await request(`/api/admin/providers/${provider.id}`, { method: 'DELETE' }, auth.csrfToken)
   if (editingId.value === provider.id) resetForm()
   await load()

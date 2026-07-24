@@ -29,7 +29,9 @@ export function useAutoAgentifyJob() {
   const events = ref<AutoAgentifyJobEvent[]>([])
   const capabilities = ref<AutoAgentifyCapability[]>([])
   const starting = ref(false)
+  const stopping = ref(false)
   const errorCode = ref<string | null>(null)
+  const errorParams = ref<Record<string, unknown>>({})
   let stream: EventSource | null = null
   let lastSequence = 0
 
@@ -45,13 +47,20 @@ export function useAutoAgentifyJob() {
       job.value.phase = event.phase
       job.value.progress = event.progress
     }
+    if (event.kind === 'capability_consolidation_started') {
+      capabilities.value = []
+    }
     if (
       event.capability
       && !capabilities.value.some((item) => item.name === event.capability?.name)
     ) {
       capabilities.value.push(event.capability)
     }
-    if (event.kind === 'completed' || event.kind === 'failed') {
+    if (
+      event.kind === 'completed'
+      || event.kind === 'failed'
+      || event.kind === 'cancelled'
+    ) {
       stream?.close()
       void refreshUntilTerminal()
     }
@@ -76,7 +85,11 @@ export function useAutoAgentifyJob() {
         `/api/admin/auto-agentify/jobs/${encodeURIComponent(publicId)}`,
       )
       job.value = current
-      if (current.status === 'completed' || current.status === 'failed') return
+      if (
+        current.status === 'completed'
+        || current.status === 'failed'
+        || current.status === 'cancelled'
+      ) return
       await new Promise((resolve) => window.setTimeout(resolve, 100))
     }
   }
@@ -88,6 +101,7 @@ export function useAutoAgentifyJob() {
     events.value = []
     capabilities.value = []
     errorCode.value = null
+    errorParams.value = {}
     lastSequence = 0
   }
 
@@ -109,6 +123,7 @@ export function useAutoAgentifyJob() {
   ): Promise<void> {
     starting.value = true
     errorCode.value = null
+    errorParams.value = {}
     events.value = []
     capabilities.value = []
     lastSequence = 0
@@ -129,8 +144,29 @@ export function useAutoAgentifyJob() {
       connect(job.value.public_id)
     } catch (error) {
       errorCode.value = error instanceof ApiError ? error.code : 'unknown'
+      errorParams.value = error instanceof ApiError ? error.params : {}
     } finally {
       starting.value = false
+    }
+  }
+
+  async function stop(): Promise<void> {
+    if (!job.value || !active.value) return
+    stopping.value = true
+    errorCode.value = null
+    errorParams.value = {}
+    try {
+      job.value = await request<AutoAgentifyJob>(
+        `/api/admin/auto-agentify/jobs/${encodeURIComponent(job.value.public_id)}/cancel`,
+        { method: 'POST' },
+        auth.csrfToken,
+      )
+      stream?.close()
+    } catch (error) {
+      errorCode.value = error instanceof ApiError ? error.code : 'unknown'
+      errorParams.value = error instanceof ApiError ? error.params : {}
+    } finally {
+      stopping.value = false
     }
   }
 
@@ -139,10 +175,13 @@ export function useAutoAgentifyJob() {
     events,
     capabilities,
     starting,
+    stopping,
     active,
     errorCode,
+    errorParams,
     load,
     reset,
     start,
+    stop,
   }
 }

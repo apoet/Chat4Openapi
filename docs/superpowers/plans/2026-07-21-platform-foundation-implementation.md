@@ -97,7 +97,7 @@ Chat4Openapi/
 
 ```yaml
 # environment.yml
-name: chat4openapi
+name: agent4api
 channels:
   - conda-forge
 dependencies:
@@ -162,7 +162,7 @@ def test_health_returns_ok() -> None:
 
 - [ ] **Step 3: Create the conda environment and confirm the application does not exist**
 
-Run: `conda env create -f environment.yml && conda run -n chat4openapi pip install -e "backend[dev]" && conda run -n chat4openapi pytest backend/tests/test_health.py -q`
+Run: `conda env create -f environment.yml && conda run -n agent4api pip install -e "backend[dev]" && conda run -n agent4api pytest backend/tests/test_health.py -q`
 
 Expected: FAIL during collection because `chat4openapi.main` has not been created.
 
@@ -221,7 +221,7 @@ app = create_app()
 
 - [ ] **Step 5: Run backend checks**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_health.py -q && conda run -n chat4openapi ruff check backend`
+Run: `conda run -n agent4api pytest backend/tests/test_health.py -q && conda run -n agent4api ruff check backend`
 
 Expected: one passing test and `All checks passed!`.
 
@@ -277,7 +277,7 @@ def test_foundation_tables_exist(db_engine) -> None:
 
 - [ ] **Step 2: Run tests and confirm missing fixtures/models**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_database.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_database.py -q`
 
 Expected: FAIL because `db_engine` is unavailable.
 
@@ -463,7 +463,7 @@ def db_engine(database_url, monkeypatch):
     engine.dispose()
 ```
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_database.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_database.py -q`
 
 Expected: two passing tests.
 
@@ -516,7 +516,7 @@ def test_setup_rejects_weak_password(client) -> None:
 
 - [ ] **Step 2: Run setup tests and confirm 404 responses**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_setup.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_setup.py -q`
 
 Expected: FAIL because `/api/setup` routes do not exist.
 
@@ -572,7 +572,7 @@ The application installs an `HTTPException` handler that returns `exc.detail` un
 
 - [ ] **Step 5: Run setup and password tests**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_setup.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_setup.py -q`
 
 Expected: three passing tests, and a database assertion confirms the stored password is an Argon2 hash rather than plaintext.
 
@@ -629,7 +629,7 @@ def test_me_rejects_expired_session(initialized_client, expire_admin_sessions) -
 
 - [ ] **Step 2: Run auth tests and confirm missing routes**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_admin_auth.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_admin_auth.py -q`
 
 Expected: FAIL with 404 responses.
 
@@ -657,7 +657,7 @@ The login response sets `chat4openapi_admin_session` with `httponly=True`, `same
 
 - [ ] **Step 5: Run the complete backend suite**
 
-Run: `conda run -n chat4openapi pytest backend/tests -q && conda run -n chat4openapi ruff check backend`
+Run: `conda run -n agent4api pytest backend/tests -q && conda run -n agent4api ruff check backend`
 
 Expected: all tests pass and Ruff reports no violations.
 
@@ -891,7 +891,7 @@ def test_unknown_api_path_never_falls_back_to_spa(app_with_dist) -> None:
 
 - [ ] **Step 2: Run SPA tests and confirm fallback is absent**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_spa.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_spa.py -q`
 
 Expected: FAIL because `/admin` returns 404.
 
@@ -903,8 +903,8 @@ Expected: FAIL because `/admin` returns 404.
 
 ```powershell
 conda env create -f environment.yml
-conda run -n chat4openapi alembic -c backend/alembic.ini upgrade head
-conda run -n chat4openapi uvicorn chat4openapi.main:app --app-dir backend/src --reload
+conda run -n agent4api alembic -c backend/alembic.ini upgrade head
+conda run -n agent4api uvicorn chat4openapi.main:app --app-dir backend/src --reload
 nvm use 20.19.4
 Set-Location frontend
 npm install
@@ -915,7 +915,7 @@ npm run dev
 
 - [ ] **Step 5: Run full verification**
 
-Run: `conda run -n chat4openapi pytest backend/tests -q; conda run -n chat4openapi ruff check backend; Set-Location frontend; npm test; npm run typecheck; npm run build`
+Run: `conda run -n agent4api pytest backend/tests -q; conda run -n agent4api ruff check backend; Set-Location frontend; npm test; npm run typecheck; npm run build`
 
 Expected: every command exits 0, the backend suite passes, frontend tests pass, type checking passes, and Vite creates `dist`.
 

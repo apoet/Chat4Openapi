@@ -1,4 +1,6 @@
+import hashlib
 import re
+from collections import Counter
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
@@ -18,32 +20,42 @@ class ToolCandidate:
     execution_schema: dict[str, Any]
 
 
-def _generated_name(method: str, path: str) -> str:
-    parts: list[str] = [method.lower()]
-    for segment in path.strip("/").split("/"):
-        if not segment:
-            continue
-        if segment.startswith("{") and segment.endswith("}"):
-            parts.extend(("by", segment[1:-1]))
-        else:
-            parts.append(segment)
-    return re.sub(r"_+", "_", re.sub(r"[^a-zA-Z0-9_]", "_", "_".join(parts))).strip("_")
+MAX_FASTMCP_TOOL_NAME_LENGTH = 56
+_SAFE_TOOL_NAME = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
-def _prepare_operations(spec: dict[str, Any]) -> tuple[dict[str, Any], list[tuple[str, str, dict[str, Any]]]]:
+def _generated_name(index: int, method: str, path: str) -> str:
+    operation_key = f"{method.upper()} {path}"
+    digest = hashlib.sha256(operation_key.encode()).hexdigest()[:6]
+    return f"op_{index:04d}_{digest}"
+
+
+def _prepare_operations(
+    spec: dict[str, Any],
+) -> tuple[dict[str, Any], list[tuple[str, str, dict[str, Any]]]]:
     prepared = deepcopy(spec)
     operations: list[tuple[str, str, dict[str, Any]]] = []
-    used: dict[str, int] = {}
     for path, path_item in prepared.get("paths", {}).items():
         for method, operation in path_item.items():
             if method.lower() not in HTTP_METHODS:
                 continue
-            base_name = operation.get("operationId") or _generated_name(method, path)
-            count = used.get(base_name, 0) + 1
-            used[base_name] = count
-            name = base_name if count == 1 else f"{base_name}_{count}"
-            operation["operationId"] = name
             operations.append((path, method.lower(), operation))
+
+    supplied_names = Counter(
+        operation.get("operationId")
+        for _, _, operation in operations
+        if isinstance(operation.get("operationId"), str)
+    )
+    for index, (path, method, operation) in enumerate(operations, start=1):
+        supplied_name = operation.get("operationId")
+        name_is_compatible = (
+            isinstance(supplied_name, str)
+            and len(supplied_name) <= MAX_FASTMCP_TOOL_NAME_LENGTH
+            and _SAFE_TOOL_NAME.fullmatch(supplied_name) is not None
+            and supplied_names[supplied_name] == 1
+        )
+        name = supplied_name if name_is_compatible else _generated_name(index, method, path)
+        operation["operationId"] = name
     return prepared, operations
 
 

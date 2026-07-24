@@ -7,6 +7,7 @@ import { request } from '../api/client'
 import type { SkillSummary, ToolBatchAction, ToolBatchFailed, ToolSummary } from '../api/contracts'
 import ToolBulkBar from '../components/ToolBulkBar.vue'
 import { useToolsStore } from '../stores/tools'
+import { confirmDestructiveAction } from '../ui/confirmDestructiveAction'
 
 interface ToolParameterView {
   name: string
@@ -116,7 +117,7 @@ const store = useToolsStore()
 const { t } = useI18n()
 const route = inject(routeLocationKey, null)
 const router = inject(routerKey, null)
-const filter = ref<'all' | 'enabled' | 'disabled'>('all')
+const filter = ref<'all' | 'enabled' | 'disabled' | 'needsReview'>('all')
 const searchQuery = ref('')
 const collapsedSourceIds = ref(new Set<number>())
 const collapsedTagGroups = ref(new Set<string>())
@@ -138,18 +139,24 @@ const batchFailures = ref<string[]>([])
 const deleteConfirmationOpen = ref(false)
 const deleteDialog = ref<HTMLDialogElement | null>(null)
 const deleteTrigger = ref<HTMLElement | null>(null)
-const sourceId = computed(() => {
+const routeSourceId = computed(() => {
   const value = route?.query.source_id
   if (typeof value !== 'string' || !/^\d+$/.test(value)) return null
   return Number(value)
 })
+const sourceId = ref<number | null>(null)
 const sourceName = computed(() => {
+  const source = store.sources.find((item) => item.id === sourceId.value)
+  if (source) return source.name
   const value = route?.query.source_name
   return typeof value === 'string' ? value : `#${sourceId.value}`
 })
 const visibleTools = computed(() => store.tools.filter((tool) => {
   const query = searchQuery.value.trim().toLocaleLowerCase()
-  const matchesStatus = filter.value === 'all' || tool.enabled === (filter.value === 'enabled')
+  const matchesStatus = filter.value === 'all'
+    || (filter.value === 'needsReview'
+      ? tool.needs_schema_review
+      : tool.enabled === (filter.value === 'enabled'))
   const matchesSource = sourceId.value === null || tool.api_source_id === sourceId.value
   const matchesSearch = !query
     || tool.name.toLocaleLowerCase().includes(query)
@@ -373,8 +380,28 @@ function handleDeleteDialogKeydown(event: KeyboardEvent): void {
   }
 }
 
-function clearSourceFilter(): void {
-  void router?.replace({ name: 'tools' })
+async function changeSource(event: Event): Promise<void> {
+  const nextSourceId = Number((event.target as HTMLSelectElement).value)
+  if (!Number.isInteger(nextSourceId) || nextSourceId <= 0 || nextSourceId === sourceId.value) return
+  sourceId.value = nextSourceId
+  clearToolSelection()
+  collapsedSourceIds.value = new Set()
+  collapsedTagGroups.value = new Set()
+  const source = store.sources.find((item) => item.id === nextSourceId)
+  if (router) {
+    await router.replace({
+      name: 'tools',
+      query: {
+        source_id: String(nextSourceId),
+        ...(source ? { source_name: source.name } : {}),
+      },
+    })
+  }
+  try {
+    await store.loadTools(nextSourceId)
+  } catch {
+    // The store exposes the localized loading error state in the page.
+  }
 }
 
 function startDescriptionEdit(tool: ToolSummary): void {
@@ -410,15 +437,23 @@ async function deleteSingleTool(tool: ToolSummary): Promise<void> {
   } catch {
     // If references cannot be checked, confirmation is the safe fallback.
   }
-  if (referencingSkills === null) {
-    if (!window.confirm(t('confirmations.deleteToolUnknown', { name: tool.name }))) return
-  } else if (
-    referencingSkills.length > 0
-    && !window.confirm(t('confirmations.deleteReferencedTool', {
+  const message = referencingSkills === null
+    ? t('confirmations.deleteToolUnknown', { name: tool.name })
+    : referencingSkills.length > 0
+      ? t('confirmations.deleteReferencedTool', {
       name: tool.name,
       skills: referencingSkills.join(', '),
-    }))
-  ) return
+    })
+      : t('confirmations.deleteTool', { name: tool.name })
+  const confirmed = await confirmDestructiveAction({
+    title: t('confirmations.dialog.deleteTitle', { item: t('confirmations.dialog.items.tool') }),
+    message,
+    subject: tool.name,
+    warning: t('confirmations.dialog.irreversible'),
+    confirmLabel: t('confirmations.dialog.deleteAction', { item: t('confirmations.dialog.items.tool') }),
+    cancelLabel: t('confirmations.dialog.cancel'),
+  })
+  if (!confirmed) return
   await store.deleteTool(tool)
 }
 
@@ -461,7 +496,24 @@ async function saveParameter(tool: ToolSummary, parameter: ToolParameterView): P
   }
 }
 
-onMounted(() => void Promise.all([store.loadTools(), store.loadSources()]))
+onMounted(async () => {
+  try {
+    await store.loadSources()
+  } catch {
+    store.tools = []
+    return
+  }
+  sourceId.value = routeSourceId.value ?? store.sources[0]?.id ?? null
+  if (sourceId.value === null) {
+    store.tools = []
+    return
+  }
+  try {
+    await store.loadTools(sourceId.value)
+  } catch {
+    // The store exposes the localized loading error state in the page.
+  }
+})
 
 watch(() => store.tools.map((tool) => tool.id), (toolIds) => {
   const existingIds = new Set(toolIds)
@@ -473,9 +525,18 @@ watch(() => store.tools.map((tool) => tool.id), (toolIds) => {
 <template>
   <main class="management-page" :inert="deleteConfirmationOpen || undefined">
     <header class="page-heading with-actions"><div><p class="eyebrow">{{ t('tools.eyebrow') }}</p><h1>{{ t('tools.title') }}</h1><p class="muted">{{ t('tools.subtitle') }}</p></div>
-      <div class="segmented"><button v-for="value in (['all','enabled','disabled'] as const)" :key="value" :class="{ active: filter === value }" @click="filter = value">{{ t(`tools.filter.${value}`) }}</button></div>
+      <div class="segmented"><button v-for="value in (['all','enabled','disabled','needsReview'] as const)" :key="value" :class="{ active: filter === value }" @click="filter = value">{{ t(`tools.filter.${value}`) }}</button></div>
     </header>
-    <label class="tool-search"><span>{{ t('tools.searchLabel') }}</span><input v-model="searchQuery" type="search" :placeholder="t('tools.searchPlaceholder')" /></label>
+    <div class="tool-filter-row">
+      <label class="tool-source-select">
+        <span>{{ t('tools.sourceLabel') }}</span>
+        <select :value="sourceId ?? ''" :disabled="store.loading || store.sources.length === 0" @change="changeSource">
+          <option v-if="store.sources.length === 0" value="">{{ t('tools.noSources') }}</option>
+          <option v-for="source in store.sources" :key="source.id" :value="source.id">{{ source.name }}</option>
+        </select>
+      </label>
+      <label class="tool-search"><span>{{ t('tools.searchLabel') }}</span><input v-model="searchQuery" type="search" :placeholder="t('tools.searchPlaceholder')" /></label>
+    </div>
     <ToolBulkBar
       :selected-count="selectedTools.length"
       :visible-count="selectableVisibleTools.length"
@@ -487,15 +548,16 @@ watch(() => store.tools.map((tool) => tool.id), (toolIds) => {
       @clear="clearToolSelection"
       @action="requestBatchAction"
     />
-    <div v-if="sourceId !== null" class="source-filter-banner"><span>{{ t('tools.sourceFilter', { name: sourceName }) }}</span><button class="secondary-action" @click="clearSourceFilter">{{ t('tools.showAllSources') }}</button></div>
-    <div v-if="!store.loading && visibleTools.length === 0" class="empty-state">{{ t('tools.empty') }}</div>
+    <div v-if="store.loading" class="empty-state" role="status">{{ t('tools.loading') }}</div>
+    <div v-else-if="store.errorCode" class="empty-state" role="alert">{{ t('tools.loadError') }}</div>
+    <div v-else-if="visibleTools.length === 0" class="empty-state">{{ sourceId === null ? t('tools.noSources') : t('tools.empty') }}</div>
     <details v-for="group in groupedTools" :key="group.id" class="tool-source-group" :open="!collapsedSourceIds.has(group.id)">
       <summary class="tool-source-heading" @click.prevent="toggleSourceCollapsed(group.id)"><h2>{{ group.name }}</h2><span>{{ t('tools.count', { count: group.toolCount }) }}</span></summary>
       <details v-for="tagGroup in group.tags" :key="tagGroup.name" class="tool-tag-group" :open="!collapsedTagGroups.has(tagGroupKey(group.id, tagGroup.name))">
         <summary class="tool-tag-heading" @click.prevent="toggleTagCollapsed(group.id, tagGroup.name)"><h3>{{ tagGroup.name }}</h3><span>{{ t('tools.count', { count: tagGroup.tools.length }) }}</span></summary>
         <div class="tool-grid">
         <article v-for="tool in tagGroup.tools" :key="tool.id" class="tool-card">
-          <div class="tool-card-head"><label class="tool-select"><input type="checkbox" :checked="isToolSelected(tool.id)" :disabled="deleteConfirmationOpen || pendingToolIds.has(tool.id) || (!isToolSelected(tool.id) && selectedTools.length >= MAX_BATCH_TOOLS)" :aria-label="t('tools.bulk.selectTool', { name: tool.name })" @change="setToolSelected(tool.id, ($event.target as HTMLInputElement).checked)" /></label><code>{{ tool.operation_key.split(' ')[0] }}</code><span :class="['status-pill', tool.enabled ? 'enabled' : 'disabled']">{{ tool.enabled ? t('tools.enabled') : t('tools.disabled') }}</span></div>
+          <div class="tool-card-head"><label class="tool-select"><input type="checkbox" :checked="isToolSelected(tool.id)" :disabled="deleteConfirmationOpen || pendingToolIds.has(tool.id) || (!isToolSelected(tool.id) && selectedTools.length >= MAX_BATCH_TOOLS)" :aria-label="t('tools.bulk.selectTool', { name: tool.name })" @change="setToolSelected(tool.id, ($event.target as HTMLInputElement).checked)" /></label><code>{{ tool.operation_key.split(' ')[0] }}</code><span :class="['status-pill', tool.enabled ? 'enabled' : 'disabled']">{{ tool.enabled ? t('tools.enabled') : t('tools.disabled') }}</span><span v-if="tool.needs_schema_review" class="schema-review-pill">{{ t('tools.needsReview') }}</span></div>
           <template v-if="editingDescriptionId === tool.id">
             <div class="tool-description-editor">
               <label><span>{{ t('tools.descriptionLabel') }}</span><textarea v-model="descriptionDraft" rows="3" maxlength="4000" :disabled="isToolMutationLocked(tool.id)" /></label>
@@ -538,9 +600,15 @@ watch(() => store.tools.map((tool) => tool.id), (toolIds) => {
       </details>
     </details>
   </main>
-  <dialog v-if="deleteConfirmationOpen" ref="deleteDialog" aria-labelledby="bulk-delete-title" class="confirmation-dialog" tabindex="-1" @cancel.prevent="cancelBulkDelete" @keydown="handleDeleteDialogKeydown">
-    <h2 id="bulk-delete-title">{{ t('tools.bulk.confirm.title') }}</h2>
-    <p>{{ t('tools.bulk.confirm.message', { tools: selectedTools.length, sources: selectedSourceCount }) }}</p>
+  <dialog v-if="deleteConfirmationOpen" ref="deleteDialog" aria-labelledby="bulk-delete-title" class="confirmation-dialog destructive-confirmation-dialog" tabindex="-1" @cancel.prevent="cancelBulkDelete" @keydown="handleDeleteDialogKeydown">
+    <div class="confirmation-header">
+      <span class="confirmation-icon" aria-hidden="true">!</span>
+      <div class="confirmation-copy">
+        <h2 id="bulk-delete-title">{{ t('tools.bulk.confirm.title') }}</h2>
+        <p>{{ t('tools.bulk.confirm.message', { tools: selectedTools.length, sources: selectedSourceCount }) }}</p>
+        <p class="confirmation-warning">{{ t('confirmations.dialog.irreversible') }}</p>
+      </div>
+    </div>
     <div class="confirmation-actions">
       <button class="secondary-action" :disabled="batchPending" :aria-label="t('tools.bulk.confirm.cancelLabel')" @click="cancelBulkDelete">{{ t('tools.bulk.confirm.cancel') }}</button>
       <button class="danger-action" :disabled="batchPending" :aria-label="t('tools.bulk.confirm.confirmLabel')" @click="confirmBulkDelete">{{ t('tools.bulk.confirm.confirm') }}</button>

@@ -167,6 +167,145 @@ it('shows source-specific generation actions and resumes only that source progre
   wrapper.unmount()
 })
 
+it('updates API source generation progress from background events', async () => {
+  const sourceWithProgress = {
+    ...importedSource,
+    auto_agentify_job: {
+      public_id: queuedJob.public_id,
+      status: 'running',
+      phase: 'analyzing_capabilities',
+      progress: 37,
+      updated_at: '2026-07-24T00:01:00',
+    },
+  }
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response([sourceWithProgress])))
+  const wrapper = mount(ApiSourcesView, {
+    attachTo: document.body,
+    global: { plugins: [i18n] },
+  })
+  await flushPromises()
+
+  expect(wrapper.get('[data-testid="source-auto-agentify-3"]').text())
+    .toContain('View progress 37%')
+  expect(FakeEventSource.instances).toHaveLength(1)
+
+  FakeEventSource.instances[0].emit({
+    sequence: 4,
+    kind: 'capability_batch_started',
+    phase: 'analyzing_capabilities',
+    progress: 64,
+    message_key: 'autoAgentify.events.capabilityBatchStarted',
+    params: { batch: 2, total: 3 },
+    capability: null,
+    created_at: '2026-07-24T00:02:00',
+  }, '4')
+  await flushPromises()
+
+  expect(wrapper.get('[data-testid="source-auto-agentify-3"]').text())
+    .toContain('View progress 64%')
+  wrapper.unmount()
+  expect(FakeEventSource.instances[0].close).toHaveBeenCalled()
+})
+
+it('stops an active generation job from the progress step', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response([provider]))
+    .mockResolvedValueOnce(response({ ...queuedJob, status: 'running', progress: 37 }))
+    .mockResolvedValueOnce(response({
+      ...queuedJob,
+      status: 'cancelled',
+      phase: 'cancelled',
+      progress: 37,
+      completed_at: '2026-07-24T00:02:00',
+    }))
+  vi.stubGlobal('fetch', fetchMock)
+  const wrapper = mount(AutoAgentifyPanel, {
+    props: {
+      sourceRecord: importedSource,
+      resumeJobId: queuedJob.public_id,
+      source: {
+        mode: 'url',
+        name: 'Projects',
+        baseUrl: 'https://api.example.test',
+        sourceUrl: 'https://api.example.test/openapi.json',
+        file: null,
+        allowPrivateNetworks: false,
+      },
+    },
+    global: { plugins: [i18n], stubs: { teleport: true } },
+  })
+  await flushPromises()
+
+  await wrapper.get('[data-testid="auto-stop"]').trigger('click')
+  await flushPromises()
+
+  expect(fetchMock.mock.calls[2][0])
+    .toBe('/api/admin/auto-agentify/jobs/job-1/cancel')
+  expect((fetchMock.mock.calls[2][1] as RequestInit).method).toBe('POST')
+  expect(wrapper.text()).toContain('Generation stopped')
+  expect(wrapper.emitted('stopped')).toHaveLength(1)
+  expect(wrapper.find('[data-testid="auto-stop"]').exists()).toBe(false)
+  expect(wrapper.get('[data-testid="auto-submit"]').text()).toContain('Retry')
+  wrapper.unmount()
+})
+
+it('refreshes the API source row after stopping generation', async () => {
+  const runningSource = {
+    ...importedSource,
+    auto_agentify_job: {
+      public_id: queuedJob.public_id,
+      status: 'running',
+      phase: 'analyzing_capabilities',
+      progress: 37,
+      updated_at: '2026-07-24T00:01:00',
+    },
+  }
+  const cancelledJob = {
+    ...queuedJob,
+    status: 'cancelled',
+    phase: 'cancelled',
+    progress: 37,
+    completed_at: '2026-07-24T00:02:00',
+  }
+  const refreshedSource = {
+    ...importedSource,
+    auto_agentify_job: {
+      public_id: queuedJob.public_id,
+      status: 'cancelled',
+      phase: 'cancelled',
+      progress: 37,
+      updated_at: '2026-07-24T00:02:00',
+    },
+  }
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response([runningSource]))
+    .mockResolvedValueOnce(response([provider]))
+    .mockResolvedValueOnce(response({ ...queuedJob, status: 'running', progress: 37 }))
+    .mockResolvedValueOnce(response(cancelledJob))
+    .mockResolvedValueOnce(response([refreshedSource]))
+  vi.stubGlobal('fetch', fetchMock)
+  const wrapper = mount(ApiSourcesView, {
+    attachTo: document.body,
+    global: { plugins: [i18n] },
+  })
+  await flushPromises()
+
+  await wrapper.get('[data-testid="source-auto-agentify-3"]').trigger('click')
+  await flushPromises()
+  const stopButton = document.body.querySelector<HTMLButtonElement>(
+    '[data-testid="auto-stop"]',
+  )
+  expect(stopButton).not.toBeNull()
+  stopButton?.click()
+  await flushPromises()
+
+  expect(fetchMock.mock.calls.filter(([url]) => url === '/api/admin/sources'))
+    .toHaveLength(2)
+  expect(wrapper.get('[data-testid="source-auto-agentify-3"]').text())
+    .toContain('One-click generate')
+  wrapper.unmount()
+})
+
 it('starts from the current URL import input and displays live capability analysis', async () => {
   vi.stubGlobal('fetch', vi.fn()
     .mockResolvedValueOnce(response([provider]))
@@ -200,6 +339,13 @@ it('starts from the current URL import input and displays live capability analys
     .toContain('Sensitive information and security')
   expect(wrapper.get('[data-testid="capability-system-sensitive_data_security"]')
     .attributes('aria-pressed')).toBe('false')
+  expect(wrapper.findAll('[data-testid^="capability-system-"]')).toHaveLength(20)
+  expect(wrapper.get('[data-testid="capability-system-order_query"]').text())
+    .toContain('Order query')
+  expect(wrapper.get('[data-testid="capability-system-public_services"]').text())
+    .toContain('Public services')
+  expect(wrapper.get('[data-testid="capability-system-intelligent_customer_service"]').text())
+    .toContain('Intelligent customer service')
 
   await wrapper.get('[data-testid="capability-system-file_management"]').trigger('click')
   await wrapper.get('[data-testid="custom-capability-input"]')
@@ -226,6 +372,8 @@ it('starts from the current URL import input and displays live capability analys
   })
   expect(FakeEventSource.instances[0].url)
     .toBe('/api/admin/auto-agentify/jobs/job-1/events')
+  expect(wrapper.find('[data-testid="auto-analysis-loading"]').exists()).toBe(true)
+  expect(wrapper.get('.activity-orbit').classes()).toContain('is-loading')
 
   FakeEventSource.instances[0].emit({
     sequence: 2,
@@ -275,7 +423,104 @@ it('starts from the current URL import input and displays live capability analys
   expect(wrapper.get('[data-testid="auto-progress"]').attributes('value')).toBe('42')
 })
 
-it('shows batch scope and a visible provider-specific retry state', async () => {
+it('shows actionable API authentication guidance without exposing the internal error code', async () => {
+  i18n.global.locale.value = 'zh-CN'
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce(response([provider]))
+    .mockResolvedValueOnce(response({
+      error: { code: 'auth.session_invalid', params: {} },
+    }, 401)))
+  const wrapper = mount(AutoAgentifyPanel, {
+    props: {
+      sourceRecord: importedSource,
+      source: {
+        mode: 'url',
+        name: 'Projects',
+        baseUrl: 'https://api.example.test',
+        sourceUrl: 'https://api.example.test/openapi.json',
+        file: null,
+        allowPrivateNetworks: false,
+      },
+    },
+    global: { plugins: [i18n], stubs: { teleport: true } },
+  })
+  await flushPromises()
+
+  await wrapper.get('[data-testid="wizard-next"]').trigger('click')
+  await wrapper.get('[data-testid="auto-submit"]').trigger('click')
+  await flushPromises()
+
+  const errorPanel = wrapper.get('[data-testid="auto-error"]')
+  expect(errorPanel.text()).toContain('认证失败，修改 APIs 的认证配置')
+  expect(errorPanel.text()).not.toContain('auth.session_invalid')
+})
+
+it('shows the backend reason when importing a source for generation fails', async () => {
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce(response([provider]))
+    .mockResolvedValueOnce(response({
+      error: {
+        code: 'tools.openapi_unsupported',
+        params: { reason: 'Parameter file must define schema or content' },
+      },
+    }, 422)))
+  const wrapper = mount(AutoAgentifyPanel, {
+    props: {
+      source: {
+        mode: 'url',
+        name: 'Projects',
+        baseUrl: 'https://api.example.test',
+        sourceUrl: 'https://api.example.test/openapi.json',
+        file: null,
+        allowPrivateNetworks: false,
+      },
+    },
+    global: { plugins: [i18n], stubs: { teleport: true } },
+  })
+  await flushPromises()
+
+  await wrapper.get('[data-testid="wizard-next"]').trigger('click')
+  await wrapper.get('[data-testid="auto-submit"]').trigger('click')
+  await flushPromises()
+
+  expect(wrapper.get('[data-testid="auto-error"]').text())
+    .toContain('Parameter file must define schema or content')
+})
+
+it('shows the backend reason when starting generation for an imported source fails', async () => {
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce(response([provider]))
+    .mockResolvedValueOnce(response({
+      error: {
+        code: 'auto_agentify.openapi_unsupported',
+        params: { reason: 'No supported HTTP operations were found' },
+      },
+    }, 422)))
+  const wrapper = mount(AutoAgentifyPanel, {
+    props: {
+      sourceRecord: importedSource,
+      source: {
+        mode: 'url',
+        name: 'Projects',
+        baseUrl: 'https://api.example.test',
+        sourceUrl: 'https://api.example.test/openapi.json',
+        file: null,
+        allowPrivateNetworks: false,
+      },
+    },
+    global: { plugins: [i18n], stubs: { teleport: true } },
+  })
+  await flushPromises()
+
+  await wrapper.get('[data-testid="wizard-next"]').trigger('click')
+  await wrapper.get('[data-testid="auto-submit"]').trigger('click')
+  await flushPromises()
+
+  expect(wrapper.get('[data-testid="auto-error"]').text())
+    .toContain('No supported HTTP operations were found')
+})
+
+it('shows analysis strategy, business domain, consolidation, and retry details', async () => {
   vi.stubGlobal('fetch', vi.fn()
     .mockResolvedValueOnce(response([provider]))
     .mockResolvedValueOnce(response(queuedJob, 202))
@@ -303,22 +548,65 @@ it('shows batch scope and a visible provider-specific retry state', async () => 
 
   FakeEventSource.instances[0].emit({
     sequence: 2,
-    kind: 'capability_batch_started',
+    kind: 'analysis_strategy_selected',
     phase: 'analyzing_capabilities',
-    progress: 24,
-    message_key: 'autoAgentify.events.capabilityBatchStarted',
-    params: { batch: 1, total: 3, operation_count: 200 },
+    progress: 23,
+    message_key: 'autoAgentify.events.analysisStrategySelected',
+    params: {
+      mode: 'domain_groups',
+      operation_count: 600,
+      domain_count: 3,
+      estimated_chars: 120000,
+    },
     capability: null,
     created_at: '2026-07-24T00:00:01',
   }, '2')
   await flushPromises()
   expect(wrapper.get('[data-testid="auto-current-stage"]').text())
-    .toContain('Batch 1 of 3')
+    .toContain('600 operations')
   expect(wrapper.get('[data-testid="auto-current-stage"]').text())
-    .toContain('200 API operations')
+    .toContain('3 business domains')
 
   FakeEventSource.instances[0].emit({
     sequence: 3,
+    kind: 'capability_batch_started',
+    phase: 'analyzing_capabilities',
+    progress: 24,
+    message_key: 'autoAgentify.events.capabilityBatchStarted',
+    params: {
+      batch: 1,
+      total: 3,
+      operation_count: 200,
+      domain: 'Orders',
+      mode: 'domain_groups',
+    },
+    capability: null,
+    created_at: '2026-07-24T00:00:02',
+  }, '3')
+  await flushPromises()
+  expect(wrapper.get('[data-testid="auto-current-stage"]').text())
+    .toContain('Orders')
+  expect(wrapper.get('[data-testid="auto-current-stage"]').text())
+    .toContain('200 operations')
+
+  FakeEventSource.instances[0].emit({
+    sequence: 4,
+    kind: 'capability_consolidation_completed',
+    phase: 'analyzing_capabilities',
+    progress: 60,
+    message_key: 'autoAgentify.events.capabilityConsolidationCompleted',
+    params: { input_count: 12, output_count: 7, merged_count: 5 },
+    capability: null,
+    created_at: '2026-07-24T00:00:03',
+  }, '4')
+  await flushPromises()
+  expect(wrapper.get('[data-testid="auto-current-stage"]').text())
+    .toContain('12 candidates into 7 capabilities')
+  expect(wrapper.get('[data-testid="auto-current-stage"]').text())
+    .toContain('merged or removed 5')
+
+  FakeEventSource.instances[0].emit({
+    sequence: 5,
     kind: 'failed',
     phase: 'failed',
     progress: 44,
@@ -326,7 +614,7 @@ it('shows batch scope and a visible provider-specific retry state', async () => 
     params: { code: 'auto_agentify.provider_failed', status: 502 },
     capability: null,
     created_at: '2026-07-24T00:06:28',
-  }, '3')
+  }, '5')
   await flushPromises()
 
   expect(wrapper.get('[data-testid="auto-error"]').text())
@@ -370,6 +658,35 @@ it('restores capability preferences with a recovered background job', async () =
   expect(wrapper.text()).toContain('Clinical trial data capture')
 })
 
+it('shows the stored backend reason when a background generation job fails', async () => {
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce(response([provider]))
+    .mockResolvedValueOnce(response({
+      ...failedJob,
+      error_code: 'auto_agentify.openapi_unsupported',
+      error_params: { reason: 'No supported HTTP operations were found' },
+    })))
+  const wrapper = mount(AutoAgentifyPanel, {
+    props: {
+      sourceRecord: importedSource,
+      resumeJobId: failedJob.public_id,
+      source: {
+        mode: 'url',
+        name: 'Projects',
+        baseUrl: 'https://api.example.test',
+        sourceUrl: 'https://api.example.test/openapi.json',
+        file: null,
+        allowPrivateNetworks: false,
+      },
+    },
+    global: { plugins: [i18n], stubs: { teleport: true, RouterLink: true } },
+  })
+  await flushPromises()
+
+  expect(wrapper.get('[data-testid="auto-error"]').text())
+    .toContain('No supported HTTP operations were found')
+})
+
 it('restores completed work directly into a separate results step', async () => {
   vi.stubGlobal('fetch', vi.fn()
     .mockResolvedValueOnce(response([provider]))
@@ -395,6 +712,10 @@ it('restores completed work directly into a separate results step', async () => 
     .toContain('Generated results')
   expect(wrapper.get('[data-testid="auto-result"]').text()).toContain('Project analyst')
   expect(wrapper.find('.analysis-process').exists()).toBe(false)
+  expect(wrapper.get('[data-testid="result-footer-left"]').findAll('button')).toHaveLength(2)
+  expect(wrapper.get('[data-testid="auto-complete"]').text()).toContain('Done')
+  await wrapper.get('[data-testid="auto-complete"]').trigger('click')
+  expect(wrapper.emitted('close')).toHaveLength(1)
 
   await wrapper.get('.result-footer .secondary-action').trigger('click')
   expect(wrapper.get('.analysis-process').text()).toContain('Analysis process')

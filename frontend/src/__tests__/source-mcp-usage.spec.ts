@@ -45,6 +45,7 @@ describe('SourceMcpUsagePanel', () => {
             },
             execution_schema: {},
             tags: [],
+            needs_schema_review: false,
             enabled: true,
           },
           {
@@ -56,6 +57,7 @@ describe('SourceMcpUsagePanel', () => {
             input_schema: {},
             execution_schema: {},
             tags: [],
+            needs_schema_review: false,
             enabled: true,
           },
         ],

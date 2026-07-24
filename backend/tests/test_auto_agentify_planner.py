@@ -160,10 +160,19 @@ def test_capability_preferences_reject_unknown_system_labels_and_normalize_custo
         )
 
     preferences = CapabilityPreferences(
-        allowed_system_capabilities=["file_management", "file_management"],
+        allowed_system_capabilities=[
+            "order_query",
+            "public_services",
+            "intelligent_customer_service",
+            "order_query",
+        ],
         custom_capability_labels=[" Clinical trial ", "Clinical trial"],
     )
-    assert preferences.allowed_system_capabilities == ["file_management"]
+    assert preferences.allowed_system_capabilities == [
+        "order_query",
+        "public_services",
+        "intelligent_customer_service",
+    ]
     assert preferences.custom_capability_labels == ["Clinical trial"]
 
 
@@ -507,14 +516,14 @@ async def test_planner_falls_back_after_second_invalid_plan_response() -> None:
 
 
 @pytest.mark.asyncio
-async def test_large_catalog_uses_batch_summaries_before_synthesis() -> None:
+async def test_compact_catalog_is_analyzed_as_one_business_context() -> None:
     client = FakeLlmClient(
         [
             _capabilities_json("GET /projects"),
-            _capabilities_json("GET /projects/99"),
             _valid_json(),
         ]
     )
+    reporter = CollectingReporter()
     planner = AutoAgentifyPlanner(client=client)
 
     await planner.plan(
@@ -523,10 +532,95 @@ async def test_large_catalog_uses_batch_summaries_before_synthesis() -> None:
         api_key="secret",
         model="model",
         catalog=_catalog(151),
+        reporter=reporter,
     )
 
-    assert len(client.calls) == 3
+    assert len(client.calls) == 2
+    strategy = next(
+        event
+        for event in reporter.events
+        if event.kind == "analysis_strategy_selected"
+    )
+    assert strategy.params["mode"] == "holistic"
+    assert strategy.params["operation_count"] == 151
+    assert strategy.params["domain_count"] == 1
     assert "capability summaries" in client.calls[-1][-1].content
+
+
+@pytest.mark.asyncio
+async def test_oversized_domains_are_globally_consolidated_before_planning() -> None:
+    catalog = [
+        OperationCatalogItem(
+            operation_key="GET /projects",
+            name="getProjects",
+            method="GET",
+            path="/projects",
+            tags=("Projects",),
+            summary="List projects",
+            description="Project context " * 2_500,
+            input_fields=(),
+        ),
+        OperationCatalogItem(
+            operation_key="GET /orders",
+            name="getOrders",
+            method="GET",
+            path="/orders",
+            tags=("Orders",),
+            summary="List orders",
+            description="Order context " * 2_500,
+            input_fields=(),
+        ),
+    ]
+    merged = json.loads(_capabilities_json())
+    merged["capabilities"][0].update(
+        {
+            "name": "Project order fulfillment",
+            "operation_keys": ["GET /projects", "GET /orders"],
+        }
+    )
+    client = FakeLlmClient(
+        [
+            _capabilities_json("GET /orders"),
+            _capabilities_json("GET /projects"),
+            json.dumps(merged),
+            _valid_json(),
+        ]
+    )
+    reporter = CollectingReporter()
+
+    await AutoAgentifyPlanner(client=client).plan(
+        provider_type="openai",
+        base_url="https://llm.example.test/v1",
+        api_key="secret",
+        model="model",
+        catalog=catalog,
+        reporter=reporter,
+        allowed_system_capabilities=["order_fulfillment"],
+    )
+
+    strategy = next(
+        event
+        for event in reporter.events
+        if event.kind == "analysis_strategy_selected"
+    )
+    assert strategy.params["mode"] == "domain_groups"
+    assert strategy.params["domain_count"] == 2
+    completed = next(
+        event
+        for event in reporter.events
+        if event.kind == "capability_consolidation_completed"
+    )
+    assert completed.params["input_count"] == 2
+    assert completed.params["output_count"] == 1
+    consolidated = [
+        event
+        for event in reporter.events
+        if event.kind == "capability_consolidated"
+    ]
+    assert [event.capability["name"] for event in consolidated] == [
+        "Project order fulfillment"
+    ]
+    assert "Project order fulfillment" in client.calls[-1][-1].content
 
 
 @pytest.mark.asyncio

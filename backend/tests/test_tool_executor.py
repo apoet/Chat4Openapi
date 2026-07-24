@@ -62,6 +62,7 @@ async def test_places_arguments_and_request_scoped_auth() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url == "https://api.example.test/v1/pets/a%2Fb?trace=t&api_key=secret"
         assert request.headers["User-Agent"] == "Agent4API/0.1"
+        assert request.headers["Accept-Encoding"] == "identity"
         assert request.headers["X-Mode"] == "safe"
         assert request.headers["Authorization"] == "Bearer token"
         assert request.headers["Cookie"] in {"region=eu; sid=session", "sid=session; region=eu"}
@@ -76,7 +77,10 @@ async def test_places_arguments_and_request_scoped_auth() -> None:
         source(),
         {"pet_id": "a/b", "trace": "t", "mode": "safe", "region": "eu", "name": "Milo", "age": 3},
         RequestAuth(
-            headers={"Authorization": "Bearer token"},
+            headers={
+                "Authorization": "Bearer token",
+                "Accept-Encoding": "gzip",
+            },
             cookies={"sid": "session"},
             query={"api_key": "secret"},
         ),

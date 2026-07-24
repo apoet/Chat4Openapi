@@ -82,7 +82,7 @@ def test_existing_new_file_is_never_overwritten(tmp_path):
 
 - [ ] **Step 2: Run tests and record RED**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_brand_migration.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_brand_migration.py -q`
 Expected: import failure for `chat4openapi` or missing migration helper.
 
 - [ ] **Step 3: Move the package and replace owned identifiers**
@@ -107,7 +107,7 @@ Use `git mv` for the Python package, then mechanically replace product-owned ide
 Run:
 
 ```powershell
-conda run -n chat4openapi pytest backend/tests/test_brand_migration.py backend/tests/test_database.py -q
+conda run -n agent4api pytest backend/tests/test_brand_migration.py backend/tests/test_database.py -q
 npm test -- --run src/__tests__/locale-coverage.spec.ts
 npm run typecheck
 $legacyLower = "chat" + "api"
@@ -160,7 +160,7 @@ Cover fresh upgrade, existing conversations, stable Skill order, downgrade/re-up
 
 - [ ] **Step 2: Run migration tests and record RED**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_multi_agent_models.py backend/tests/test_database.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_multi_agent_models.py backend/tests/test_database.py -q`
 Expected: missing `agents`, `agent_skills`, `agent_api_keys`, and `conversations.agent_id`.
 
 - [ ] **Step 3: Implement ORM and migration**
@@ -178,7 +178,7 @@ Create the new tables, copy singleton data, bind non-deleted Skills, backfill co
 
 - [ ] **Step 4: Run focused migrations and ORM tests**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_multi_agent_models.py backend/tests/test_database.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_multi_agent_models.py backend/tests/test_database.py -q`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -223,7 +223,7 @@ Also cover transactional default switching, soft deletion, ordered bindings, sto
 
 - [ ] **Step 2: Run focused API tests and record RED**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_agent_api.py backend/tests/test_llm_providers.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_agent_api.py backend/tests/test_llm_providers.py -q`
 Expected: old singleton route or missing collection endpoints.
 
 - [ ] **Step 3: Implement transactional services and routes**
@@ -240,7 +240,7 @@ Validate provider and running bound Skills on enable. Lock default transitions i
 
 - [ ] **Step 4: Run focused and affected backend tests**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_agent_api.py backend/tests/test_llm_providers.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_agent_api.py backend/tests/test_llm_providers.py -q`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -286,7 +286,7 @@ Cover missing/invalid/expired/revoked keys, last-used update, `agent-default`, b
 
 - [ ] **Step 2: Run tests and record RED**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_agent_keys.py backend/tests/test_compatible_api.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_agent_keys.py backend/tests/test_compatible_api.py -q`
 Expected: compatible endpoints still accept unauthenticated requests.
 
 - [ ] **Step 3: Implement high-entropy hashed keys and dependency**
@@ -303,7 +303,7 @@ Use constant-time comparison after prefix narrowing. Resolve the Agent exclusive
 
 - [ ] **Step 4: Run focused tests and scan responses/log fixtures for secrets**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_agent_keys.py backend/tests/test_compatible_api.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_agent_keys.py backend/tests/test_compatible_api.py -q`
 Expected: PASS and no plaintext key in persisted rows or list responses.
 
 - [ ] **Step 5: Commit**
@@ -347,7 +347,7 @@ def test_browser_conversation_rejects_agent_change(client):
 
 - [ ] **Step 2: Run focused runtime tests and record RED**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_agent_runtime.py backend/tests/test_chat_turn_api.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_agent_runtime.py backend/tests/test_chat_turn_api.py -q`
 Expected: singleton Agent lookup and all-running-Skills catalog violate assertions.
 
 - [ ] **Step 3: Implement Agent-specific configuration and catalog queries**
@@ -365,7 +365,7 @@ Persist `conversation.agent_id` on creation and use it on continuation. Compatib
 
 - [ ] **Step 4: Run focused runtime/API regressions**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_agent_runtime.py backend/tests/test_chat_turn_api.py backend/tests/test_compatible_api.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_agent_runtime.py backend/tests/test_chat_turn_api.py backend/tests/test_compatible_api.py -q`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -410,7 +410,7 @@ Cover manual/browser creation, API creation, Cookie normalization, encrypted row
 
 - [ ] **Step 2: Run tests and record RED**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_tool_sessions.py backend/tests/test_tool_session_credentials.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_tool_sessions.py backend/tests/test_tool_session_credentials.py -q`
 Expected: existing global username/password Session cannot satisfy per-source bindings.
 
 - [ ] **Step 3: Implement generalized encrypted credential maps**
@@ -428,7 +428,7 @@ Store only encrypted credential JSON plus hashes/metadata. Resolve the correct s
 
 - [ ] **Step 4: Run focused Tool Session and Agent Tool execution tests**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_tool_sessions.py backend/tests/test_tool_session_credentials.py backend/tests/test_agent_runtime.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_tool_sessions.py backend/tests/test_tool_session_credentials.py backend/tests/test_agent_runtime.py -q`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -470,7 +470,7 @@ Cover polling interval, expiry, authorization_pending, slow_down, denial, PKCE S
 
 - [ ] **Step 2: Run OAuth tests and record RED**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_tool_oauth.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_tool_oauth.py -q`
 Expected: missing OAuth services/routes.
 
 - [ ] **Step 3: Implement OAuth clients without chat-turn redirects**
@@ -486,7 +486,7 @@ Encrypt verifier, access token, and refresh token. Device status polling occurs 
 
 - [ ] **Step 4: Run OAuth and Tool Session regressions**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_tool_oauth.py backend/tests/test_tool_sessions.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_tool_oauth.py backend/tests/test_tool_sessions.py -q`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -647,7 +647,7 @@ Cover delete, duplicate IDs, invalid IDs, 201st item, source constraints, CSRF, 
 
 - [ ] **Step 2: Run tests and record RED**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_admin_tools_bulk.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_admin_tools_bulk.py -q`
 Expected: route missing.
 
 - [ ] **Step 3: Implement one-item transactions with structured results**
@@ -665,7 +665,7 @@ db.commit()
 
 - [ ] **Step 4: Run focused and existing Tool tests**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_admin_tools_bulk.py backend/tests/test_admin_tools.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_admin_tools_bulk.py backend/tests/test_admin_tools.py -q`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -848,8 +848,8 @@ Expected: one Alembic head; all rows, secrets, Agent bindings, and conversations
 - [ ] **Step 3: Run complete automated gates serially**
 
 ```powershell
-conda run -n chat4openapi pytest backend/tests -q
-conda run -n chat4openapi ruff check backend/src backend/tests
+conda run -n agent4api pytest backend/tests -q
+conda run -n agent4api ruff check backend/src backend/tests
 npm test -- --run --testTimeout=15000
 npm run typecheck
 npm run build

@@ -137,6 +137,10 @@ class ToolExecutor:
         query.update(auth.query)
         headers.update(auth.headers)
         cookies.update(auth.cookies)
+        for name in tuple(headers):
+            if name.lower() == "accept-encoding":
+                del headers[name]
+        headers["Accept-Encoding"] = "identity"
 
         request_kwargs: dict[str, Any] = {}
         request_body = execution.get("request_body")

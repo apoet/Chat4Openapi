@@ -10,7 +10,9 @@ from sqlalchemy.orm import Session
 
 from chat4openapi.api.errors import ApiError
 from chat4openapi.auto_agentify.catalog import (
+    build_candidate_operation_catalog,
     build_operation_catalog,
+    find_candidate_schema_issues,
     find_body_schema_issues,
     is_high_impact,
 )
@@ -39,6 +41,7 @@ from chat4openapi.schemas.auto_agentify import (
 from chat4openapi.schemas.tools import ApiSourceSummary
 from chat4openapi.security.encryption import SecretCipher
 from chat4openapi.tools.candidates import ToolCandidate, build_candidates
+from chat4openapi.tools.effective_schema import effective_input_schema
 from chat4openapi.tools.openapi_loader import (
     OpenAPIImportError,
     load_openapi,
@@ -65,7 +68,7 @@ class AutoAgentifyService:
         provider_id: int,
         source_id: int | None = None,
         name: str,
-        raw_document: bytes,
+        raw_document: bytes | None,
         source_url: str | None,
         base_url: str | None,
         allow_private_networks: bool,
@@ -75,16 +78,6 @@ class AutoAgentifyService:
         result_language: str = "en-US",
     ) -> AutoAgentifyResponse:
         started_at = perf_counter()
-        await _emit(
-            reporter,
-            ProgressEvent(
-                kind="document_loaded",
-                phase="loading_document",
-                progress=5,
-                message_key="autoAgentify.events.documentLoaded",
-                params={"bytes": len(raw_document)},
-            ),
-        )
         provider = db.get(LlmProvider, provider_id)
         if (
             provider is None
@@ -92,37 +85,111 @@ class AutoAgentifyService:
             or not provider.enabled
         ):
             raise ApiError(409, "auto_agentify.provider_unavailable")
-        try:
-            spec = load_openapi(raw_document)
-            normalized = normalize_openapi(spec, source_url=source_url)
-        except OpenAPIImportError as exc:
-            raise ApiError(
-                422, "auto_agentify.openapi_invalid", reason=str(exc)
-            ) from exc
-        await _emit(
-            reporter,
-            ProgressEvent(
-                kind="openapi_validated",
-                phase="parsing_openapi",
-                progress=15,
-                message_key="autoAgentify.events.openapiValidated",
-                params={},
-            ),
-        )
-        effective_base_url = base_url
-        if effective_base_url is None:
-            servers = normalized.get("servers", [])
-            effective_base_url = servers[0].get("url") if servers else None
-        if not effective_base_url:
-            raise ApiError(422, "tools.base_url_required")
-        try:
-            candidates = await build_candidates(normalized, effective_base_url)
-        except (KeyError, ValueError) as exc:
-            raise ApiError(
-                422, "auto_agentify.openapi_unsupported", reason=str(exc)
-            ) from exc
-        catalog = build_operation_catalog(normalized, candidates)
-        body_schema_issues = find_body_schema_issues(normalized)
+        spec: dict[str, Any] = {}
+        if source_id is not None and raw_document is None:
+            source = db.get(ApiSource, source_id)
+            if source is None or source.deleted_at is not None:
+                raise ApiError(404, "tools.source_not_found")
+            tools = list(
+                db.scalars(
+                    select(Tool).where(
+                        Tool.api_source_id == source.id,
+                        Tool.deleted_at.is_(None),
+                    )
+                )
+            )
+            if not tools:
+                raise ApiError(409, "auto_agentify.source_tools_missing")
+            candidates = [
+                ToolCandidate(
+                    operation_key=tool.operation_key,
+                    name=tool.name,
+                    description=tool.description or tool.operation_key,
+                    input_schema=effective_input_schema(db, tool),
+                    execution_schema=tool.execution_schema,
+                )
+                for tool in tools
+            ]
+            catalog = build_candidate_operation_catalog(candidates)
+            body_schema_issues = find_candidate_schema_issues(candidates)
+            effective_base_url = source.base_url
+            await _emit(
+                reporter,
+                ProgressEvent(
+                    kind="source_tools_loaded",
+                    phase="cataloging_operations",
+                    progress=15,
+                    message_key="autoAgentify.events.sourceToolsLoaded",
+                    params={"count": len(candidates)},
+                    metrics={"operation_count": len(candidates)},
+                ),
+            )
+            issue_keys = {
+                issue.operation_key for issue in body_schema_issues
+            }
+            for tool in tools:
+                tool.needs_schema_review = tool.operation_key in issue_keys
+            db.commit()
+            document_hash = hashlib.sha256(
+                json.dumps(
+                    [
+                        {
+                            "operation_key": item.operation_key,
+                            "input_schema": item.input_schema,
+                            "execution_schema": item.execution_schema,
+                        }
+                        for item in candidates
+                    ],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
+        else:
+            if raw_document is None:
+                raise ApiError(422, "auto_agentify.openapi_invalid")
+            await _emit(
+                reporter,
+                ProgressEvent(
+                    kind="document_loaded",
+                    phase="loading_document",
+                    progress=5,
+                    message_key="autoAgentify.events.documentLoaded",
+                    params={"bytes": len(raw_document)},
+                ),
+            )
+            try:
+                spec = load_openapi(raw_document)
+                normalized = normalize_openapi(spec, source_url=source_url)
+            except OpenAPIImportError as exc:
+                raise ApiError(
+                    422, "auto_agentify.openapi_invalid", reason=str(exc)
+                ) from exc
+            await _emit(
+                reporter,
+                ProgressEvent(
+                    kind="openapi_validated",
+                    phase="parsing_openapi",
+                    progress=15,
+                    message_key="autoAgentify.events.openapiValidated",
+                    params={},
+                ),
+            )
+            effective_base_url = base_url
+            if effective_base_url is None:
+                servers = normalized.get("servers", [])
+                effective_base_url = servers[0].get("url") if servers else None
+            if not effective_base_url:
+                raise ApiError(422, "tools.base_url_required")
+            try:
+                candidates = await build_candidates(normalized, effective_base_url)
+            except (KeyError, ValueError) as exc:
+                raise ApiError(
+                    422, "auto_agentify.openapi_unsupported", reason=str(exc)
+                ) from exc
+            catalog = build_operation_catalog(normalized, candidates)
+            body_schema_issues = find_body_schema_issues(normalized)
+            document_hash = hashlib.sha256(raw_document).hexdigest()
         await _emit(
             reporter,
             ProgressEvent(
@@ -220,6 +287,9 @@ class AutoAgentifyService:
                     allow_private_networks=allow_private_networks,
                     catalog=catalog,
                     result_language=result_language,
+                    schema_issue_keys={
+                        issue.operation_key for issue in body_schema_issues
+                    },
                 )
         except IntegrityError as exc:
             raise ApiError(409, "auto_agentify.conflict") from exc
@@ -251,7 +321,7 @@ class AutoAgentifyService:
             "auto_agentify.completed provider_id=%s document_hash=%s "
             "operations=%s skills=%s agents=%s elapsed_ms=%s",
             provider_id,
-            hashlib.sha256(raw_document).hexdigest(),
+            document_hash,
             len(candidates),
             len(result.skills),
             len(result.agents),
@@ -266,7 +336,7 @@ class AutoAgentifyService:
         provider_id: int,
         source_id: int | None,
         name: str,
-        raw_document: bytes,
+        raw_document: bytes | None,
         spec: dict[str, Any],
         candidates: Sequence[ToolCandidate],
         plan: GenerationPlan,
@@ -275,8 +345,11 @@ class AutoAgentifyService:
         allow_private_networks: bool,
         catalog,
         result_language: str,
+        schema_issue_keys: set[str],
     ) -> AutoAgentifyResponse:
         if source_id is None:
+            if raw_document is None:
+                raise ApiError(422, "auto_agentify.openapi_invalid")
             source = ApiSource(
                 name=name,
                 source_type="openapi",
@@ -298,6 +371,9 @@ class AutoAgentifyService:
                     description=candidate.description,
                     input_schema=candidate.input_schema,
                     execution_schema=candidate.execution_schema,
+                    needs_schema_review=(
+                        candidate.operation_key in schema_issue_keys
+                    ),
                     enabled=False,
                 )
                 for candidate in candidates

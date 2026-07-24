@@ -22,7 +22,7 @@ class AutoAgentifyJob(Base):
     __tablename__ = "auto_agentify_jobs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('queued', 'running', 'completed', 'failed')",
+            "status IN ('queued', 'running', 'completed', 'failed', 'cancelled')",
             name="ck_auto_agentify_job_status",
         ),
         CheckConstraint(

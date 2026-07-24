@@ -139,6 +139,38 @@ async def test_tool_list_exposes_tags_and_execution_metadata(
 
 
 @pytest.mark.asyncio
+async def test_tool_list_can_be_loaded_for_one_api_source(
+    client: httpx.AsyncClient,
+) -> None:
+    csrf = await admin_login(client)
+    pet_payload = import_payload()
+    orders_payload = {**import_payload(), "name": "Orders API"}
+    pet_source = await client.post(
+        "/api/admin/sources/import",
+        json=pet_payload,
+        headers={"X-CSRF-Token": csrf},
+    )
+    orders_source = await client.post(
+        "/api/admin/sources/import",
+        json=orders_payload,
+        headers={"X-CSRF-Token": csrf},
+    )
+
+    listed = await client.get(
+        "/api/admin/tools",
+        params={"source_id": orders_source.json()["source"]["id"]},
+    )
+
+    assert pet_source.status_code == 201
+    assert orders_source.status_code == 201
+    assert listed.status_code == 200
+    assert listed.json()
+    assert {
+        tool["api_source_id"] for tool in listed.json()
+    } == {orders_source.json()["source"]["id"]}
+
+
+@pytest.mark.asyncio
 async def test_tool_description_can_be_updated(client: httpx.AsyncClient) -> None:
     csrf = await admin_login(client)
     imported = await client.post(
@@ -158,6 +190,52 @@ async def test_tool_description_can_be_updated(client: httpx.AsyncClient) -> Non
     assert updated.status_code == 200
     assert updated.json()["description"] == "Search pets by criteria"
     assert listed.json()[0]["description"] == "Search pets by criteria"
+
+
+@pytest.mark.asyncio
+async def test_saving_a_tool_refreshes_its_schema_review_status(
+    client: httpx.AsyncClient,
+    db_session_factory: sessionmaker[Session],
+) -> None:
+    csrf = await admin_login(client)
+    imported = await client.post(
+        "/api/admin/sources/import",
+        json=import_payload(),
+        headers={"X-CSRF-Token": csrf},
+    )
+    tool_id = imported.json()["tools"][0]["id"]
+    with db_session_factory() as session:
+        tool = session.get(Tool, tool_id)
+        assert tool is not None
+        tool.input_schema = {
+            "type": "object",
+            "properties": {
+                "body": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                }
+            },
+        }
+        tool.execution_schema = {
+            "method": "POST",
+            "path": "/pets",
+            "parameters": [],
+            "request_body": {
+                "content_type": "application/json",
+                "argument": "body",
+            },
+        }
+        tool.needs_schema_review = False
+        session.commit()
+
+    updated = await client.patch(
+        f"/api/admin/tools/{tool_id}",
+        json={"description": "Create a pet"},
+        headers={"X-CSRF-Token": csrf},
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["needs_schema_review"] is True
 
 
 @pytest.mark.asyncio
@@ -186,6 +264,7 @@ async def test_tool_parameter_guidance_updates_the_effective_schema(
         "description": "Pet name supplied by the user",
         "example": "Fido",
     }
+    assert updated.json()["needs_schema_review"] is False
     listed_tool = next(item for item in listed.json() if item["id"] == tool_id)
     assert listed_tool["input_schema"] == updated.json()["input_schema"]
     with db_session_factory() as session:
@@ -440,6 +519,7 @@ async def test_api_source_file_refresh_updates_only_changed_tools(
         headers={"X-CSRF-Token": csrf},
     )
     document = json.loads(import_payload()["document"])
+    document["paths"]["/pets"]["post"]["operationId"] = "createPetV2"
     document["paths"]["/pets"]["post"]["parameters"].append(
         {"name": "limit", "in": "query", "schema": {"type": "integer"}}
     )
@@ -462,7 +542,7 @@ async def test_api_source_file_refresh_updates_only_changed_tools(
         headers={"X-CSRF-Token": csrf},
     )
     tools = (await client.get("/api/admin/tools")).json()
-    updated_tool = next(tool for tool in tools if tool["name"] == "createPet")
+    updated_tool = next(tool for tool in tools if tool["name"] == "createPetV2")
 
     assert refreshed.status_code == 200
     assert refreshed.json() == {"created": 1, "updated": 1, "unchanged": 1}

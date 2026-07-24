@@ -1,4 +1,4 @@
-name: chat4openapi
+name: agent4api
 channels:
   - conda-forge
 dependencies:

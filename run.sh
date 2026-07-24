@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-CONDA_ENV_NAME="${CONDA_ENV_NAME:-chat4openapi}"
+CONDA_ENV_NAME="${CONDA_ENV_NAME:-agent4api}"
 NODE_VERSION="${NODE_VERSION:-20.19.4}"
 BACKEND_PID=""
 FRONTEND_PID=""
@@ -14,7 +14,7 @@ Usage: ./run.sh
 Starts the Agent4API development backend and frontend.
 
 Optional environment variables:
-  CONDA_ENV_NAME  Conda environment name (default: chat4openapi)
+  CONDA_ENV_NAME  Conda environment name (default: agent4api)
   NODE_VERSION    nvm Node.js version (default: 20.19.4)
 
 The script loads .env when present, applies Alembic migrations, and then starts:
@@ -94,13 +94,13 @@ fi
 
 echo "Applying database migrations..."
 conda run --no-capture-output -n "$CONDA_ENV_NAME" \
-  alembic -c backend/alembic.ini upgrade head
+  python -m alembic -c backend/alembic.ini upgrade head
 
 trap cleanup EXIT INT TERM
 
 echo "Starting backend at http://127.0.0.1:8000"
 conda run --no-capture-output -n "$CONDA_ENV_NAME" \
-  uvicorn chat4openapi.main:app --app-dir backend/src \
+  python -m uvicorn chat4openapi.main:app --app-dir backend/src \
   --host 127.0.0.1 --port 8000 &
 BACKEND_PID=$!
 

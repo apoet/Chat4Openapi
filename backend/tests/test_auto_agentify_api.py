@@ -153,6 +153,7 @@ async def test_file_generation_creates_immediately_usable_configuration(
         skill = session.scalar(select(Skill))
         agent = session.scalar(select(Agent))
         assert tool is not None and tool.enabled is True
+        assert tool.needs_schema_review is True
         assert skill is not None and skill.running is True
         assert skill.description == body["skills"][0]["description"]
         assert agent is not None and agent.enabled is True
@@ -184,15 +185,32 @@ async def test_generation_for_imported_source_reuses_source_and_tools(
     source_id = imported.json()["source"]["id"]
 
     with db_session_factory() as session:
+        source = session.get(ApiSource, source_id)
+        tool = session.scalar(select(Tool))
+        assert source is not None and tool is not None
+        source.spec_snapshot = "{not valid openapi"
+        source.document_url = "https://unreachable.example.test/openapi.json"
+        tool.description = "Creates a pet using the current curated Tool."
+        tool.input_schema = {
+            "type": "object",
+            "properties": {
+                "body": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                }
+            },
+        }
+        session.commit()
+        planner = SuccessfulPlanner()
         result = await AutoAgentifyService(
-            planner=SuccessfulPlanner(),
+            planner=planner,
             cipher=cipher,
         ).generate(
             db=session,
             provider_id=provider_id,
             source_id=source_id,
             name="Pets",
-            raw_document=OPENAPI,
+            raw_document=None,
             source_url=None,
             base_url="https://api.example.test/v1",
             allow_private_networks=False,
@@ -202,6 +220,11 @@ async def test_generation_for_imported_source_reuses_source_and_tools(
         assert session.scalar(select(func.count()).select_from(Tool)) == 1
         tool = session.scalar(select(Tool))
         assert tool is not None and tool.enabled is True
+        assert tool.needs_schema_review is True
+        assert planner.calls[0]["catalog"][0].description == (
+            "Creates a pet using the current curated Tool."
+        )
+        assert planner.calls[0]["catalog"][0].input_fields == ("body",)
 
 
 @pytest.mark.asyncio

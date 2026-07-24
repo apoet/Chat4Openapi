@@ -1,5 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
@@ -138,6 +138,34 @@ describe('Skills and chat', () => {
     )
   })
 
+  it('sends after Enter confirms an IME composition', async () => {
+    const fetchMock = chatFetch({
+      turns: [response({
+        status: 'completed', conversation_id: 'conversation-1', agent_id: 1,
+        agent_name: 'Research Agent', message: 'Done.', loaded_skill_ids: [], pending: null,
+      })],
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(ChatView, {
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await screen.findByRole('option', { name: 'Research Agent — Default' })
+    const message = await screen.findByLabelText('Message')
+    await fireEvent.update(message, '查询一个基因')
+
+    await fireEvent.compositionStart(message)
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+    Object.defineProperty(enter, 'isComposing', { value: true })
+    message.dispatchEvent(enter)
+    await fireEvent.compositionEnd(message)
+
+    await waitFor(() => expect(
+      fetchMock.mock.calls.some(([url]) => url === '/api/chat/turns'),
+    ).toBe(true))
+    const call = fetchMock.mock.calls.find(([url]) => url === '/api/chat/turns')
+    expect(JSON.parse((call?.[1] as RequestInit).body as string).message).toBe('查询一个基因')
+  })
+
   it('keeps the latest message visible when new messages arrive', async () => {
     vi.stubGlobal('fetch', chatFetch({
       turns: [response({
@@ -227,20 +255,21 @@ describe('Skills and chat', () => {
       return baseFetch(input, init)
     })
     vi.stubGlobal('fetch', fetchMock)
-    vi.stubGlobal('confirm', vi.fn(() => true))
-
     render(ChatView, {
       global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
     })
     await screen.findByRole('button', { name: 'Delete this chat' })
 
     await fireEvent.click(screen.getByRole('button', { name: 'Delete Delete this chat' }))
+    const deleteDialog = screen.getByRole('dialog', { name: 'Delete chat?' })
+    expect(deleteDialog.textContent).toContain('Delete this chat')
+    await fireEvent.click(within(deleteDialog).getByRole('button', { name: 'Delete chat' }))
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       '/api/chat/conversations/conversation-first',
       expect.objectContaining({ method: 'DELETE' }),
     ))
-    expect(screen.queryByRole('button', { name: 'Delete this chat' })).toBeNull()
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Delete this chat' })).toBeNull())
     expect(screen.getByRole('button', { name: 'Keep this chat' })).toBeTruthy()
     expect(JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) ?? '[]'))
       .toEqual([expect.objectContaining({ id: 'second' })])
@@ -517,11 +546,19 @@ describe('Skills and chat', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(SkillsView, { global: { plugins: [i18n] } })
-    await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
+    const deleteButton = await screen.findByRole('button', { name: 'Delete' })
+    await fireEvent.click(deleteButton)
 
-    expect(window.confirm).toHaveBeenCalledWith(
-      'Delete Skill “Pet helper”? Agents that reference it may no longer provide this capability.',
-    )
+    const dialog = screen.getByRole('dialog', { name: 'Delete Skill?' })
+    expect(dialog.textContent).toContain('Pet helper')
+    expect(dialog.textContent).toContain('This action cannot be undone.')
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+
+    await fireEvent.click(deleteButton)
+    const confirmedDialog = screen.getByRole('dialog', { name: 'Delete Skill?' })
+    await fireEvent.click(within(confirmedDialog).getByRole('button', { name: 'Delete Skill' }))
+
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6))
     expect(fetchMock.mock.calls[4][0]).toBe('/api/admin/skills/5')
   })

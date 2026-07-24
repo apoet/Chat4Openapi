@@ -64,7 +64,7 @@ def test_generation_plan_rejects_limits_and_unknown_references():
 
 - [ ] **Step 2: Run the focused test**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_auto_agentify_planner.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_auto_agentify_planner.py -q`
 
 Expected: FAIL because `chat4openapi.schemas.auto_agentify` does not exist.
 
@@ -108,7 +108,7 @@ class GenerationPlan(BaseModel):
 
 - [ ] **Step 4: Run and commit**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_auto_agentify_planner.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_auto_agentify_planner.py -q`
 
 Expected: PASS.
 
@@ -145,7 +145,7 @@ def test_delete_post_patch_and_put_are_high_impact():
 
 - [ ] **Step 2: Verify failure**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_auto_agentify_catalog.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_auto_agentify_catalog.py -q`
 
 Expected: FAIL because the catalog module does not exist.
 
@@ -174,7 +174,7 @@ Build items by joining candidates to normalized path operations using `operation
 
 - [ ] **Step 4: Run and commit**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_auto_agentify_catalog.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_auto_agentify_catalog.py -q`
 
 Expected: PASS.
 
@@ -218,7 +218,7 @@ async def test_large_catalog_uses_batches_and_synthesis():
 
 - [ ] **Step 2: Verify failure**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_auto_agentify_planner.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_auto_agentify_planner.py -q`
 
 Expected: FAIL because `AutoAgentifyPlanner` is missing.
 
@@ -239,7 +239,7 @@ For more than 200 operations, request bounded capability summaries for each dete
 
 - [ ] **Step 4: Run and commit**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_auto_agentify_planner.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_auto_agentify_planner.py -q`
 
 Expected: PASS.
 
@@ -288,7 +288,7 @@ Also add tests for URL safety, 5 MB file rejection, unavailable providers, limit
 
 - [ ] **Step 2: Verify failure**
 
-Run: `conda run -n chat4openapi pytest backend/tests/test_auto_agentify_api.py -q`
+Run: `conda run -n agent4api pytest backend/tests/test_auto_agentify_api.py -q`
 
 Expected: FAIL with endpoint not found.
 
@@ -324,8 +324,8 @@ Map `PlanGenerationError` and `LlmProviderError` to redacted `ApiError` codes. R
 Run:
 
 ```powershell
-conda run -n chat4openapi pytest backend/tests/test_auto_agentify_api.py backend/tests/test_auto_agentify_catalog.py backend/tests/test_auto_agentify_planner.py -q
-conda run -n chat4openapi pytest backend/tests/test_openapi_import.py backend/tests/test_admin_auth.py backend/tests/test_admin_users.py -q
+conda run -n agent4api pytest backend/tests/test_auto_agentify_api.py backend/tests/test_auto_agentify_catalog.py backend/tests/test_auto_agentify_planner.py -q
+conda run -n agent4api pytest backend/tests/test_openapi_import.py backend/tests/test_admin_auth.py backend/tests/test_admin_users.py -q
 ```
 
 Expected: PASS.
@@ -449,7 +449,7 @@ Document:
 Run:
 
 ```powershell
-conda run -n chat4openapi pytest backend/tests -q
+conda run -n agent4api pytest backend/tests -q
 Set-Location frontend
 npm test
 npm run build

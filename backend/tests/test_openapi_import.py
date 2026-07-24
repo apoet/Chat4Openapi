@@ -34,6 +34,21 @@ def test_supplies_a_string_schema_for_openapi_parameters_missing_their_shape() -
     }
 
 
+@pytest.mark.asyncio
+async def test_accepts_parseable_openapi_with_nonstandard_schema_types() -> None:
+    spec = load_openapi(fixture_bytes("openapi3.yaml"))
+    spec["components"]["schemas"]["Pet"]["additionalProperties"] = {"type": "any"}
+
+    loaded = load_openapi(json.dumps(spec).encode())
+    candidates = await build_candidates(
+        normalize_openapi(loaded),
+        "https://api.example.test/v1",
+    )
+
+    assert loaded["components"]["schemas"]["Pet"]["additionalProperties"] == {}
+    assert [candidate.operation_key for candidate in candidates] == ["POST /pets"]
+
+
 def test_rejects_external_references() -> None:
     spec = fixture_bytes("openapi3.yaml").replace(
         b'"#/components/schemas/PetInput"', b'"https://example.test/Pet.yaml"', 1
@@ -143,6 +158,18 @@ def test_uses_the_import_url_scheme_when_swagger_omits_schemes() -> None:
     assert normalized["servers"] == [{"url": "http://api.example.test/v1"}]
 
 
+def test_uses_the_document_origin_when_openapi_omits_servers() -> None:
+    spec = load_openapi(fixture_bytes("openapi3.yaml"))
+    spec.pop("servers")
+
+    normalized = normalize_openapi(
+        spec,
+        source_url="https://open.cnkgraph.com/swagger/v1/swagger.json",
+    )
+
+    assert normalized["servers"] == [{"url": "https://open.cnkgraph.com"}]
+
+
 def test_normalizes_swagger_body_query_and_internal_refs() -> None:
     normalized = normalize_openapi(load_openapi(fixture_bytes("openapi2.yaml")))
     operation = normalized["paths"]["/pets"]["post"]
@@ -210,20 +237,33 @@ async def test_candidate_names_are_deterministic_and_unique_without_operation_id
     spec = load_openapi(fixture_bytes("openapi3.yaml"))
     operation = spec["paths"]["/pets"]["post"]
     operation.pop("operationId")
-    spec["paths"]["/pets/{id}"] = {
+    spec["paths"]["/api/Label/{resourceType}/{resourceId}/{labelType}/{id}/{subId}"] = {
         "post": {
             **operation,
             "parameters": [
                 {
-                    "name": "id",
+                    "name": name,
                     "in": "path",
                     "required": True,
                     "schema": {"type": "string"},
                 }
+                for name in ("resourceType", "resourceId", "labelType", "id", "subId")
             ],
         }
     }
 
-    candidates = await build_candidates(spec, "https://api.example.test/v1")
+    first = await build_candidates(spec, "https://api.example.test/v1")
+    second = await build_candidates(spec, "https://api.example.test/v1")
 
-    assert [candidate.name for candidate in candidates] == ["post_pets", "post_pets_by_id"]
+    assert [candidate.name for candidate in first] == [
+        "op_0001_215161",
+        "op_0002_1d8329",
+    ]
+    assert [candidate.name for candidate in second] == [
+        candidate.name for candidate in first
+    ]
+    assert [candidate.operation_key for candidate in first] == [
+        "POST /pets",
+        "POST /api/Label/{resourceType}/{resourceId}/{labelType}/{id}/{subId}",
+    ]
+    assert all(len(candidate.name) <= 56 for candidate in first)

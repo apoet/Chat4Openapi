@@ -5,9 +5,10 @@ import { useI18n } from 'vue-i18n'
 import type { IndexedTool, ToolCatalog, ToolCatalogState } from '../composables/useToolCatalog'
 
 const PANEL_HEIGHT_KEY = 'chat4openapi.skill-tool-catalog-height'
-const DEFAULT_PANEL_HEIGHT = 680
+const DEFAULT_PANEL_HEIGHT = 900
+const PREVIOUS_DEFAULT_PANEL_HEIGHTS = new Set([680, 780])
 const MIN_PANEL_HEIGHT = 420
-const MAX_PANEL_HEIGHT = 1000
+const MAX_PANEL_HEIGHT = 1200
 const ROW_LIMIT = 100
 
 const props = defineProps<{
@@ -44,6 +45,10 @@ function boundedHeight(value: number): number {
 function readPanelHeight(): number {
   try {
     const value = Number.parseInt(localStorage.getItem(PANEL_HEIGHT_KEY) || '', 10)
+    if (PREVIOUS_DEFAULT_PANEL_HEIGHTS.has(value)) {
+      localStorage.setItem(PANEL_HEIGHT_KEY, String(DEFAULT_PANEL_HEIGHT))
+      return DEFAULT_PANEL_HEIGHT
+    }
     return Number.isFinite(value) ? boundedHeight(value) : DEFAULT_PANEL_HEIGHT
   } catch {
     return DEFAULT_PANEL_HEIGHT

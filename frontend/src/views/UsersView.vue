@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { ApiError, request } from '../api/client'
 import type { Locale, ManagedUser } from '../api/contracts'
 import { useAuthStore } from '../stores/auth'
+import { confirmDestructiveAction } from '../ui/confirmDestructiveAction'
 
 const { t } = useI18n()
 const auth = useAuthStore()
@@ -114,6 +115,15 @@ async function toggle(user: ManagedUser): Promise<void> {
 }
 
 async function remove(user: ManagedUser): Promise<void> {
+  const confirmed = await confirmDestructiveAction({
+    title: t('confirmations.dialog.deleteTitle', { item: t('confirmations.dialog.items.user') }),
+    message: t('confirmations.deleteUser', { name: user.username }),
+    subject: user.username,
+    warning: t('confirmations.dialog.irreversible'),
+    confirmLabel: t('confirmations.dialog.deleteAction', { item: t('confirmations.dialog.items.user') }),
+    cancelLabel: t('confirmations.dialog.cancel'),
+  })
+  if (!confirmed) return
   await request(`/api/admin/users/${user.id}`, { method: 'DELETE' }, auth.csrfToken)
   if (editingId.value === user.id) resetForm()
   await load()

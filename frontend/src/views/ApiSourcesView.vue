@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { routerKey } from 'vue-router'
 import { Lightning } from '@element-plus/icons-vue'
@@ -8,6 +8,7 @@ import { ApiError, request } from '../api/client'
 import type {
   ApiSourceSummary,
   AutoAgentifyJob,
+  AutoAgentifyJobEvent,
   OAuthConfigSummary,
   OAuthConfigWrite,
   OAuthGrantType,
@@ -18,6 +19,7 @@ import AutoAgentifyPanel from '../components/AutoAgentifyPanel.vue'
 import SourceMcpUsagePanel from '../components/SourceMcpUsagePanel.vue'
 import { useAuthStore } from '../stores/auth'
 import { useToolsStore } from '../stores/tools'
+import { confirmDestructiveAction } from '../ui/confirmDestructiveAction'
 
 const store = useToolsStore()
 const auth = useAuthStore()
@@ -25,7 +27,7 @@ const { t } = useI18n()
 const router = inject(routerKey, null)
 const name = ref('')
 const baseUrl = ref('')
-const importMode = ref<'file' | 'url'>('file')
+const importMode = ref<'file' | 'url'>('url')
 const sourceUrl = ref('')
 const file = ref<File | null>(null)
 const allowPrivateNetworks = ref(false)
@@ -80,6 +82,7 @@ const toolTestPassword = ref('')
 const showAutoAgentify = ref(false)
 const autoAgentifySourceRecord = ref<ApiSourceSummary | null>(null)
 const autoAgentifyResumeJobId = ref<string | null>(null)
+const sourceProgressStreams = new Map<string, EventSource>()
 const autoAgentifySource = computed(() => {
   const source = autoAgentifySourceRecord.value
   if (source) {
@@ -102,7 +105,58 @@ const autoAgentifySource = computed(() => {
   }
 })
 
-onMounted(() => void store.loadSources())
+function closeSourceProgressStream(publicId: string): void {
+  sourceProgressStreams.get(publicId)?.close()
+  sourceProgressStreams.delete(publicId)
+}
+
+function syncSourceProgressStreams(): void {
+  const activeJobs = new Set(
+    store.sources.flatMap((source) => {
+      const job = source.auto_agentify_job
+      return job?.status === 'queued' || job?.status === 'running'
+        ? [job.public_id]
+        : []
+    }),
+  )
+  for (const publicId of sourceProgressStreams.keys()) {
+    if (!activeJobs.has(publicId)) closeSourceProgressStream(publicId)
+  }
+  for (const publicId of activeJobs) {
+    if (sourceProgressStreams.has(publicId)) continue
+    const stream = new EventSource(
+      `/api/admin/auto-agentify/jobs/${encodeURIComponent(publicId)}/events`,
+    )
+    stream.onmessage = (message) => {
+      const event = JSON.parse(message.data) as AutoAgentifyJobEvent
+      const source = store.sources.find(
+        (item) => item.auto_agentify_job?.public_id === publicId,
+      )
+      const job = source?.auto_agentify_job
+      if (!job) return
+      job.phase = event.phase
+      job.progress = event.progress
+      if (event.kind === 'completed' || event.kind === 'failed' || event.kind === 'cancelled') {
+        job.status = event.kind
+        closeSourceProgressStream(publicId)
+      } else if (event.kind !== 'queued') {
+        job.status = 'running'
+      }
+    }
+    sourceProgressStreams.set(publicId, stream)
+  }
+}
+
+async function refreshSources(): Promise<void> {
+  await store.loadSources()
+  syncSourceProgressStreams()
+}
+
+onMounted(() => void refreshSources())
+onBeforeUnmount(() => {
+  for (const stream of sourceProgressStreams.values()) stream.close()
+  sourceProgressStreams.clear()
+})
 
 function openCombinedAutoAgentify(): void {
   autoAgentifySourceRecord.value = null
@@ -131,7 +185,15 @@ function selectFile(event: Event): void {
 }
 
 async function deleteSource(source: ApiSourceSummary): Promise<void> {
-  if (!window.confirm(t('confirmations.deleteSource', { name: source.name }))) return
+  const confirmed = await confirmDestructiveAction({
+    title: t('confirmations.dialog.deleteTitle', { item: t('confirmations.dialog.items.source') }),
+    message: t('confirmations.deleteSource', { name: source.name }),
+    subject: source.name,
+    warning: t('confirmations.dialog.irreversible'),
+    confirmLabel: t('confirmations.dialog.deleteAction', { item: t('confirmations.dialog.items.source') }),
+    cancelLabel: t('confirmations.dialog.cancel'),
+  })
+  if (!confirmed) return
   await store.deleteSource(source)
 }
 
@@ -465,11 +527,20 @@ const sourceLoginTools = () => store.tools.filter(
 )
 
 async function autoAgentifyGenerated(): Promise<void> {
-  await store.loadSources()
+  await refreshSources()
+}
+
+async function autoAgentifyStopped(): Promise<void> {
+  await refreshSources()
+  if (autoAgentifySourceRecord.value) {
+    autoAgentifySourceRecord.value = store.sources.find(
+      (source) => source.id === autoAgentifySourceRecord.value?.id,
+    ) ?? autoAgentifySourceRecord.value
+  }
 }
 
 async function autoAgentifyStarted(job: AutoAgentifyJob): Promise<void> {
-  await store.loadSources()
+  await refreshSources()
   if (job.source_id !== null) {
     autoAgentifySourceRecord.value = store.sources.find(
       (source) => source.id === job.source_id,
@@ -517,6 +588,7 @@ async function autoAgentifySourceImported(source: ApiSourceSummary): Promise<voi
       @generated="autoAgentifyGenerated"
       @source-imported="autoAgentifySourceImported"
       @started="autoAgentifyStarted"
+      @stopped="autoAgentifyStopped"
       @close="showAutoAgentify = false"
     />
     <section class="resource-list compact-resource-list">

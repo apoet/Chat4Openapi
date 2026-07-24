@@ -41,6 +41,7 @@ function tool(
     input_schema: {},
     execution_schema: {},
     tags: ['General'],
+    needs_schema_review: false,
     enabled: true,
     ...overrides,
   }
@@ -93,6 +94,44 @@ beforeEach(() => {
 })
 
 describe('scalable Skill Tool catalog', () => {
+  it('filters the Skills list by partial keywords across name, description, and prompt', async () => {
+    const skills = [
+      {
+        id: 1,
+        name: 'Genomic report',
+        description: 'Clinical variant analysis',
+        system_prompt: 'Summarize gene findings',
+        running: true,
+        tools: [],
+      },
+      {
+        id: 2,
+        name: 'Order support',
+        description: 'Tracks shipments',
+        system_prompt: 'Help customers with delivery questions',
+        running: false,
+        tools: [],
+      },
+    ]
+    vi.stubGlobal('fetch', catalogFetch([], [], skills))
+
+    render(SkillsView, { global: { plugins: [i18n] } })
+    await screen.findByText('Genomic report')
+    const search = await screen.findByRole('searchbox', { name: 'Search Skills' })
+
+    await fireEvent.update(search, 'VARIANT')
+    expect(screen.getByText('Genomic report')).toBeTruthy()
+    expect(screen.queryByText('Order support')).toBeNull()
+
+    await fireEvent.update(search, 'summarize gene')
+    expect(screen.getByText('Genomic report')).toBeTruthy()
+    expect(screen.queryByText('Order support')).toBeNull()
+
+    await fireEvent.update(search, 'ship')
+    expect(screen.queryByText('Genomic report')).toBeNull()
+    expect(screen.getByText('Order support')).toBeTruthy()
+  })
+
   it('searches 1,001 Tools completely by name, description, path, tag, and source before limiting rows', async () => {
     const tools = Array.from({ length: 1000 }, (_, index) => tool(index + 1))
     tools.push(tool(1001, {
@@ -295,15 +334,34 @@ describe('scalable Skill Tool catalog', () => {
   })
 
   it('restores a bounded panel height and persists keyboard resizing', async () => {
-    localStorage.setItem('chat4openapi.skill-tool-catalog-height', '780')
+    localStorage.setItem('chat4openapi.skill-tool-catalog-height', '940')
     vi.stubGlobal('fetch', catalogFetch([], []))
 
     render(SkillsView, { global: { plugins: [i18n] } })
     const panel = await screen.findByRole('region', { name: 'Tool catalog' })
-    expect(panel.getAttribute('style')).toContain('height: 780px')
+    expect(panel.getAttribute('style')).toContain('height: 940px')
     await fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize Tool catalog' }), { key: 'ArrowUp' })
-    expect(panel.getAttribute('style')).toContain('height: 820px')
-    expect(localStorage.getItem('chat4openapi.skill-tool-catalog-height')).toBe('820')
+    expect(panel.getAttribute('style')).toContain('height: 980px')
+    expect(localStorage.getItem('chat4openapi.skill-tool-catalog-height')).toBe('980')
+  })
+
+  it('uses a taller Tool catalog by default', async () => {
+    vi.stubGlobal('fetch', catalogFetch([], []))
+
+    render(SkillsView, { global: { plugins: [i18n] } })
+
+    const panel = await screen.findByRole('region', { name: 'Tool catalog' })
+    expect(panel.getAttribute('style')).toContain('height: 900px')
+  })
+
+  it('upgrades the previously persisted default height without replacing custom heights', async () => {
+    localStorage.setItem('chat4openapi.skill-tool-catalog-height', '780')
+    vi.stubGlobal('fetch', catalogFetch([], []))
+
+    render(SkillsView, { global: { plugins: [i18n] } })
+
+    const panel = await screen.findByRole('region', { name: 'Tool catalog' })
+    expect(panel.getAttribute('style')).toContain('height: 900px')
   })
 
   it('keeps editing usable when localStorage reads and writes fail', async () => {
@@ -314,7 +372,7 @@ describe('scalable Skill Tool catalog', () => {
     render(SkillsView, { global: { plugins: [i18n] } })
     const panel = await screen.findByRole('region', { name: 'Tool catalog' })
     await fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize Tool catalog' }), { key: 'ArrowDown' })
-    expect(panel.getAttribute('style')).toContain('height: 640px')
+    expect(panel.getAttribute('style')).toContain('height: 860px')
     await fireEvent.update(screen.getByLabelText('Skill name'), 'Still editable')
     expect((screen.getByLabelText('Skill name') as HTMLInputElement).value).toBe('Still editable')
   })
