@@ -158,27 +158,29 @@ async function remove(skill: SkillSummary): Promise<void> {
   <main class="management-page">
     <header class="page-heading"><div><p class="eyebrow">{{ t('skills.eyebrow') }}</p><h1>{{ t('skills.title') }}</h1><p class="muted">{{ t('skills.subtitle') }}</p></div></header>
     <div class="skill-workbench">
-      <section class="settings-panel skill-editor">
-        <div class="settings-grid"><label>{{ t('skills.name') }}<input v-model="name" /></label></div>
-        <label class="block-label">{{ t('skills.description') }}<input v-model="description" /></label>
-        <div class="prompt-field">
-          <label class="block-label">{{ t('skills.prompt') }}<textarea ref="promptInput" v-model="systemPrompt" rows="9" aria-autocomplete="list" :aria-controls="mentionTools.length ? 'tool-mention-menu' : undefined" :aria-activedescendant="mentionTools.length ? `tool-mention-${mentionTools[activeMentionIndex].id}` : undefined" :aria-expanded="mentionTools.length > 0" @input="updateMention" @keydown="handlePromptKeydown" /></label>
-          <div v-if="mentionTools.length" id="tool-mention-menu" class="tool-mention-menu" role="listbox" :aria-label="t('skills.catalog.suggestions')">
-            <div v-for="source in mentionResult.groups" :key="source.id" class="mention-source">
-              <div v-for="tagGroup in source.tags" :key="tagGroup.name" role="group" :aria-label="`${source.name} / ${tagGroup.name || t('skills.untagged')}`">
-                <p class="mention-category">{{ source.name }} / {{ tagGroup.name || t('skills.untagged') }}</p>
-                <button v-for="tool in tagGroup.tools" :id="`tool-mention-${tool.id}`" :key="tool.id" :ref="(element) => setMentionOption(tool.id, element)" type="button" role="option" :aria-selected="mentionTools[activeMentionIndex]?.id === tool.id" :class="{ active: mentionTools[activeMentionIndex]?.id === tool.id }" :aria-label="t('skills.mentionTool', { name: tool.name })" @mousedown.prevent @click="chooseMention(tool)"><strong>{{ tool.name }}</strong><small>{{ tool.method }} {{ tool.path }}</small></button>
+      <div class="skill-primary-column">
+        <section class="settings-panel skill-editor">
+          <div class="settings-grid"><label>{{ t('skills.name') }}<input v-model="name" /></label></div>
+          <label class="block-label">{{ t('skills.description') }}<input v-model="description" /></label>
+          <div class="prompt-field">
+            <label class="block-label">{{ t('skills.prompt') }}<textarea ref="promptInput" v-model="systemPrompt" rows="9" aria-autocomplete="list" :aria-controls="mentionTools.length ? 'tool-mention-menu' : undefined" :aria-activedescendant="mentionTools.length ? `tool-mention-${mentionTools[activeMentionIndex].id}` : undefined" :aria-expanded="mentionTools.length > 0" @input="updateMention" @keydown="handlePromptKeydown" /></label>
+            <div v-if="mentionTools.length" id="tool-mention-menu" class="tool-mention-menu" role="listbox" :aria-label="t('skills.catalog.suggestions')">
+              <div v-for="source in mentionResult.groups" :key="source.id" class="mention-source">
+                <div v-for="tagGroup in source.tags" :key="tagGroup.name" role="group" :aria-label="`${source.name} / ${tagGroup.name || t('skills.untagged')}`">
+                  <p class="mention-category">{{ source.name }} / {{ tagGroup.name || t('skills.untagged') }}</p>
+                  <button v-for="tool in tagGroup.tools" :id="`tool-mention-${tool.id}`" :key="tool.id" :ref="(element) => setMentionOption(tool.id, element)" type="button" role="option" :aria-selected="mentionTools[activeMentionIndex]?.id === tool.id" :class="{ active: mentionTools[activeMentionIndex]?.id === tool.id }" :aria-label="t('skills.mentionTool', { name: tool.name })" @mousedown.prevent @click="chooseMention(tool)"><strong>{{ tool.name }}</strong><small>{{ tool.method }} {{ tool.path }}</small></button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-        <div class="bound-count">{{ t('skills.bound', { count: selectedToolIds.length }) }}</div>
-        <div class="row-actions editor-actions"><button class="primary-action" :disabled="!name || !systemPrompt" @click="save">{{ t('skills.save') }}</button><button v-if="editingId" class="secondary-action" @click="resetEditor">{{ t('skills.cancel') }}</button></div>
-      </section>
+          <div class="bound-count">{{ t('skills.bound', { count: selectedToolIds.length }) }}</div>
+          <div class="row-actions editor-actions"><button class="primary-action" :disabled="!name || !systemPrompt" @click="save">{{ t('skills.save') }}</button><button v-if="editingId" class="secondary-action" @click="resetEditor">{{ t('skills.cancel') }}</button></div>
+        </section>
+        <section class="skill-list">
+          <article v-for="skill in store.skills" :key="skill.id" class="resource-row"><span class="resource-icon">SK</span><div><strong>{{ skill.name }}</strong><p>{{ skill.tools.length }} Tools</p></div><footer class="row-actions"><button class="secondary-action" @click="edit(skill)">{{ t('skills.edit') }}</button><button class="secondary-action" @click="store.setRunning(skill, !skill.running)">{{ skill.running ? t('skills.stop') : t('skills.start') }}</button><button class="danger-action" @click="remove(skill)">{{ t('tools.delete') }}</button></footer></article>
+        </section>
+      </div>
       <ToolCatalogPanel v-model="selectedToolIds" :catalog="catalog" @reference="referenceTool" />
     </div>
-    <section class="skill-list">
-      <article v-for="skill in store.skills" :key="skill.id" class="resource-row"><span class="resource-icon">SK</span><div><strong>{{ skill.name }}</strong><p>{{ skill.tools.length }} Tools</p></div><footer class="row-actions"><button class="secondary-action" @click="edit(skill)">{{ t('skills.edit') }}</button><button class="secondary-action" @click="store.setRunning(skill, !skill.running)">{{ skill.running ? t('skills.stop') : t('skills.start') }}</button><button class="danger-action" @click="remove(skill)">{{ t('tools.delete') }}</button></footer></article>
-    </section>
   </main>
 </template>
