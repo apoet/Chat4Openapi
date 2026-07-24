@@ -76,7 +76,7 @@ def test_job_event_sequence_is_unique_within_job(db):
 
 - [ ] **Step 2: Run RED**
 
-Run: `conda run -n chatapi pytest backend/tests/test_auto_agentify_jobs.py -q`
+Run: `pytest backend/tests/test_auto_agentify_jobs.py -q`
 
 Expected: FAIL because the job models do not exist.
 
@@ -106,7 +106,7 @@ Store `metrics`, `result`, `error_params`, event `params`, and event `capability
 Run:
 
 ```powershell
-conda run -n chatapi pytest backend/tests/test_auto_agentify_jobs.py backend/tests/test_final_migration_acceptance.py -q
+pytest backend/tests/test_auto_agentify_jobs.py backend/tests/test_final_migration_acceptance.py -q
 ```
 
 Expected: PASS.
@@ -142,7 +142,7 @@ def test_interruption_recovery_marks_active_jobs_failed(db):
 
 - [ ] **Step 2: Run RED**
 
-Run: `conda run -n chatapi pytest backend/tests/test_auto_agentify_jobs.py -q`
+Run: `pytest backend/tests/test_auto_agentify_jobs.py -q`
 
 Expected: FAIL because `JobProgressReporter` is missing.
 
@@ -163,7 +163,7 @@ Validate allowed phases, `0 <= progress <= 100`, localization-key prefix, bounde
 
 - [ ] **Step 4: Run GREEN**
 
-Run: `conda run -n chatapi pytest backend/tests/test_auto_agentify_jobs.py -q`
+Run: `pytest backend/tests/test_auto_agentify_jobs.py -q`
 
 Expected: PASS.
 
@@ -209,7 +209,7 @@ async def test_service_emits_parse_catalog_plan_and_post_commit_events():
 Run:
 
 ```powershell
-conda run -n chatapi pytest backend/tests/test_auto_agentify_planner.py backend/tests/test_auto_agentify_api.py -q
+pytest backend/tests/test_auto_agentify_planner.py backend/tests/test_auto_agentify_api.py -q
 ```
 
 Expected: FAIL because reporter arguments and strict capability contracts are missing.
@@ -240,7 +240,7 @@ Refactor `AutoAgentifyService.generate` to accept `db: Session` and emit pre-tra
 Run:
 
 ```powershell
-conda run -n chatapi pytest backend/tests/test_auto_agentify_catalog.py backend/tests/test_auto_agentify_planner.py backend/tests/test_auto_agentify_api.py -q
+pytest backend/tests/test_auto_agentify_catalog.py backend/tests/test_auto_agentify_planner.py backend/tests/test_auto_agentify_api.py -q
 ```
 
 Expected: PASS.
@@ -295,7 +295,7 @@ async def test_sse_replays_after_last_event_and_closes_at_terminal(client, compl
 Run:
 
 ```powershell
-conda run -n chatapi pytest backend/tests/test_auto_agentify_jobs.py backend/tests/test_auto_agentify_sse.py -q
+pytest backend/tests/test_auto_agentify_jobs.py backend/tests/test_auto_agentify_sse.py -q
 ```
 
 Expected: FAIL with missing job endpoints.
@@ -315,7 +315,7 @@ At application lifespan startup, call `mark_interrupted_jobs` before serving req
 Run:
 
 ```powershell
-conda run -n chatapi pytest backend/tests/test_auto_agentify_jobs.py backend/tests/test_auto_agentify_sse.py backend/tests/test_auto_agentify_api.py -q
+pytest backend/tests/test_auto_agentify_jobs.py backend/tests/test_auto_agentify_sse.py backend/tests/test_auto_agentify_api.py -q
 ```
 
 Expected: PASS.
@@ -405,8 +405,8 @@ Explain the adjacent one-click action, provider confirmation, background executi
 - [ ] **Step 3: Run full verification**
 
 ```powershell
-conda run -n chatapi pytest backend/tests -q
-conda run -n chatapi ruff check backend/src backend/tests
+pytest backend/tests -q
+ruff check backend/src backend/tests
 Set-Location frontend
 npm test
 npm run build
