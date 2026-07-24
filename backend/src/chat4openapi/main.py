@@ -29,6 +29,7 @@ from chat4openapi.api.tool_sessions import router as tool_sessions_router
 from chat4openapi.api.tool_oauth import router as tool_oauth_router
 from chat4openapi.config import get_settings
 from chat4openapi.chat.api import router as chat_router
+from chat4openapi.auto_agentify.progress import mark_interrupted_jobs
 from chat4openapi.db.session import SessionLocal
 from chat4openapi.mcp.runtime import create_mcp_server
 from chat4openapi.security.encryption import load_secret_cipher
@@ -45,6 +46,8 @@ def create_app(frontend_dist: Path | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        with SessionLocal() as db:
+            mark_interrupted_jobs(db)
         async with mcp_http_app.lifespan(mcp_http_app):
             yield
 

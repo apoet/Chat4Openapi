@@ -1,4 +1,5 @@
 from chat4openapi.models.api_source import ApiSource
+from chat4openapi.models.auto_agentify_job import AutoAgentifyJob, AutoAgentifyJobEvent
 from chat4openapi.models.admin import AdminUser
 from chat4openapi.models.admin_session import AdminSession
 from chat4openapi.models.agent import Agent, AgentApiKey, AgentSkill
@@ -27,6 +28,8 @@ __all__ = [
     "AgentSkill",
     "AgentEmbed",
     "ApiSource",
+    "AutoAgentifyJob",
+    "AutoAgentifyJobEvent",
     "ApiSourceOAuthConfig",
     "ApiSourceToolAuthConfig",
     "AppSetting",

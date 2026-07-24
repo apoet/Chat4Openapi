@@ -1,4 +1,5 @@
-from typing import Literal
+from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -22,6 +23,28 @@ class AgentPlan(BaseModel):
     max_iterations: int = Field(ge=2, le=32)
     value: str = Field(min_length=1, max_length=4_000)
     use_cases: list[str] = Field(min_length=1, max_length=10)
+
+
+class CapabilitySummary(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    description: str = Field(min_length=1, max_length=2_000)
+    value: str = Field(min_length=1, max_length=2_000)
+    workflow: list[str] = Field(min_length=1, max_length=12)
+    operation_keys: list[str] = Field(min_length=1, max_length=200)
+    candidate_skills: list[str] = Field(min_length=1, max_length=20)
+    high_impact: bool
+
+
+class CapabilityBatch(BaseModel):
+    capabilities: list[CapabilitySummary] = Field(min_length=1, max_length=50)
+
+    def validate_references(self, operation_keys: set[str]) -> None:
+        for capability in self.capabilities:
+            unknown = set(capability.operation_keys) - operation_keys
+            if unknown:
+                raise ValueError(
+                    f"unknown capability operation: {sorted(unknown)[0]}"
+                )
 
 
 class GenerationPlan(BaseModel):
@@ -81,3 +104,31 @@ class AutoAgentifyResponse(BaseModel):
     enabled_tool_count: int
     skills: list[GeneratedSkillResponse]
     agents: list[GeneratedAgentResponse]
+
+
+class AutoAgentifyJobEventResponse(BaseModel):
+    sequence: int
+    kind: str
+    phase: str
+    progress: int
+    message_key: str
+    params: dict[str, Any]
+    capability: dict[str, Any] | None
+    created_at: datetime
+
+
+class AutoAgentifyJobResponse(BaseModel):
+    public_id: str
+    provider_id: int
+    input_mode: Literal["url", "file"]
+    source_name: str
+    status: Literal["queued", "running", "completed", "failed"]
+    phase: str
+    progress: int
+    metrics: dict[str, Any]
+    result: dict[str, Any] | None
+    error_code: str | None
+    error_params: dict[str, Any] | None
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None

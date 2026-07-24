@@ -26,7 +26,7 @@ def test_fresh_database_reaches_the_only_alembic_head(tmp_path: Path) -> None:
     config = migration_config(database)
 
     assert ScriptDirectory.from_config(config).get_heads() == [
-        "0018_source_auth_request_config"
+        "0019_auto_agentify_jobs"
     ]
     command.upgrade(config, "head")
 
@@ -34,6 +34,8 @@ def test_fresh_database_reaches_the_only_alembic_head(tmp_path: Path) -> None:
     inspector = sa.inspect(engine)
     assert {
         "agents",
+        "auto_agentify_job_events",
+        "auto_agentify_jobs",
         "agent_api_keys",
         "agent_skills",
         "api_sources",
@@ -49,7 +51,7 @@ def test_fresh_database_reaches_the_only_alembic_head(tmp_path: Path) -> None:
     }
     with engine.connect() as connection:
         assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-            "0018_source_auth_request_config"
+            "0019_auto_agentify_jobs"
         )
     engine.dispose()
 

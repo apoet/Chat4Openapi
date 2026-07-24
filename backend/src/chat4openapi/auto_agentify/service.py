@@ -6,8 +6,8 @@ from typing import Any, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
-from chat4openapi.api.admin_auth import AdminContext
 from chat4openapi.api.errors import ApiError
 from chat4openapi.auto_agentify.catalog import (
     build_operation_catalog,
@@ -17,6 +17,7 @@ from chat4openapi.auto_agentify.planner import (
     AutoAgentifyPlanner,
     PlanGenerationError,
 )
+from chat4openapi.auto_agentify.progress import ProgressEvent
 from chat4openapi.db.serialized_write import serialized_write
 from chat4openapi.llm.client import LlmProviderError
 from chat4openapi.models import (
@@ -59,16 +60,27 @@ class AutoAgentifyService:
     async def generate(
         self,
         *,
-        context: AdminContext,
+        db: Session,
         provider_id: int,
         name: str,
         raw_document: bytes,
         source_url: str | None,
         base_url: str | None,
         allow_private_networks: bool,
+        reporter: Any | None = None,
     ) -> AutoAgentifyResponse:
         started_at = perf_counter()
-        provider = context.db.get(LlmProvider, provider_id)
+        await _emit(
+            reporter,
+            ProgressEvent(
+                kind="document_loaded",
+                phase="loading_document",
+                progress=5,
+                message_key="autoAgentify.events.documentLoaded",
+                params={"bytes": len(raw_document)},
+            ),
+        )
+        provider = db.get(LlmProvider, provider_id)
         if (
             provider is None
             or provider.deleted_at is not None
@@ -82,6 +94,16 @@ class AutoAgentifyService:
             raise ApiError(
                 422, "auto_agentify.openapi_invalid", reason=str(exc)
             ) from exc
+        await _emit(
+            reporter,
+            ProgressEvent(
+                kind="openapi_validated",
+                phase="parsing_openapi",
+                progress=15,
+                message_key="autoAgentify.events.openapiValidated",
+                params={},
+            ),
+        )
         effective_base_url = base_url
         if effective_base_url is None:
             servers = normalized.get("servers", [])
@@ -95,6 +117,17 @@ class AutoAgentifyService:
                 422, "auto_agentify.openapi_unsupported", reason=str(exc)
             ) from exc
         catalog = build_operation_catalog(normalized, candidates)
+        await _emit(
+            reporter,
+            ProgressEvent(
+                kind="operations_discovered",
+                phase="cataloging_operations",
+                progress=22,
+                message_key="autoAgentify.events.operationsDiscovered",
+                params={"count": len(catalog)},
+                metrics={"operation_count": len(catalog)},
+            ),
+        )
         secret = self._cipher.decrypt_json(provider.encrypted_api_key)
         try:
             plan = await self._planner.plan(
@@ -103,6 +136,7 @@ class AutoAgentifyService:
                 api_key=str(secret["api_key"]),
                 model=provider.default_model,
                 catalog=catalog,
+                reporter=reporter,
             )
         except PlanGenerationError as exc:
             raise ApiError(422, "auto_agentify.plan_invalid") from exc
@@ -110,11 +144,38 @@ class AutoAgentifyService:
             raise ApiError(
                 502, "auto_agentify.provider_failed", status=exc.status_code
             ) from exc
+        await _emit(
+            reporter,
+            ProgressEvent(
+                kind="plan_validated",
+                phase="validating_plan",
+                progress=78,
+                message_key="autoAgentify.events.planValidated",
+                params={
+                    "skill_count": len(plan.skills),
+                    "agent_count": len(plan.agents),
+                },
+                metrics={
+                    "skill_count": len(plan.skills),
+                    "agent_count": len(plan.agents),
+                },
+            ),
+        )
+        await _emit(
+            reporter,
+            ProgressEvent(
+                kind="persistence_started",
+                phase="persisting_configuration",
+                progress=85,
+                message_key="autoAgentify.events.persistenceStarted",
+                params={},
+            ),
+        )
 
         try:
-            with serialized_write(context.db):
+            with serialized_write(db):
                 result = self._persist(
-                    context=context,
+                    db=db,
                     provider_id=provider_id,
                     name=name,
                     raw_document=raw_document,
@@ -128,6 +189,30 @@ class AutoAgentifyService:
                 )
         except IntegrityError as exc:
             raise ApiError(409, "auto_agentify.conflict") from exc
+        await _emit(
+            reporter,
+            ProgressEvent(
+                kind="configuration_created",
+                phase="persisting_configuration",
+                progress=98,
+                message_key="autoAgentify.events.configurationCreated",
+                params={
+                    "tool_count": result.enabled_tool_count,
+                    "skill_count": len(result.skills),
+                    "agent_count": len(result.agents),
+                },
+            ),
+        )
+        await _emit(
+            reporter,
+            ProgressEvent(
+                kind="completed",
+                phase="completed",
+                progress=100,
+                message_key="autoAgentify.events.completed",
+                params={},
+            ),
+        )
         logger.info(
             "auto_agentify.completed provider_id=%s document_hash=%s "
             "operations=%s skills=%s agents=%s elapsed_ms=%s",
@@ -143,7 +228,7 @@ class AutoAgentifyService:
     def _persist(
         self,
         *,
-        context: AdminContext,
+        db: Session,
         provider_id: int,
         name: str,
         raw_document: bytes,
@@ -166,8 +251,8 @@ class AutoAgentifyService:
             spec_hash=hashlib.sha256(raw_document).hexdigest(),
             allow_private_networks=allow_private_networks,
         )
-        context.db.add(source)
-        context.db.flush()
+        db.add(source)
+        db.flush()
 
         tools = [
             Tool(
@@ -181,15 +266,15 @@ class AutoAgentifyService:
             )
             for candidate in candidates
         ]
-        context.db.add_all(tools)
-        context.db.flush()
+        db.add_all(tools)
+        db.flush()
         tools_by_key = {tool.operation_key: tool for tool in tools}
 
         existing_skill_names = set(
-            context.db.scalars(select(Skill.name))
+            db.scalars(select(Skill.name))
         )
         existing_agent_names = set(
-            context.db.scalars(select(Agent.name))
+            db.scalars(select(Agent.name))
         )
         skill_rows: dict[str, Skill] = {}
         generated_skills: list[GeneratedSkillResponse] = []
@@ -203,15 +288,15 @@ class AutoAgentifyService:
                 system_prompt=skill_plan.system_prompt,
                 running=True,
             )
-            context.db.add(skill)
-            context.db.flush()
+            db.add(skill)
+            db.flush()
             bound_tools = [
                 tools_by_key[operation_key]
                 for operation_key in skill_plan.operation_keys
             ]
             for tool in bound_tools:
                 tool.enabled = True
-            context.db.add_all(
+            db.add_all(
                 SkillTool(
                     skill_id=skill.id,
                     tool_id=tool.id,
@@ -261,9 +346,9 @@ class AutoAgentifyService:
                 mode=mode,
                 max_iterations=agent_plan.max_iterations,
             )
-            context.db.add(agent)
-            context.db.flush()
-            context.db.add_all(
+            db.add(agent)
+            db.flush()
+            db.add_all(
                 AgentSkill(
                     agent_id=agent.id,
                     skill_id=skill.id,
@@ -283,7 +368,7 @@ class AutoAgentifyService:
                 )
             )
 
-        context.db.flush()
+        db.flush()
         return AutoAgentifyResponse(
             source=ApiSourceSummary.model_validate(source),
             imported_tool_count=len(tools),
@@ -307,3 +392,8 @@ def _allocate_name(base: str, source_name: str, used: set[str]) -> str:
         sequence += 1
     used.add(candidate)
     return candidate
+
+
+async def _emit(reporter: Any | None, event: ProgressEvent) -> None:
+    if reporter is not None:
+        await reporter.emit(event)

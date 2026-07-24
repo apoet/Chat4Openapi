@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from chat4openapi.api.admin_auto_agentify import get_auto_agentify_planner
 from chat4openapi.api.tool_sessions import get_tool_secret_cipher
 from chat4openapi.auto_agentify.planner import PlanGenerationError
+from chat4openapi.auto_agentify.progress import ProgressEvent
+from chat4openapi.auto_agentify.service import AutoAgentifyService
 from chat4openapi.models import (
     Agent,
     AgentSkill,
@@ -95,6 +97,14 @@ class SuccessfulPlanner:
 class FailingPlanner:
     async def plan(self, **_kwargs) -> GenerationPlan:
         raise PlanGenerationError("model returned invalid generation plan")
+
+
+class CollectingReporter:
+    def __init__(self) -> None:
+        self.events: list[ProgressEvent] = []
+
+    async def emit(self, event: ProgressEvent) -> None:
+        self.events.append(event)
 
 
 @pytest.mark.asyncio
@@ -363,3 +373,40 @@ async def test_persistence_failure_rolls_back_source_tools_skills_and_agents(
     with db_session_factory() as session:
         for model in (ApiSource, Tool, Skill, Agent):
             assert session.scalar(select(func.count()).select_from(model)) == 0
+
+
+@pytest.mark.asyncio
+async def test_service_emits_ordered_stages_around_atomic_persistence(
+    db_session_factory: sessionmaker[Session],
+) -> None:
+    cipher = SecretCipher(Fernet.generate_key())
+    provider_id = seed_provider(db_session_factory, cipher)
+    reporter = CollectingReporter()
+    with db_session_factory() as session:
+        result = await AutoAgentifyService(
+            planner=SuccessfulPlanner(),
+            cipher=cipher,
+        ).generate(
+            db=session,
+            provider_id=provider_id,
+            name="Pets",
+            raw_document=OPENAPI,
+            source_url=None,
+            base_url="https://api.example.test/v1",
+            allow_private_networks=False,
+            reporter=reporter,
+        )
+
+    kinds = [event.kind for event in reporter.events]
+    assert result.source.name == "Pets"
+    assert kinds == [
+        "document_loaded",
+        "openapi_validated",
+        "operations_discovered",
+        "plan_validated",
+        "persistence_started",
+        "configuration_created",
+        "completed",
+    ]
+    assert reporter.events[2].metrics == {"operation_count": 1}
+    assert reporter.events[-1].progress == 100
