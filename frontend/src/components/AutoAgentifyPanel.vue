@@ -82,7 +82,7 @@ function eventLabel(kind: string): string {
 
 <template>
   <Teleport to="body">
-    <div class="modal-backdrop" role="presentation">
+    <div class="auto-agentify-backdrop" role="presentation">
       <section class="auto-agentify-modal" role="dialog" aria-modal="true" :aria-label="t('autoAgentify.title')">
         <header class="panel-heading">
           <div>
@@ -153,7 +153,7 @@ function eventLabel(kind: string): string {
 </template>
 
 <style scoped>
-.modal-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(23,32,51,.48); }
+.auto-agentify-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(23,32,51,.48); }
 .auto-agentify-modal { width: min(760px, 100%); max-height: calc(100vh - 48px); overflow: auto; display: grid; gap: 16px; padding: 24px; border-radius: 16px; background: #fff; box-shadow: 0 24px 80px rgba(20,28,45,.28); }
 .source-summary { display: grid; gap: 4px; padding: 12px; border-radius: 10px; background: #f5f6f8; overflow-wrap: anywhere; }
 .source-summary span { color: #626b7b; font-size: 13px; }

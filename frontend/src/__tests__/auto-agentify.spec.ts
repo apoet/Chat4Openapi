@@ -74,8 +74,9 @@ it('opens the generator in the document overlay layer from the import action', a
   await wrapper.get('[data-testid="open-auto-agentify"]').trigger('click')
   await flushPromises()
 
-  expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
-  expect(document.body.querySelector('.modal-backdrop')).not.toBeNull()
+  expect(wrapper.find('.auto-agentify-backdrop').exists()).toBe(false)
+  expect(document.body.querySelector('.auto-agentify-backdrop')).not.toBeNull()
+  expect(document.body.querySelector('.modal-backdrop')).toBeNull()
   wrapper.unmount()
 })
 
