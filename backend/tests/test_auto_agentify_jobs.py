@@ -237,9 +237,10 @@ async def test_job_api_creates_and_recovers_latest_job(
     provider_id = _seed_owner_and_provider(db_session_factory)[1]
     app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
     app.dependency_overrides[get_auto_agentify_planner] = lambda: object()
+    scheduled: list[dict] = []
     monkeypatch.setattr(
         "chat4openapi.api.admin_auto_agentify.schedule_auto_agentify_job",
-        lambda **_kwargs: None,
+        lambda **kwargs: scheduled.append(kwargs),
     )
 
     first = await client.post(
@@ -248,6 +249,8 @@ async def test_job_api_creates_and_recovers_latest_job(
             "provider_id": provider_id,
             "name": "Projects",
             "url": "https://api.example.test/openapi.json",
+            "allowed_system_capabilities": ["file_management"],
+            "custom_capability_labels": ["clinical trial data capture"],
         },
         headers={"X-CSRF-Token": token},
     )
@@ -264,6 +267,16 @@ async def test_job_api_creates_and_recovers_latest_job(
     assert first.status_code == 202
     assert second.status_code == 202
     assert second.json()["public_id"] == first.json()["public_id"]
+    assert scheduled[0]["allowed_system_capabilities"] == ["file_management"]
+    assert scheduled[0]["custom_capability_labels"] == [
+        "clinical trial data capture"
+    ]
     latest = await client.get("/api/admin/auto-agentify/jobs/latest")
     assert latest.status_code == 200
     assert latest.json()["public_id"] == first.json()["public_id"]
+    assert latest.json()["metrics"]["allowed_system_capabilities"] == [
+        "file_management"
+    ]
+    assert latest.json()["metrics"]["custom_capability_labels"] == [
+        "clinical trial data capture"
+    ]

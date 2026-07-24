@@ -58,9 +58,9 @@ def build_operation_catalog(
                 tags=tags,
                 summary=_clean_text(operation.get("summary"), 500),
                 description=_clean_text(
-                    operation.get("description") or candidate.description, 2_000
+                    operation.get("description") or candidate.description, 800
                 ),
-                input_fields=fields[:128],
+                input_fields=fields[:24],
             )
         )
     return items
@@ -68,7 +68,7 @@ def build_operation_catalog(
 
 def catalog_batches(
     items: Sequence[OperationCatalogItem],
-    maximum: int = 200,
+    maximum: int = 150,
 ) -> list[list[OperationCatalogItem]]:
     if maximum < 1:
         raise ValueError("maximum must be positive")
@@ -81,4 +81,3 @@ def catalog_batches(
 
 def is_high_impact(item: OperationCatalogItem) -> bool:
     return item.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
-

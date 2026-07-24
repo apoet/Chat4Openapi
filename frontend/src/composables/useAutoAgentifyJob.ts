@@ -17,6 +17,11 @@ export interface AutoAgentifySourceInput {
   allowPrivateNetworks: boolean
 }
 
+export interface AutoAgentifyPreferences {
+  allowedSystemCapabilities: string[]
+  customCapabilityLabels: string[]
+}
+
 export function useAutoAgentifyJob() {
   const auth = useAuthStore()
   const job = ref<AutoAgentifyJob | null>(null)
@@ -89,6 +94,7 @@ export function useAutoAgentifyJob() {
   async function start(
     source: AutoAgentifySourceInput,
     providerId: number,
+    preferences: AutoAgentifyPreferences,
   ): Promise<void> {
     starting.value = true
     errorCode.value = null
@@ -107,6 +113,8 @@ export function useAutoAgentifyJob() {
               url: source.sourceUrl.trim(),
               base_url: source.baseUrl.trim() || null,
               allow_private_networks: source.allowPrivateNetworks,
+              allowed_system_capabilities: preferences.allowedSystemCapabilities,
+              custom_capability_labels: preferences.customCapabilityLabels,
             }),
           },
           auth.csrfToken,
@@ -117,6 +125,14 @@ export function useAutoAgentifyJob() {
         body.set('name', source.name.trim())
         if (source.baseUrl.trim()) body.set('base_url', source.baseUrl.trim())
         body.set('allow_private_networks', String(source.allowPrivateNetworks))
+        body.set(
+          'allowed_system_capabilities',
+          JSON.stringify(preferences.allowedSystemCapabilities),
+        )
+        body.set(
+          'custom_capability_labels',
+          JSON.stringify(preferences.customCapabilityLabels),
+        )
         body.set('document', source.file as File)
         job.value = await request<AutoAgentifyJob>(
           '/api/admin/auto-agentify/jobs/file',

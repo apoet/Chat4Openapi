@@ -68,6 +68,8 @@ class AutoAgentifyService:
         base_url: str | None,
         allow_private_networks: bool,
         reporter: Any | None = None,
+        allowed_system_capabilities: list[str] | tuple[str, ...] = (),
+        custom_capability_labels: list[str] | tuple[str, ...] = (),
     ) -> AutoAgentifyResponse:
         started_at = perf_counter()
         await _emit(
@@ -137,6 +139,9 @@ class AutoAgentifyService:
                 model=provider.default_model,
                 catalog=catalog,
                 reporter=reporter,
+                source_name=name,
+                allowed_system_capabilities=allowed_system_capabilities,
+                custom_capability_labels=custom_capability_labels,
             )
         except PlanGenerationError as exc:
             raise ApiError(422, "auto_agentify.plan_invalid") from exc

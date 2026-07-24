@@ -26,6 +26,7 @@ from chat4openapi.schemas.auto_agentify import (
     AutoAgentifyJobResponse,
     AutoAgentifyResponse,
     AutoAgentifyUrlRequest,
+    CapabilityPreferences,
 )
 from chat4openapi.security.encryption import SecretCipher
 
@@ -37,6 +38,23 @@ router = APIRouter(
 
 def get_auto_agentify_planner() -> AutoAgentifyPlanner:
     return AutoAgentifyPlanner()
+
+
+def _form_capability_preferences(
+    allowed_system_capabilities: str,
+    custom_capability_labels: str,
+) -> CapabilityPreferences:
+    try:
+        return CapabilityPreferences(
+            allowed_system_capabilities=json.loads(
+                allowed_system_capabilities
+            ),
+            custom_capability_labels=json.loads(custom_capability_labels),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ApiError(
+            422, "auto_agentify.capability_preferences_invalid"
+        ) from exc
 
 
 @router.post("/jobs/url", response_model=AutoAgentifyJobResponse, status_code=202)
@@ -56,6 +74,8 @@ async def create_url_job(
         source_url=payload.url,
         base_url=payload.base_url,
         allow_private_networks=payload.allow_private_networks,
+        allowed_system_capabilities=payload.allowed_system_capabilities,
+        custom_capability_labels=payload.custom_capability_labels,
     )
     if created:
         schedule_auto_agentify_job(
@@ -64,6 +84,8 @@ async def create_url_job(
             raw_document=None,
             planner=planner,
             cipher=cipher,
+            allowed_system_capabilities=payload.allowed_system_capabilities,
+            custom_capability_labels=payload.custom_capability_labels,
         )
     return job_response(job)
 
@@ -75,10 +97,15 @@ async def create_file_job(
     document: UploadFile = File(),
     base_url: str | None = Form(default=None, max_length=2048),
     allow_private_networks: bool = Form(default=False),
+    allowed_system_capabilities: str = Form(default="[]"),
+    custom_capability_labels: str = Form(default="[]"),
     context: AdminContext = Depends(require_csrf),
     cipher: SecretCipher = Depends(get_tool_secret_cipher),
     planner: AutoAgentifyPlanner = Depends(get_auto_agentify_planner),
 ) -> AutoAgentifyJobResponse:
+    preferences = _form_capability_preferences(
+        allowed_system_capabilities, custom_capability_labels
+    )
     raw_document = await document.read(5 * 1024 * 1024 + 1)
     if len(raw_document) > 5 * 1024 * 1024:
         raise ApiError(413, "tools.document_too_large")
@@ -92,6 +119,10 @@ async def create_file_job(
         file_name=document.filename,
         base_url=base_url,
         allow_private_networks=allow_private_networks,
+        allowed_system_capabilities=(
+            preferences.allowed_system_capabilities
+        ),
+        custom_capability_labels=preferences.custom_capability_labels,
     )
     if created:
         schedule_auto_agentify_job(
@@ -100,6 +131,10 @@ async def create_file_job(
             raw_document=raw_document,
             planner=planner,
             cipher=cipher,
+            allowed_system_capabilities=(
+                preferences.allowed_system_capabilities
+            ),
+            custom_capability_labels=preferences.custom_capability_labels,
         )
     return job_response(job)
 
@@ -174,10 +209,15 @@ async def auto_agentify_file(
     document: UploadFile = File(),
     base_url: str | None = Form(default=None, max_length=2048),
     allow_private_networks: bool = Form(default=False),
+    allowed_system_capabilities: str = Form(default="[]"),
+    custom_capability_labels: str = Form(default="[]"),
     context: AdminContext = Depends(require_csrf),
     cipher: SecretCipher = Depends(get_tool_secret_cipher),
     planner: AutoAgentifyPlanner = Depends(get_auto_agentify_planner),
 ) -> AutoAgentifyResponse:
+    preferences = _form_capability_preferences(
+        allowed_system_capabilities, custom_capability_labels
+    )
     raw_document = await document.read(5 * 1024 * 1024 + 1)
     return await AutoAgentifyService(planner=planner, cipher=cipher).generate(
         db=context.db,
@@ -187,6 +227,8 @@ async def auto_agentify_file(
         source_url=None,
         base_url=base_url,
         allow_private_networks=allow_private_networks,
+        allowed_system_capabilities=preferences.allowed_system_capabilities,
+        custom_capability_labels=preferences.custom_capability_labels,
     )
 
 
@@ -211,4 +253,6 @@ async def auto_agentify_url(
         source_url=payload.url,
         base_url=payload.base_url,
         allow_private_networks=payload.allow_private_networks,
+        allowed_system_capabilities=payload.allowed_system_capabilities,
+        custom_capability_labels=payload.custom_capability_labels,
     )

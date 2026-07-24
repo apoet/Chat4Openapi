@@ -76,6 +76,53 @@ def test_batches_catalog_deterministically_without_losing_operations() -> None:
     }
 
 
+def test_default_batches_reduce_large_api_round_trips() -> None:
+    items = [
+        OperationCatalogItem(
+            operation_key=f"GET /projects/{index}",
+            name=f"getProject{index}",
+            method="GET",
+            path=f"/projects/{index}",
+            tags=("Projects",),
+            summary="",
+            description="",
+            input_fields=(),
+        )
+        for index in range(151)
+    ]
+
+    assert [len(batch) for batch in catalog_batches(items)] == [150, 1]
+
+
+def test_catalog_limits_prompt_only_description_and_input_field_size() -> None:
+    properties = {
+        f"field_{index}": {"type": "string"}
+        for index in range(40)
+    }
+    candidate = ToolCandidate(
+        operation_key="GET /projects/0",
+        name="getProject0",
+        description="fallback",
+        input_schema={"type": "object", "properties": properties},
+        execution_schema={},
+    )
+    spec = {
+        "paths": {
+            "/projects/0": {
+                "get": {
+                    "tags": ["Projects"],
+                    "description": "x" * 1_200,
+                }
+            }
+        }
+    }
+
+    item = build_operation_catalog(spec, [candidate])[0]
+
+    assert len(item.description) == 800
+    assert len(item.input_fields) == 24
+
+
 def test_classifies_mutating_operations_as_high_impact() -> None:
     def item(method: str) -> OperationCatalogItem:
         return OperationCatalogItem(
@@ -94,4 +141,3 @@ def test_classifies_mutating_operations_as_high_impact() -> None:
     assert is_high_impact(item("PUT"))
     assert is_high_impact(item("PATCH"))
     assert not is_high_impact(item("GET"))
-

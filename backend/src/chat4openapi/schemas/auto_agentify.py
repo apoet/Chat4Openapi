@@ -1,9 +1,52 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from chat4openapi.schemas.tools import ApiSourceSummary
+
+BUILTIN_SYSTEM_CAPABILITIES = {
+    "system_configuration": "system configuration / 系统配置",
+    "user_permissions": "users and permissions / 用户与权限",
+    "organization_management": "organization management / 组织管理",
+    "file_management": "file management / 文件管理",
+    "messaging_notifications": "messaging and notifications / 消息通知",
+    "task_scheduling": "task scheduling / 任务调度",
+    "audit_compliance": "audit logs and compliance / 审计日志与合规",
+    "reference_data": "reference data and dictionaries / 数据字典",
+    "monitoring_operations": "monitoring and operations / 监控运维",
+    "authentication_authorization": "authentication and authorization / 认证授权",
+    "developer_tools": "developer tools / 开发工具",
+    "ai_platform": "AI platform configuration / AI 平台",
+}
+
+
+class CapabilityPreferences(BaseModel):
+    allowed_system_capabilities: list[str] = Field(
+        default_factory=list, max_length=len(BUILTIN_SYSTEM_CAPABILITIES)
+    )
+    custom_capability_labels: list[str] = Field(
+        default_factory=list, max_length=20
+    )
+
+    @field_validator("allowed_system_capabilities")
+    @classmethod
+    def validate_system_capabilities(cls, value: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(value))
+        unknown = set(normalized) - BUILTIN_SYSTEM_CAPABILITIES.keys()
+        if unknown:
+            raise ValueError(f"unknown system capability: {sorted(unknown)[0]}")
+        return normalized
+
+    @field_validator("custom_capability_labels")
+    @classmethod
+    def normalize_custom_capabilities(cls, value: list[str]) -> list[str]:
+        normalized = list(
+            dict.fromkeys(item.strip() for item in value if item.strip())
+        )
+        if any(len(item) > 80 for item in normalized):
+            raise ValueError("custom capability label is too long")
+        return normalized
 
 
 class SkillPlan(BaseModel):
@@ -36,7 +79,7 @@ class CapabilitySummary(BaseModel):
 
 
 class CapabilityBatch(BaseModel):
-    capabilities: list[CapabilitySummary] = Field(min_length=1, max_length=50)
+    capabilities: list[CapabilitySummary] = Field(min_length=1, max_length=6)
 
     def validate_references(self, operation_keys: set[str]) -> None:
         for capability in self.capabilities:
@@ -79,6 +122,20 @@ class AutoAgentifyUrlRequest(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
     base_url: str | None = Field(default=None, max_length=2048)
     allow_private_networks: bool = False
+    allowed_system_capabilities: list[str] = Field(default_factory=list)
+    custom_capability_labels: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_capability_preferences(self) -> "AutoAgentifyUrlRequest":
+        preferences = CapabilityPreferences(
+            allowed_system_capabilities=self.allowed_system_capabilities,
+            custom_capability_labels=self.custom_capability_labels,
+        )
+        self.allowed_system_capabilities = (
+            preferences.allowed_system_capabilities
+        )
+        self.custom_capability_labels = preferences.custom_capability_labels
+        return self
 
 
 class GeneratedSkillResponse(BaseModel):

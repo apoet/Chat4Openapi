@@ -47,8 +47,14 @@ class LlmProviderError(RuntimeError):
 
 
 class LlmClient:
-    def __init__(self, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        request_timeout: float = 60,
+    ) -> None:
         self._transport = transport
+        self._request_timeout = request_timeout
 
     async def complete(
         self,
@@ -78,7 +84,7 @@ class LlmClient:
         try:
             async with httpx.AsyncClient(
                 transport=self._transport,
-                timeout=httpx.Timeout(60, connect=10),
+                timeout=httpx.Timeout(self._request_timeout, connect=10),
                 verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
             ) as client:
                 response = await client.post(url, headers=headers, json=payload)

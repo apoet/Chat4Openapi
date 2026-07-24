@@ -91,6 +91,8 @@ def create_job(
     file_name: str | None = None,
     base_url: str | None = None,
     allow_private_networks: bool = False,
+    allowed_system_capabilities: list[str] | tuple[str, ...] = (),
+    custom_capability_labels: list[str] | tuple[str, ...] = (),
 ) -> tuple[AutoAgentifyJob, bool]:
     active = db.scalar(
         select(AutoAgentifyJob).where(
@@ -116,7 +118,10 @@ def create_job(
         status="queued",
         phase="queued",
         progress=0,
-        metrics={},
+        metrics={
+            "allowed_system_capabilities": list(allowed_system_capabilities),
+            "custom_capability_labels": list(custom_capability_labels),
+        },
     )
     db.add(job)
     try:
@@ -154,6 +159,8 @@ def schedule_auto_agentify_job(
     raw_document: bytes | None,
     planner: AutoAgentifyPlanner,
     cipher: SecretCipher,
+    allowed_system_capabilities: list[str] | tuple[str, ...] = (),
+    custom_capability_labels: list[str] | tuple[str, ...] = (),
 ) -> None:
     task = asyncio.create_task(
         _run_job(
@@ -162,6 +169,8 @@ def schedule_auto_agentify_job(
             raw_document=raw_document,
             planner=planner,
             cipher=cipher,
+            allowed_system_capabilities=allowed_system_capabilities,
+            custom_capability_labels=custom_capability_labels,
         )
     )
     _tasks.add(task)
@@ -175,6 +184,8 @@ async def _run_job(
     raw_document: bytes | None,
     planner: AutoAgentifyPlanner,
     cipher: SecretCipher,
+    allowed_system_capabilities: list[str] | tuple[str, ...] = (),
+    custom_capability_labels: list[str] | tuple[str, ...] = (),
 ) -> None:
     with factory() as db:
         job = db.get(AutoAgentifyJob, job_id)
@@ -199,6 +210,8 @@ async def _run_job(
                 base_url=job.base_url,
                 allow_private_networks=job.allow_private_networks,
                 reporter=reporter,
+                allowed_system_capabilities=allowed_system_capabilities,
+                custom_capability_labels=custom_capability_labels,
             )
             job = db.get(AutoAgentifyJob, job_id)
             if job is None:

@@ -30,6 +30,16 @@ const queuedJob = {
   created_at: '2026-07-24T00:00:00', started_at: null, completed_at: null,
 }
 
+const failedJob = {
+  ...queuedJob,
+  status: 'failed',
+  phase: 'failed',
+  progress: 44,
+  error_code: 'auto_agentify.provider_failed',
+  error_params: { status: 502 },
+  completed_at: '2026-07-24T00:06:28',
+}
+
 class FakeEventSource {
   static instances: FakeEventSource[] = []
   onmessage: ((event: MessageEvent<string>) => void) | null = null
@@ -108,7 +118,13 @@ it('starts from the current URL import input and displays live capability analys
   expect(wrapper.get('[data-testid="auto-provider"]').element.parentElement?.classList)
     .toContain('provider-select-shell')
   expect(wrapper.get('.provider-mark').attributes('aria-hidden')).toBe('true')
+  expect(wrapper.get('[data-testid="auto-generation-notice"]').text())
+    .toContain('20 Skills')
 
+  await wrapper.get('[data-testid="capability-system-file_management"]').trigger('click')
+  await wrapper.get('[data-testid="custom-capability-input"]')
+    .setValue('Clinical trial data capture')
+  await wrapper.get('[data-testid="add-custom-capability"]').trigger('click')
   await wrapper.get('[data-testid="auto-provider"]').setValue('7')
   await wrapper.get('[data-testid="auto-submit"]').trigger('click')
   await flushPromises()
@@ -121,6 +137,8 @@ it('starts from the current URL import input and displays live capability analys
     url: 'https://api.example.test/openapi.json',
     base_url: 'https://api.example.test',
     allow_private_networks: false,
+    allowed_system_capabilities: ['file_management'],
+    custom_capability_labels: ['Clinical trial data capture'],
   })
   expect(FakeEventSource.instances[0].url)
     .toBe('/api/admin/auto-agentify/jobs/job-1/events')
@@ -148,6 +166,94 @@ it('starts from the current URL import input and displays live capability analys
   expect(wrapper.text()).toContain('Project delivery insight')
   expect(wrapper.text()).toContain('Reduces project review time.')
   expect(wrapper.get('[data-testid="auto-progress"]').attributes('value')).toBe('42')
+})
+
+it('shows batch scope and a visible provider-specific retry state', async () => {
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce(response([provider]))
+    .mockResolvedValueOnce(response(null))
+    .mockResolvedValueOnce(response(queuedJob, 202))
+    .mockResolvedValueOnce(response(failedJob)))
+  const wrapper = mount(AutoAgentifyPanel, {
+    props: {
+      source: {
+        mode: 'url',
+        name: 'EDC',
+        baseUrl: 'https://edc.example.test',
+        sourceUrl: 'https://edc.example.test/openapi.json',
+        file: null,
+        allowPrivateNetworks: false,
+      },
+    },
+    global: { plugins: [i18n], stubs: { teleport: true } },
+  })
+  await flushPromises()
+
+  await wrapper.get('[data-testid="auto-provider"]').setValue('7')
+  await wrapper.get('[data-testid="auto-submit"]').trigger('click')
+  await flushPromises()
+
+  FakeEventSource.instances[0].emit({
+    sequence: 2,
+    kind: 'capability_batch_started',
+    phase: 'analyzing_capabilities',
+    progress: 24,
+    message_key: 'autoAgentify.events.capabilityBatchStarted',
+    params: { batch: 1, total: 3, operation_count: 200 },
+    capability: null,
+    created_at: '2026-07-24T00:00:01',
+  }, '2')
+  await flushPromises()
+  expect(wrapper.get('[data-testid="auto-current-stage"]').text())
+    .toContain('Batch 1 of 3')
+  expect(wrapper.get('[data-testid="auto-current-stage"]').text())
+    .toContain('200 API operations')
+
+  FakeEventSource.instances[0].emit({
+    sequence: 3,
+    kind: 'failed',
+    phase: 'failed',
+    progress: 44,
+    message_key: 'autoAgentify.events.failed',
+    params: { code: 'auto_agentify.provider_failed', status: 502 },
+    capability: null,
+    created_at: '2026-07-24T00:06:28',
+  }, '3')
+  await flushPromises()
+
+  expect(wrapper.get('[data-testid="auto-error"]').text())
+    .toContain('provider could not complete')
+  expect(wrapper.get('[data-testid="auto-submit"]').text()).toContain('Retry')
+})
+
+it('restores capability preferences with a recovered background job', async () => {
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce(response([provider]))
+    .mockResolvedValueOnce(response({
+      ...failedJob,
+      metrics: {
+        allowed_system_capabilities: ['messaging_notifications'],
+        custom_capability_labels: ['Clinical trial data capture'],
+      },
+    })))
+  const wrapper = mount(AutoAgentifyPanel, {
+    props: {
+      source: {
+        mode: 'url',
+        name: 'EDC',
+        baseUrl: 'https://edc.example.test',
+        sourceUrl: 'https://edc.example.test/openapi.json',
+        file: null,
+        allowPrivateNetworks: false,
+      },
+    },
+    global: { plugins: [i18n], stubs: { teleport: true } },
+  })
+  await flushPromises()
+
+  expect(wrapper.get('[data-testid="capability-system-messaging_notifications"]')
+    .attributes('aria-pressed')).toBe('true')
+  expect(wrapper.text()).toContain('Clinical trial data capture')
 })
 
 it('uses the current file input and keeps the background job when closed', async () => {
@@ -181,6 +287,8 @@ it('uses the current file input and keeps the background job when closed', async
   expect(call[0]).toBe('/api/admin/auto-agentify/jobs/file')
   expect(call[1]?.body).toBeInstanceOf(FormData)
   expect((call[1]?.body as FormData).get('document')).toBe(file)
+  expect((call[1]?.body as FormData).get('allowed_system_capabilities')).toBe('[]')
+  expect((call[1]?.body as FormData).get('custom_capability_labels')).toBe('[]')
 
   await wrapper.get('[data-testid="auto-close"]').trigger('click')
   expect(wrapper.emitted('close')).toHaveLength(1)
