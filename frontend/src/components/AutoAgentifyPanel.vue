@@ -9,6 +9,7 @@ import {
   Loading,
   MagicStick,
   Plus,
+  WarningFilled,
 } from '@element-plus/icons-vue'
 import { RouterLink } from 'vue-router'
 
@@ -32,6 +33,7 @@ const { t, locale } = useI18n()
 const providers = ref<LlmProviderSummary[]>([])
 const providerId = ref('')
 const showActivityHistory = ref(false)
+const showAllBodySchemaIssues = ref(false)
 const selectedSystemCapabilities = ref<string[]>([])
 const customCapabilityInput = ref('')
 const customCapabilityLabels = ref<string[]>([])
@@ -95,6 +97,30 @@ const capabilityGroups = computed(() => {
     items,
   }))
 })
+const bodySchemaWarningEvent = computed(
+  () => [...events.value].reverse().find((event) => event.kind === 'body_schema_warning'),
+)
+const bodySchemaIssues = computed(() => {
+  const value = bodySchemaWarningEvent.value?.params.issues
+    ?? job.value?.metrics.body_schema_issues
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is { operation_key: string, reasons: string[] } => (
+    typeof item === 'object'
+    && item !== null
+    && typeof (item as Record<string, unknown>).operation_key === 'string'
+    && Array.isArray((item as Record<string, unknown>).reasons)
+  ))
+})
+const bodySchemaIssueCount = computed(() => Number(
+  bodySchemaWarningEvent.value?.params.count
+  ?? job.value?.metrics.body_schema_issue_count
+  ?? bodySchemaIssues.value.length,
+))
+const visibleBodySchemaIssues = computed(() => (
+  showAllBodySchemaIssues.value
+    ? bodySchemaIssues.value
+    : bodySchemaIssues.value.slice(0, 5)
+))
 const failureCode = computed(() => errorCode.value || job.value?.error_code || null)
 const failed = computed(() => job.value?.status === 'failed' || Boolean(errorCode.value))
 const submitLabel = computed(() => {
@@ -216,6 +242,7 @@ function eventLabel(event: Pick<AutoAgentifyJobEvent, 'kind' | 'params'>): strin
     capability_filtered: t('autoAgentify.events.capabilityFiltered'),
     capability_discovered: t('autoAgentify.events.capabilityDiscovered'),
     capability_batch_completed: t('autoAgentify.events.capabilityBatchCompleted'),
+    body_schema_warning: t('autoAgentify.events.bodySchemaWarning'),
     plan_synthesis_started: t('autoAgentify.events.planSynthesisStarted'),
     plan_correction_started: t('autoAgentify.events.planCorrectionStarted'),
     plan_fallback: t('autoAgentify.events.planFallback'),
@@ -377,6 +404,34 @@ function runGeneration(): Promise<void> {
             </div>
             <progress data-testid="auto-progress" :value="job.progress" max="100"></progress>
 
+            <div v-if="bodySchemaIssueCount" data-testid="body-schema-warning" class="body-schema-warning" role="status">
+              <div class="schema-warning-heading">
+                <WarningFilled aria-hidden="true" />
+                <div>
+                  <strong>{{ t('autoAgentify.bodySchemaWarningTitle', { count: bodySchemaIssueCount }) }}</strong>
+                  <p>{{ t('autoAgentify.bodySchemaWarningHint') }}</p>
+                </div>
+              </div>
+              <ul v-if="visibleBodySchemaIssues.length" class="schema-issue-list">
+                <li v-for="issue in visibleBodySchemaIssues" :key="issue.operation_key">
+                  <code>{{ issue.operation_key }}</code>
+                  <span>
+                    <small v-for="reason in issue.reasons" :key="reason">
+                      {{ t(`autoAgentify.bodySchemaReasons.${reason}`) }}
+                    </small>
+                  </span>
+                </li>
+              </ul>
+              <button
+                v-if="bodySchemaIssues.length > 5"
+                type="button"
+                class="schema-warning-toggle"
+                @click="showAllBodySchemaIssues = !showAllBodySchemaIssues"
+              >
+                {{ showAllBodySchemaIssues ? t('autoAgentify.showFewerBodyIssues') : t('autoAgentify.showAllBodyIssues', { count: bodySchemaIssueCount }) }}
+              </button>
+            </div>
+
             <div v-if="failureCode" data-testid="auto-error" class="auto-error-panel" role="alert">
               <strong>{{ t('autoAgentify.failedTitle') }}</strong>
               <p>{{ failureMessage }}</p>
@@ -515,6 +570,17 @@ progress::-moz-progress-bar { border-radius: 99px; background: linear-gradient(9
 .activity-details > span { display: inline-flex; align-items: baseline; gap: 5px; padding: 4px 7px; border-radius: 7px; color: #454d5d; background: #f2f1f7; font-size: 11px; font-weight: 750; }
 .activity-details small { color: #7a8190; font-size: 10px; font-weight: 650; }
 @keyframes activity-spin { to { transform: rotate(360deg); } }
+.body-schema-warning { display: grid; gap: 10px; padding: 13px; border: 1px solid #e8c77c; border-radius: 11px; color: #694d12; background: #fff9e9; }
+.schema-warning-heading { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 9px; }
+.schema-warning-heading > svg { width: 18px; height: 18px; margin-top: 1px; color: #c18212; }
+.schema-warning-heading strong { font-size: 13px; }
+.schema-warning-heading p { margin: 4px 0 0; color: #7b642f; font-size: 12px; line-height: 1.5; }
+.schema-issue-list { max-height: 210px; overflow: auto; display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.schema-issue-list li { display: grid; gap: 5px; padding: 8px 9px; border-radius: 8px; background: rgba(255,255,255,.7); }
+.schema-issue-list code { overflow-wrap: anywhere; color: #59430f; font-size: 11px; font-weight: 750; }
+.schema-issue-list li > span { display: flex; flex-wrap: wrap; gap: 5px; }
+.schema-issue-list small { padding: 2px 6px; border-radius: 99px; color: #795512; background: #f8e8bd; font-size: 10px; font-weight: 700; }
+.schema-warning-toggle { justify-self: start; padding: 0; border: 0; color: #7c5814; background: transparent; font-size: 11px; font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
 .auto-error-panel { padding: 14px; border: 1px solid #efc4c4; border-radius: 11px; color: #8b2929; background: #fff4f4; }
 .auto-error-panel p { margin: 5px 0; color: #733737; line-height: 1.5; }
 .auto-error-panel small { color: #9c5c5c; }

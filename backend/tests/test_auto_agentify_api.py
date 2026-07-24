@@ -403,10 +403,21 @@ async def test_service_emits_ordered_stages_around_atomic_persistence(
         "document_loaded",
         "openapi_validated",
         "operations_discovered",
+        "body_schema_warning",
         "plan_validated",
         "persistence_started",
         "configuration_created",
         "completed",
     ]
     assert reporter.events[2].metrics == {"operation_count": 1}
+    assert reporter.events[3].params == {
+        "count": 1,
+        "issues": [
+            {
+                "operation_key": "POST /pets",
+                "reasons": ["missing_field_descriptions"],
+            }
+        ],
+        "truncated": False,
+    }
     assert reporter.events[-1].progress == 100

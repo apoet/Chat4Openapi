@@ -151,6 +151,23 @@ it('starts from the current URL import input and displays live capability analys
 
   FakeEventSource.instances[0].emit({
     sequence: 2,
+    kind: 'body_schema_warning',
+    phase: 'cataloging_operations',
+    progress: 22,
+    message_key: 'autoAgentify.events.bodySchemaWarning',
+    params: {
+      count: 1,
+      issues: [{
+        operation_key: 'POST /projects',
+        reasons: ['missing_field_descriptions'],
+      }],
+      truncated: false,
+    },
+    capability: null,
+    created_at: '2026-07-24T00:00:00',
+  }, '2')
+  FakeEventSource.instances[0].emit({
+    sequence: 3,
     kind: 'capability_discovered',
     phase: 'analyzing_capabilities',
     progress: 42,
@@ -167,9 +184,13 @@ it('starts from the current URL import input and displays live capability analys
       high_impact: true,
     },
     created_at: '2026-07-24T00:00:01',
-  }, '2')
+  }, '3')
   await flushPromises()
 
+  expect(wrapper.get('[data-testid="body-schema-warning"]').text())
+    .toContain('POST /projects')
+  expect(wrapper.get('[data-testid="body-schema-warning"]').text())
+    .toContain('Insufficient field descriptions')
   expect(wrapper.text()).toContain('Project delivery insight')
   expect(wrapper.text()).toContain('Reduces project review time.')
   expect(wrapper.get('[data-testid="recognition-results"]').text())

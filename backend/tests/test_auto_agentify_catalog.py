@@ -2,6 +2,7 @@ from chat4openapi.auto_agentify.catalog import (
     OperationCatalogItem,
     build_operation_catalog,
     catalog_batches,
+    find_body_schema_issues,
     is_high_impact,
 )
 from chat4openapi.tools.candidates import ToolCandidate
@@ -141,3 +142,121 @@ def test_classifies_mutating_operations_as_high_impact() -> None:
     assert is_high_impact(item("PUT"))
     assert is_high_impact(item("PATCH"))
     assert not is_high_impact(item("GET"))
+
+
+def test_finds_missing_and_underspecified_json_body_schemas() -> None:
+    spec = {
+        "paths": {
+            "/missing": {
+                "post": {
+                    "requestBody": {
+                        "content": {"application/json": {}},
+                    }
+                }
+            },
+            "/vague": {
+                "patch": {
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {},
+                                        "status": {"type": "string"},
+                                    },
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    }
+
+    issues = find_body_schema_issues(spec)
+
+    assert [issue.operation_key for issue in issues] == [
+        "POST /missing",
+        "PATCH /vague",
+    ]
+    assert issues[0].reasons == ("missing_schema",)
+    assert issues[1].reasons == (
+        "missing_field_types",
+        "missing_field_descriptions",
+    )
+
+
+def test_accepts_detailed_referenced_json_body_schema() -> None:
+    spec = {
+        "components": {
+            "schemas": {
+                "ProjectInput": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Human-readable project name.",
+                        },
+                        "status": {
+                            "type": "string",
+                            "description": "Current lifecycle state.",
+                        },
+                    },
+                }
+            }
+        },
+        "paths": {
+            "/projects": {
+                "post": {
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ProjectInput"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    }
+
+    assert find_body_schema_issues(spec) == []
+
+
+def test_finds_body_named_and_json_formatted_parameters_without_structure() -> None:
+    spec = {
+        "paths": {
+            "/legacy": {
+                "post": {
+                    "parameters": [
+                        {
+                            "name": "body",
+                            "in": "body",
+                            "schema": {"type": "object"},
+                        }
+                    ]
+                }
+            },
+            "/encoded": {
+                "post": {
+                    "parameters": [
+                        {
+                            "name": "payload",
+                            "in": "query",
+                            "schema": {"type": "string", "format": "json"},
+                        }
+                    ]
+                }
+            },
+        }
+    }
+
+    issues = find_body_schema_issues(spec)
+
+    assert [(issue.operation_key, issue.reasons) for issue in issues] == [
+        ("POST /legacy", ("missing_properties",)),
+        ("POST /encoded", ("missing_schema",)),
+    ]

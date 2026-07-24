@@ -3,6 +3,20 @@ from typing import Any, Sequence
 
 from chat4openapi.tools.candidates import ToolCandidate
 
+HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head", "trace"}
+
+
+@dataclass(frozen=True, slots=True)
+class BodySchemaIssue:
+    operation_key: str
+    reasons: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "operation_key": self.operation_key,
+            "reasons": list(self.reasons),
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class OperationCatalogItem:
@@ -23,6 +37,159 @@ def _clean_text(value: Any, maximum: int) -> str:
     if not isinstance(value, str):
         return ""
     return " ".join(value.split())[:maximum]
+
+
+def _resolve_local_schema(
+    schema: Any,
+    spec: dict[str, Any],
+    *,
+    depth: int = 0,
+) -> dict[str, Any]:
+    if not isinstance(schema, dict) or depth > 8:
+        return {}
+    reference = schema.get("$ref")
+    if not isinstance(reference, str) or not reference.startswith("#/"):
+        return schema
+    current: Any = spec
+    for part in reference[2:].split("/"):
+        if not isinstance(current, dict):
+            return {}
+        current = current.get(part.replace("~1", "/").replace("~0", "~"))
+    return _resolve_local_schema(current, spec, depth=depth + 1)
+
+
+def _body_schema_reasons(
+    schema: Any,
+    spec: dict[str, Any],
+) -> tuple[str, ...]:
+    resolved = _resolve_local_schema(schema, spec)
+    if not resolved:
+        return ("missing_schema",)
+    for composition in ("allOf", "oneOf", "anyOf"):
+        branches = resolved.get(composition)
+        if isinstance(branches, list) and branches:
+            branch_reasons = [
+                _body_schema_reasons(branch, spec) for branch in branches
+            ]
+            if any(not reasons for reasons in branch_reasons):
+                return ()
+            return min(branch_reasons, key=len)
+    if resolved.get("type") == "array":
+        item_reasons = _body_schema_reasons(resolved.get("items"), spec)
+        return (
+            ("missing_item_schema",)
+            if item_reasons == ("missing_schema",)
+            else item_reasons
+        )
+    properties = resolved.get("properties")
+    is_object = resolved.get("type") == "object" or isinstance(properties, dict)
+    if not is_object:
+        return () if resolved.get("type") else ("missing_schema",)
+    if not isinstance(properties, dict) or not properties:
+        return ("missing_properties",)
+    missing_types = 0
+    missing_descriptions = 0
+    for field_schema in properties.values():
+        field = _resolve_local_schema(field_schema, spec)
+        if not field or not any(
+            key in field
+            for key in ("type", "$ref", "allOf", "oneOf", "anyOf", "properties")
+        ):
+            missing_types += 1
+        if not _clean_text(field.get("description"), 500):
+            missing_descriptions += 1
+    reasons: list[str] = []
+    if missing_types:
+        reasons.append("missing_field_types")
+    if missing_descriptions * 2 >= len(properties):
+        reasons.append("missing_field_descriptions")
+    return tuple(reasons)
+
+
+def find_body_schema_issues(spec: dict[str, Any]) -> list[BodySchemaIssue]:
+    issues: list[BodySchemaIssue] = []
+    for path, path_item in spec.get("paths", {}).items():
+        if not isinstance(path_item, dict):
+            continue
+        for method, operation in path_item.items():
+            if method.lower() not in HTTP_METHODS or not isinstance(operation, dict):
+                continue
+            operation_reasons: list[str] = []
+            request_body = operation.get("requestBody")
+            if isinstance(request_body, dict):
+                content = request_body.get("content")
+                if not isinstance(content, dict) or not content:
+                    operation_reasons.append("missing_schema")
+                else:
+                    json_media = next(
+                        (
+                            media
+                            for content_type, media in content.items()
+                            if isinstance(content_type, str)
+                            and (
+                                content_type.split(";", 1)[0]
+                                .strip()
+                                .endswith("/json")
+                                or "+json"
+                                in content_type.split(";", 1)[0]
+                            )
+                        ),
+                        None,
+                    )
+                    media = json_media or next(
+                        (
+                            item
+                            for item in content.values()
+                            if isinstance(item, dict)
+                        ),
+                        {},
+                    )
+                    operation_reasons.extend(
+                        _body_schema_reasons(media.get("schema"), spec)
+                    )
+            parameters = [
+                *(
+                    path_item.get("parameters", [])
+                    if isinstance(path_item.get("parameters"), list)
+                    else []
+                ),
+                *(
+                    operation.get("parameters", [])
+                    if isinstance(operation.get("parameters"), list)
+                    else []
+                ),
+            ]
+            for raw_parameter in parameters:
+                parameter = _resolve_local_schema(raw_parameter, spec)
+                schema = _resolve_local_schema(parameter.get("schema"), spec)
+                schema_type = str(schema.get("type", "")).casefold()
+                schema_format = str(schema.get("format", "")).casefold()
+                named_body = str(parameter.get("name", "")).casefold() == "body"
+                is_body_like = (
+                    parameter.get("in") == "body"
+                    or named_body
+                    or schema_type in {"object", "json"}
+                    or schema_format == "json"
+                )
+                if not is_body_like:
+                    continue
+                parameter_reasons = list(_body_schema_reasons(schema, spec))
+                if (
+                    not parameter_reasons
+                    and (named_body or schema_type == "json" or schema_format == "json")
+                    and schema_type not in {"object", "array"}
+                ):
+                    parameter_reasons.append("missing_schema")
+                operation_reasons.extend(parameter_reasons)
+            reasons = tuple(dict.fromkeys(operation_reasons))
+            if reasons:
+                issues.append(
+                    BodySchemaIssue(
+                        operation_key=f"{method.upper()} {path}",
+                        reasons=reasons,
+                    )
+                )
+    return issues
 
 
 def build_operation_catalog(

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from chat4openapi.api.errors import ApiError
 from chat4openapi.auto_agentify.catalog import (
     build_operation_catalog,
+    find_body_schema_issues,
     is_high_impact,
 )
 from chat4openapi.auto_agentify.planner import (
@@ -120,6 +121,7 @@ class AutoAgentifyService:
                 422, "auto_agentify.openapi_unsupported", reason=str(exc)
             ) from exc
         catalog = build_operation_catalog(normalized, candidates)
+        body_schema_issues = find_body_schema_issues(normalized)
         await _emit(
             reporter,
             ProgressEvent(
@@ -131,6 +133,28 @@ class AutoAgentifyService:
                 metrics={"operation_count": len(catalog)},
             ),
         )
+        if body_schema_issues:
+            visible_issues = [
+                issue.as_dict() for issue in body_schema_issues[:20]
+            ]
+            await _emit(
+                reporter,
+                ProgressEvent(
+                    kind="body_schema_warning",
+                    phase="cataloging_operations",
+                    progress=22,
+                    message_key="autoAgentify.events.bodySchemaWarning",
+                    params={
+                        "count": len(body_schema_issues),
+                        "issues": visible_issues,
+                        "truncated": len(body_schema_issues) > len(visible_issues),
+                    },
+                    metrics={
+                        "body_schema_issue_count": len(body_schema_issues),
+                        "body_schema_issues": visible_issues,
+                    },
+                ),
+            )
         secret = self._cipher.decrypt_json(provider.encrypted_api_key)
         try:
             plan = await self._planner.plan(
