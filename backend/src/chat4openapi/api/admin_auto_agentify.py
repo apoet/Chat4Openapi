@@ -76,6 +76,7 @@ async def create_url_job(
         allow_private_networks=payload.allow_private_networks,
         allowed_system_capabilities=payload.allowed_system_capabilities,
         custom_capability_labels=payload.custom_capability_labels,
+        result_language=payload.result_language,
     )
     if created:
         schedule_auto_agentify_job(
@@ -86,6 +87,7 @@ async def create_url_job(
             cipher=cipher,
             allowed_system_capabilities=payload.allowed_system_capabilities,
             custom_capability_labels=payload.custom_capability_labels,
+            result_language=payload.result_language,
         )
     return job_response(job)
 
@@ -99,6 +101,7 @@ async def create_file_job(
     allow_private_networks: bool = Form(default=False),
     allowed_system_capabilities: str = Form(default="[]"),
     custom_capability_labels: str = Form(default="[]"),
+    result_language: str = Form(default="en-US", pattern="^(zh-CN|en-US)$"),
     context: AdminContext = Depends(require_csrf),
     cipher: SecretCipher = Depends(get_tool_secret_cipher),
     planner: AutoAgentifyPlanner = Depends(get_auto_agentify_planner),
@@ -123,6 +126,7 @@ async def create_file_job(
             preferences.allowed_system_capabilities
         ),
         custom_capability_labels=preferences.custom_capability_labels,
+        result_language=result_language,
     )
     if created:
         schedule_auto_agentify_job(
@@ -135,6 +139,7 @@ async def create_file_job(
                 preferences.allowed_system_capabilities
             ),
             custom_capability_labels=preferences.custom_capability_labels,
+            result_language=result_language,
         )
     return job_response(job)
 

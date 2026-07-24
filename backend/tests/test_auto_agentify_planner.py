@@ -60,6 +60,27 @@ def _valid_json() -> str:
     return GenerationPlan(skills=[_skill()], agents=[_agent()]).model_dump_json()
 
 
+def _valid_json_zh() -> str:
+    skill = SkillPlan(
+        name="项目洞察",
+        description="读取并分析项目业务信息。",
+        system_prompt="Use project tools to answer project questions.",
+        operation_keys=["GET /projects"],
+        value="帮助用户快速理解项目状态。",
+    )
+    agent = AgentPlan(
+        name="项目分析 Agent",
+        responsibility="分析项目状态并总结关键风险。",
+        system_prompt="Analyze project information accurately.",
+        skill_names=[skill.name],
+        mode="react",
+        max_iterations=8,
+        value="将项目数据转化为可执行决策。",
+        use_cases=["汇总项目状态"],
+    )
+    return GenerationPlan(skills=[skill], agents=[agent]).model_dump_json()
+
+
 def _capabilities_json(operation_key: str = "GET /projects") -> str:
     return json.dumps(
         {
@@ -75,6 +96,25 @@ def _capabilities_json(operation_key: str = "GET /projects") -> str:
                 }
             ]
         }
+    )
+
+
+def _capabilities_json_zh(operation_key: str = "GET /projects") -> str:
+    return json.dumps(
+        {
+            "capabilities": [
+                {
+                    "name": "项目全生命周期",
+                    "description": "协调项目从创建到关闭的完整业务流程。",
+                    "value": "减少人工协调项目交付所需的时间。",
+                    "workflow": ["创建项目", "分配任务", "跟踪进展", "关闭项目"],
+                    "operation_keys": [operation_key],
+                    "candidate_skills": ["项目洞察"],
+                    "high_impact": False,
+                }
+            ]
+        },
+        ensure_ascii=False,
     )
 
 
@@ -306,7 +346,7 @@ async def test_planner_allows_sensitive_information_and_security_when_selected()
     )
     reporter = CollectingReporter()
     planner = AutoAgentifyPlanner(
-        client=FakeLlmClient([json.dumps(capability), _valid_json()])
+        client=FakeLlmClient([json.dumps(capability), _valid_json_zh()])
     )
 
     await planner.plan(
@@ -317,6 +357,7 @@ async def test_planner_allows_sensitive_information_and_security_when_selected()
         catalog=_catalog(),
         reporter=reporter,
         allowed_system_capabilities=["sensitive_data_security"],
+        result_language="zh-CN",
     )
 
     assert any(
@@ -424,7 +465,7 @@ async def test_planner_keeps_security_skill_and_agent_when_selected() -> None:
         ],
     ).model_dump_json()
     planner = AutoAgentifyPlanner(
-        client=FakeLlmClient([_capabilities_json(), security_plan])
+        client=FakeLlmClient([_capabilities_json_zh(), security_plan])
     )
 
     plan = await planner.plan(
@@ -434,6 +475,7 @@ async def test_planner_keeps_security_skill_and_agent_when_selected() -> None:
         model="model",
         catalog=_catalog(),
         allowed_system_capabilities=["sensitive_data_security"],
+        result_language="zh-CN",
     )
 
     assert plan.skills[0].name == "敏感信息保护"
@@ -534,17 +576,62 @@ async def test_planner_prompts_prioritize_core_domain_value_and_bounded_output()
     capability_prompt = client.calls[0][-1].content
     plan_prompt = client.calls[1][-1].content
     system_prompt = client.calls[0][0].content
-    assert "dominant natural language" in system_prompt
+    assert "requested result language" in system_prompt
     assert "generic administration" in capability_prompt
     assert "2 to 6" in capability_prompt
     assert 'Source name: "EDC"' in capability_prompt
     assert "file management / 文件管理" in capability_prompt
     assert "system configuration / 系统配置" in capability_prompt
     assert "clinical trial data capture" in capability_prompt
+    assert "English (en-US)" in capability_prompt
+    assert "system_prompt fields may use whichever language" in plan_prompt
     assert "6 to 12 Skills" in plan_prompt
     assert "2 to 5 Agents" in plan_prompt
     assert client.requests[0]["max_tokens"] == 4_000
     assert client.requests[1]["max_tokens"] == 12_000
+
+
+@pytest.mark.asyncio
+async def test_planner_enforces_user_language_and_normalizes_result_category() -> None:
+    chinese_capability = json.loads(_capabilities_json())
+    chinese_capability["capabilities"][0].update(
+        {
+            "name": "项目文件管理",
+            "category": "file management / 文件管理",
+            "description": "统一管理项目文件并协调相关业务操作。",
+            "value": "减少人工整理文件所需的时间。",
+            "workflow": ["确认文件范围", "执行文件操作", "汇总处理结果"],
+            "candidate_skills": ["项目文件管理"],
+        }
+    )
+    reporter = CollectingReporter()
+    client = FakeLlmClient(
+        [
+            _capabilities_json(),
+            json.dumps(chinese_capability, ensure_ascii=False),
+            _valid_json(),
+            _valid_json_zh(),
+        ]
+    )
+    planner = AutoAgentifyPlanner(client=client)
+
+    plan = await planner.plan(
+        provider_type="openai",
+        base_url="https://llm.example.test/v1",
+        api_key="secret",
+        model="model",
+        catalog=_catalog(),
+        reporter=reporter,
+        allowed_system_capabilities=["file_management"],
+        result_language="zh-CN",
+    )
+
+    discovered = next(
+        event for event in reporter.events if event.kind == "capability_discovered"
+    )
+    assert discovered.capability["category"] == "file_management"
+    assert plan.skills[0].name == "项目洞察"
+    assert len(client.calls) == 4
 
 
 @pytest.mark.asyncio

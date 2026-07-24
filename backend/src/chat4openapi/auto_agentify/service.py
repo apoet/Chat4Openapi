@@ -70,6 +70,7 @@ class AutoAgentifyService:
         reporter: Any | None = None,
         allowed_system_capabilities: list[str] | tuple[str, ...] = (),
         custom_capability_labels: list[str] | tuple[str, ...] = (),
+        result_language: str = "en-US",
     ) -> AutoAgentifyResponse:
         started_at = perf_counter()
         await _emit(
@@ -142,6 +143,7 @@ class AutoAgentifyService:
                 source_name=name,
                 allowed_system_capabilities=allowed_system_capabilities,
                 custom_capability_labels=custom_capability_labels,
+                result_language=result_language,
             )
         except PlanGenerationError as exc:
             raise ApiError(422, "auto_agentify.plan_invalid") from exc

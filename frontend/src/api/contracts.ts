@@ -126,6 +126,7 @@ export interface AutoAgentifyResult {
 
 export interface AutoAgentifyCapability {
   name: string
+  category?: string
   description: string
   value: string
   workflow: string[]

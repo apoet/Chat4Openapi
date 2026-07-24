@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowDown, Close, MagicStick, Plus } from '@element-plus/icons-vue'
+import {
+  ArrowDown,
+  Clock,
+  Close,
+  CollectionTag,
+  Loading,
+  MagicStick,
+  Plus,
+} from '@element-plus/icons-vue'
 import { RouterLink } from 'vue-router'
 
 import { request } from '../api/client'
@@ -20,10 +28,10 @@ const emit = defineEmits<{
   generated: [result: AutoAgentifyResult]
   close: []
 }>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const providers = ref<LlmProviderSummary[]>([])
 const providerId = ref('')
-const showAllCapabilities = ref(false)
+const showActivityHistory = ref(false)
 const selectedSystemCapabilities = ref<string[]>([])
 const customCapabilityInput = ref('')
 const customCapabilityLabels = ref<string[]>([])
@@ -65,10 +73,28 @@ const ready = computed(
   () => Boolean(providerId.value) && sourceReady.value && !starting.value && !active.value,
 )
 const currentEvent = computed(() => events.value.at(-1) ?? null)
-const visibleCapabilities = computed(() => (
-  showAllCapabilities.value ? capabilities.value : capabilities.value.slice(-6)
-))
-const recentEvents = computed(() => events.value.slice(-8).reverse())
+const activityHistory = computed(() => events.value.slice(0, -1).slice(-8).reverse())
+const resultLanguage = computed<'zh-CN' | 'en-US'>(
+  () => locale.value.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US',
+)
+const capabilityGroups = computed(() => {
+  const groups = new Map<string, typeof capabilities.value>()
+  for (const capability of capabilities.value) {
+    const category = capability.category || 'core_business'
+    const existing = groups.get(category) ?? []
+    existing.push(capability)
+    groups.set(category, existing)
+  }
+  return Array.from(groups, ([key, items]) => ({
+    key,
+    label: systemCapabilities.some((item) => item === key)
+      ? t(`autoAgentify.systemCapabilities.${key}`)
+      : key === 'core_business'
+        ? t('autoAgentify.coreBusiness')
+        : key,
+    items,
+  }))
+})
 const failureCode = computed(() => errorCode.value || job.value?.error_code || null)
 const failed = computed(() => job.value?.status === 'failed' || Boolean(errorCode.value))
 const submitLabel = computed(() => {
@@ -95,6 +121,44 @@ const currentStageDetail = computed(() => {
     return t('autoAgentify.operationScope', { count: event.params.count })
   }
   return eventLabel(event)
+})
+const currentActivityDetails = computed(() => {
+  const event = currentEvent.value
+  if (!event) return []
+  const details: Array<{ label: string, value: string }> = []
+  if (event.params.batch && event.params.total) {
+    details.push({
+      label: t('autoAgentify.activityBatch'),
+      value: `${String(event.params.batch)} / ${String(event.params.total)}`,
+    })
+  }
+  const operationCount = event.params.operation_count
+    ?? event.params.count
+    ?? job.value?.metrics.operation_count
+  if (operationCount) {
+    details.push({
+      label: t('autoAgentify.activityOperations'),
+      value: String(operationCount),
+    })
+  }
+  for (const [key, label] of [
+    ['capability_count', t('autoAgentify.activityCapabilities')],
+    ['skill_count', t('autoAgentify.activitySkills')],
+    ['agent_count', t('autoAgentify.activityAgents')],
+  ]) {
+    if (event.params[key]) {
+      details.push({ label, value: String(event.params[key]) })
+    }
+  }
+  details.push({
+    label: t('autoAgentify.activityUpdated'),
+    value: new Intl.DateTimeFormat(resultLanguage.value, {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }).format(new Date(event.created_at)),
+  })
+  return details
 })
 const canAddCustomCapability = computed(() => {
   const value = customCapabilityInput.value.trim()
@@ -190,6 +254,7 @@ function runGeneration(): Promise<void> {
   return start(props.source, Number(providerId.value), {
     allowedSystemCapabilities: selectedSystemCapabilities.value,
     customCapabilityLabels: customCapabilityLabels.value,
+    resultLanguage: resultLanguage.value,
   })
 }
 </script>
@@ -287,14 +352,28 @@ function runGeneration(): Promise<void> {
           </button>
           <p v-if="active" class="background-hint">{{ t('autoAgentify.backgroundHint') }}</p>
 
-          <section v-if="job" class="live-analysis" aria-live="polite">
-            <div class="progress-heading">
-              <strong>{{ t('autoAgentify.liveProgress') }}</strong>
+          <section v-if="job" class="analysis-process" aria-live="polite">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">{{ t('autoAgentify.analysisProcessKicker') }}</p>
+                <h3>{{ t('autoAgentify.analysisProcess') }}</h3>
+              </div>
               <span>{{ job.progress }}%</span>
             </div>
-            <div data-testid="auto-current-stage" class="current-stage">
-              <span>{{ currentStageDetail }}</span>
-              <small v-if="job.metrics.operation_count">{{ t('autoAgentify.operationsFound', { count: job.metrics.operation_count }) }}</small>
+            <div data-testid="auto-current-stage" class="current-activity">
+              <div class="activity-orbit" aria-hidden="true">
+                <Loading v-if="active" />
+                <Clock v-else />
+              </div>
+              <div class="activity-copy">
+                <small>{{ t('autoAgentify.currentActivity') }}</small>
+                <strong>{{ currentStageDetail }}</strong>
+                <div v-if="currentActivityDetails.length" class="activity-details">
+                  <span v-for="detail in currentActivityDetails" :key="detail.label">
+                    <small>{{ detail.label }}</small>{{ detail.value }}
+                  </span>
+                </div>
+              </div>
             </div>
             <progress data-testid="auto-progress" :value="job.progress" max="100"></progress>
 
@@ -304,46 +383,66 @@ function runGeneration(): Promise<void> {
               <small>{{ failureCode }}</small>
             </div>
 
-            <div v-if="capabilities.length" class="capability-list">
-              <div class="section-heading">
-                <h3>{{ t('autoAgentify.capabilities') }}</h3>
-                <span>{{ capabilities.length }}</span>
-              </div>
-              <details v-for="capability in visibleCapabilities" :key="capability.name" class="capability-card">
-                <summary>
-                  <span><strong>{{ capability.name }}</strong><span v-if="capability.high_impact" class="impact-pill">{{ t('autoAgentify.highImpact') }}</span></span>
-                  <small>{{ capability.value }}</small>
-                </summary>
-                <div class="capability-detail">
-                  <p>{{ capability.description }}</p>
-                  <ol><li v-for="step in capability.workflow" :key="step">{{ step }}</li></ol>
-                </div>
-              </details>
-              <button v-if="capabilities.length > 6" type="button" class="secondary-action capability-toggle" @click="showAllCapabilities = !showAllCapabilities">
-                {{ showAllCapabilities ? t('autoAgentify.showRecent') : t('autoAgentify.showAll', { count: capabilities.length }) }}
+            <div v-if="activityHistory.length" class="event-section">
+              <button
+                type="button"
+                class="activity-history-toggle"
+                :aria-expanded="showActivityHistory"
+                @click="showActivityHistory = !showActivityHistory"
+              >
+                <span>{{ showActivityHistory ? t('autoAgentify.hideActivityHistory') : t('autoAgentify.showActivityHistory') }}</span>
+                <small>{{ activityHistory.length }}</small>
               </button>
-            </div>
-
-            <div v-if="recentEvents.length" class="event-section">
-              <h3>{{ t('autoAgentify.recentActivity') }}</h3>
               <ol class="event-list">
-                <li v-for="event in recentEvents" :key="event.sequence">
+                <li v-for="event in showActivityHistory ? activityHistory : []" :key="event.sequence">
                   <span>{{ eventLabel(event) }}</span><small>{{ event.progress }}%</small>
                 </li>
               </ol>
             </div>
           </section>
 
-          <section v-if="job?.result" class="auto-result" data-testid="auto-result">
-            <h3>{{ t('autoAgentify.resultTitle') }}</h3>
-            <p>{{ t('autoAgentify.counts', { tools: job.result.enabled_tool_count, imported: job.result.imported_tool_count, skills: job.result.skills.length, agents: job.result.agents.length }) }}</p>
-            <div class="result-actions">
-              <RouterLink class="secondary-action" to="/admin/skills">{{ t('autoAgentify.reviewSkills') }}</RouterLink>
-              <RouterLink class="secondary-action" to="/admin/agent">{{ t('autoAgentify.reviewAgents') }}</RouterLink>
+          <section v-if="capabilities.length || job?.result" class="recognition-results" data-testid="recognition-results">
+            <div class="section-heading result-heading">
+              <div>
+                <p class="section-kicker">{{ t('autoAgentify.recognitionResultsKicker') }}</p>
+                <h3>{{ t('autoAgentify.recognitionResults') }}</h3>
+              </div>
+              <span>{{ capabilities.length }}</span>
             </div>
-            <div class="auto-result-grid">
-              <section><h4>{{ t('autoAgentify.skills') }}</h4><article v-for="skill in job.result.skills" :key="skill.id" class="auto-result-card"><strong>{{ skill.name }}</strong><p>{{ skill.value }}</p></article></section>
-              <section><h4>{{ t('autoAgentify.agents') }}</h4><article v-for="agent in job.result.agents" :key="agent.id" class="auto-result-card"><strong>{{ agent.name }}</strong><p>{{ agent.value }}</p><ul><li v-for="useCase in agent.use_cases" :key="useCase">{{ useCase }}</li></ul></article></section>
+            <p class="result-hint">{{ t('autoAgentify.recognitionResultsHint') }}</p>
+            <div class="capability-groups">
+              <section v-for="group in capabilityGroups" :key="group.key" class="capability-group">
+                <header>
+                  <CollectionTag aria-hidden="true" />
+                  <strong>{{ group.label }}</strong>
+                  <span>{{ group.items.length }}</span>
+                </header>
+                <details v-for="capability in group.items" :key="capability.name" class="capability-card">
+                  <summary>
+                    <span><strong>{{ capability.name }}</strong><span v-if="capability.high_impact" class="impact-pill">{{ t('autoAgentify.highImpact') }}</span></span>
+                    <small>{{ capability.value }}</small>
+                  </summary>
+                  <div class="capability-detail">
+                    <p>{{ capability.description }}</p>
+                    <ol><li v-for="step in capability.workflow" :key="step">{{ step }}</li></ol>
+                  </div>
+                </details>
+              </section>
+            </div>
+
+            <div v-if="job?.result" class="auto-result" data-testid="auto-result">
+              <div class="result-summary">
+                <strong>{{ t('autoAgentify.resultTitle') }}</strong>
+                <p>{{ t('autoAgentify.counts', { tools: job.result.enabled_tool_count, imported: job.result.imported_tool_count, skills: job.result.skills.length, agents: job.result.agents.length }) }}</p>
+              </div>
+              <div class="result-actions">
+                <RouterLink class="secondary-action" to="/admin/skills">{{ t('autoAgentify.reviewSkills') }}</RouterLink>
+                <RouterLink class="secondary-action" to="/admin/agent">{{ t('autoAgentify.reviewAgents') }}</RouterLink>
+              </div>
+              <div class="auto-result-grid">
+                <section><h4>{{ t('autoAgentify.skills') }}</h4><article v-for="skill in job.result.skills" :key="skill.id" class="auto-result-card"><strong>{{ skill.name }}</strong><p>{{ skill.value }}</p></article></section>
+                <section><h4>{{ t('autoAgentify.agents') }}</h4><article v-for="agent in job.result.agents" :key="agent.id" class="auto-result-card"><strong>{{ agent.name }}</strong><p>{{ agent.value }}</p><ul><li v-for="useCase in agent.use_cases" :key="useCase">{{ useCase }}</li></ul></article></section>
+              </div>
             </div>
           </section>
         </div>
@@ -397,20 +496,39 @@ function runGeneration(): Promise<void> {
 .generation-notice strong { color: #4137a7; font-size: 13px; }
 .generation-notice p, .background-hint { margin: 5px 0 0; color: #626b7b; font-size: 13px; line-height: 1.5; }
 .background-hint { margin: -6px 0 0; text-align: center; }
-.progress-heading { display: flex; justify-content: space-between; }
 progress { width: 100%; height: 9px; overflow: hidden; border: 0; border-radius: 99px; background: #ece9e2; }
 progress::-webkit-progress-bar { background: #ece9e2; }
 progress::-webkit-progress-value { border-radius: 99px; background: linear-gradient(90deg, #6558e8, #887df2); }
 progress::-moz-progress-bar { border-radius: 99px; background: linear-gradient(90deg, #6558e8, #887df2); }
-.live-analysis, .capability-list { display: grid; gap: 12px; }
-.current-stage { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 12px; border-radius: 9px; color: #3f4654; background: #f5f6f8; font-size: 13px; font-weight: 700; }
-.current-stage small { color: #737b89; font-weight: 600; }
+.analysis-process, .recognition-results { display: grid; gap: 12px; padding: 16px; border: 1px solid #dfdbe9; border-radius: 14px; }
+.analysis-process { position: relative; overflow: hidden; background: linear-gradient(145deg, #fbfaff 0%, #f4f2ff 56%, #faf9f6 100%); }
+.analysis-process::before { content: ""; position: absolute; width: 180px; height: 180px; top: -110px; right: -70px; border-radius: 50%; background: radial-gradient(circle, rgba(101,88,232,.18), rgba(101,88,232,0) 70%); pointer-events: none; }
+.section-kicker { margin: 0 0 3px; color: #786fd0; font-size: 10px; font-weight: 850; letter-spacing: .12em; text-transform: uppercase; }
+.current-activity { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 13px; padding: 14px; border: 1px solid rgba(115,102,220,.2); border-radius: 12px; background: rgba(255,255,255,.76); box-shadow: 0 8px 24px rgba(69,57,155,.08); backdrop-filter: blur(8px); }
+.activity-orbit { width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid #dcd6ff; border-radius: 50%; color: #6558e8; background: #f0edff; box-shadow: 0 0 0 5px rgba(101,88,232,.06); }
+.activity-orbit svg { width: 18px; height: 18px; }
+.analysis-process .activity-orbit svg.el-icon-loading { animation: activity-spin 1.3s linear infinite; }
+.activity-copy { min-width: 0; display: grid; gap: 4px; }
+.activity-copy > small { color: #777f8d; font-size: 11px; font-weight: 750; }
+.activity-copy > strong { color: #343b4a; font-size: 14px; line-height: 1.45; }
+.activity-details { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+.activity-details > span { display: inline-flex; align-items: baseline; gap: 5px; padding: 4px 7px; border-radius: 7px; color: #454d5d; background: #f2f1f7; font-size: 11px; font-weight: 750; }
+.activity-details small { color: #7a8190; font-size: 10px; font-weight: 650; }
+@keyframes activity-spin { to { transform: rotate(360deg); } }
 .auto-error-panel { padding: 14px; border: 1px solid #efc4c4; border-radius: 11px; color: #8b2929; background: #fff4f4; }
 .auto-error-panel p { margin: 5px 0; color: #733737; line-height: 1.5; }
 .auto-error-panel small { color: #9c5c5c; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .section-heading h3, .event-section h3 { margin: 0; font-size: 16px; }
 .section-heading > span { min-width: 28px; height: 24px; display: grid; place-items: center; padding: 0 8px; border-radius: 99px; color: #5046b8; background: #eeecff; font-size: 12px; font-weight: 800; }
+.recognition-results { background: #fff; }
+.result-heading { padding-bottom: 3px; }
+.result-hint { margin: -5px 0 2px; color: #6d7584; font-size: 12px; line-height: 1.5; }
+.capability-groups { display: grid; gap: 12px; }
+.capability-group { display: grid; gap: 8px; padding: 11px; border: 1px solid #e6e2da; border-radius: 12px; background: #faf9f6; }
+.capability-group > header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; color: #3f4654; }
+.capability-group > header svg { width: 16px; height: 16px; color: #6558e8; }
+.capability-group > header > span { min-width: 24px; height: 22px; display: grid; place-items: center; border-radius: 99px; color: #5a50bd; background: #ece9ff; font-size: 11px; font-weight: 800; }
 .capability-card { border: 1px solid #e1ddd4; border-radius: 10px; background: #fff; }
 .capability-card summary { padding: 12px 14px; cursor: pointer; list-style-position: outside; }
 .capability-card summary > span { display: flex; align-items: center; gap: 8px; }
@@ -419,12 +537,16 @@ progress::-moz-progress-bar { border-radius: 99px; background: linear-gradient(9
 .capability-detail p { margin: 12px 0 8px; color: #555e6d; line-height: 1.55; }
 .capability-detail ol { margin-bottom: 0; padding-left: 22px; }
 .impact-pill { padding: 2px 7px; border-radius: 99px; color: #17613a; background: #def7e8; font-size: 11px; }
-.capability-toggle { width: 100%; }
 .event-section { display: grid; gap: 10px; }
+.activity-history-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between; padding: 4px 2px; border: 0; color: #5e6573; background: transparent; font-size: 12px; font-weight: 750; }
+.activity-history-toggle:hover { color: #4e43b5; }
+.activity-history-toggle small { min-width: 22px; height: 20px; display: grid; place-items: center; border-radius: 99px; color: #665bc6; background: #ece9ff; }
 .event-list { margin: 0; display: grid; gap: 7px; padding-left: 22px; }
-.event-list li { display: flex; justify-content: space-between; gap: 12px; }
+.event-list:empty { display: none; }
+.event-list li { justify-content: space-between; gap: 12px; color: #5f6674; font-size: 12px; }
 .event-list small { color: #626b7b; }
-.auto-result { padding-top: 16px; border-top: 1px solid #e1ddd4; }
+.auto-result { padding-top: 14px; border-top: 1px solid #e1ddd4; }
+.result-summary p { margin: 5px 0 0; color: #646c7b; font-size: 13px; }
 .result-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 .result-actions a { display: inline-flex; align-items: center; text-decoration: none; }
 .auto-result-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
@@ -434,7 +556,10 @@ progress::-moz-progress-bar { border-radius: 99px; background: linear-gradient(9
   .auto-agentify-modal { max-height: calc(100vh - 24px); }
   .auto-agentify-modal > .panel-heading, .auto-agentify-body { padding: 18px; }
   .auto-result-grid { grid-template-columns: 1fr; }
-  .current-stage { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .current-activity { grid-template-columns: 1fr; }
   .custom-capability-entry > div { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .analysis-process .activity-orbit svg.el-icon-loading { animation: none; }
 }
 </style>

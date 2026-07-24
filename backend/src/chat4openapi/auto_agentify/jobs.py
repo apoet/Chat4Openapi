@@ -93,6 +93,7 @@ def create_job(
     allow_private_networks: bool = False,
     allowed_system_capabilities: list[str] | tuple[str, ...] = (),
     custom_capability_labels: list[str] | tuple[str, ...] = (),
+    result_language: str = "en-US",
 ) -> tuple[AutoAgentifyJob, bool]:
     active = db.scalar(
         select(AutoAgentifyJob).where(
@@ -121,6 +122,7 @@ def create_job(
         metrics={
             "allowed_system_capabilities": list(allowed_system_capabilities),
             "custom_capability_labels": list(custom_capability_labels),
+            "result_language": result_language,
         },
     )
     db.add(job)
@@ -161,6 +163,7 @@ def schedule_auto_agentify_job(
     cipher: SecretCipher,
     allowed_system_capabilities: list[str] | tuple[str, ...] = (),
     custom_capability_labels: list[str] | tuple[str, ...] = (),
+    result_language: str = "en-US",
 ) -> None:
     task = asyncio.create_task(
         _run_job(
@@ -171,6 +174,7 @@ def schedule_auto_agentify_job(
             cipher=cipher,
             allowed_system_capabilities=allowed_system_capabilities,
             custom_capability_labels=custom_capability_labels,
+            result_language=result_language,
         )
     )
     _tasks.add(task)
@@ -186,6 +190,7 @@ async def _run_job(
     cipher: SecretCipher,
     allowed_system_capabilities: list[str] | tuple[str, ...] = (),
     custom_capability_labels: list[str] | tuple[str, ...] = (),
+    result_language: str = "en-US",
 ) -> None:
     with factory() as db:
         job = db.get(AutoAgentifyJob, job_id)
@@ -212,6 +217,7 @@ async def _run_job(
                 reporter=reporter,
                 allowed_system_capabilities=allowed_system_capabilities,
                 custom_capability_labels=custom_capability_labels,
+                result_language=result_language,
             )
             job = db.get(AutoAgentifyJob, job_id)
             if job is None:

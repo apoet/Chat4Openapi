@@ -62,6 +62,7 @@ class FakeEventSource {
 beforeEach(() => {
   setActivePinia(createPinia())
   useAuthStore().csrfToken = 'csrf-token'
+  i18n.global.locale.value = 'en-US'
   FakeEventSource.instances = []
   vi.stubGlobal('EventSource', FakeEventSource)
 })
@@ -143,6 +144,7 @@ it('starts from the current URL import input and displays live capability analys
     allow_private_networks: false,
     allowed_system_capabilities: ['file_management'],
     custom_capability_labels: ['Clinical trial data capture'],
+    result_language: 'en-US',
   })
   expect(FakeEventSource.instances[0].url)
     .toBe('/api/admin/auto-agentify/jobs/job-1/events')
@@ -156,6 +158,7 @@ it('starts from the current URL import input and displays live capability analys
     params: {},
     capability: {
       name: 'Project delivery insight',
+      category: 'file_management',
       description: 'Summarizes delivery health and risk.',
       value: 'Reduces project review time.',
       workflow: ['List projects', 'Inspect risks'],
@@ -169,6 +172,9 @@ it('starts from the current URL import input and displays live capability analys
 
   expect(wrapper.text()).toContain('Project delivery insight')
   expect(wrapper.text()).toContain('Reduces project review time.')
+  expect(wrapper.get('[data-testid="recognition-results"]').text())
+    .toContain('File management')
+  expect(wrapper.get('.analysis-process').text()).toContain('Analysis process')
   expect(wrapper.get('[data-testid="auto-progress"]').attributes('value')).toBe('42')
 })
 
@@ -227,6 +233,9 @@ it('shows batch scope and a visible provider-specific retry state', async () => 
 
   expect(wrapper.get('[data-testid="auto-error"]').text())
     .toContain('provider could not complete')
+  expect(wrapper.find('.event-list').text()).not.toContain('business capability batch')
+  await wrapper.get('.activity-history-toggle').trigger('click')
+  expect(wrapper.get('.event-list').text()).toContain('business capability batch')
   expect(wrapper.get('[data-testid="auto-submit"]').text()).toContain('Retry')
 })
 
@@ -261,6 +270,7 @@ it('restores capability preferences with a recovered background job', async () =
 })
 
 it('uses the current file input and keeps the background job when closed', async () => {
+  i18n.global.locale.value = 'zh-CN'
   vi.stubGlobal('fetch', vi.fn()
     .mockResolvedValueOnce(response([provider]))
     .mockResolvedValueOnce(response(null))
@@ -293,6 +303,7 @@ it('uses the current file input and keeps the background job when closed', async
   expect((call[1]?.body as FormData).get('document')).toBe(file)
   expect((call[1]?.body as FormData).get('allowed_system_capabilities')).toBe('[]')
   expect((call[1]?.body as FormData).get('custom_capability_labels')).toBe('[]')
+  expect((call[1]?.body as FormData).get('result_language')).toBe('zh-CN')
 
   await wrapper.get('[data-testid="auto-close"]').trigger('click')
   expect(wrapper.emitted('close')).toHaveLength(1)

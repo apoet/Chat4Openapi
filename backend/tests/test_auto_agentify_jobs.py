@@ -251,6 +251,7 @@ async def test_job_api_creates_and_recovers_latest_job(
             "url": "https://api.example.test/openapi.json",
             "allowed_system_capabilities": ["file_management"],
             "custom_capability_labels": ["clinical trial data capture"],
+            "result_language": "zh-CN",
         },
         headers={"X-CSRF-Token": token},
     )
@@ -271,6 +272,7 @@ async def test_job_api_creates_and_recovers_latest_job(
     assert scheduled[0]["custom_capability_labels"] == [
         "clinical trial data capture"
     ]
+    assert scheduled[0]["result_language"] == "zh-CN"
     latest = await client.get("/api/admin/auto-agentify/jobs/latest")
     assert latest.status_code == 200
     assert latest.json()["public_id"] == first.json()["public_id"]
@@ -280,3 +282,4 @@ async def test_job_api_creates_and_recovers_latest_job(
     assert latest.json()["metrics"]["custom_capability_labels"] == [
         "clinical trial data capture"
     ]
+    assert latest.json()["metrics"]["result_language"] == "zh-CN"

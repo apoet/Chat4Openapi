@@ -71,6 +71,7 @@ class AgentPlan(BaseModel):
 
 class CapabilitySummary(BaseModel):
     name: str = Field(min_length=1, max_length=160)
+    category: str = Field(default="core_business", min_length=1, max_length=160)
     description: str = Field(min_length=1, max_length=2_000)
     value: str = Field(min_length=1, max_length=2_000)
     workflow: list[str] = Field(min_length=1, max_length=12)
@@ -125,6 +126,7 @@ class AutoAgentifyUrlRequest(BaseModel):
     allow_private_networks: bool = False
     allowed_system_capabilities: list[str] = Field(default_factory=list)
     custom_capability_labels: list[str] = Field(default_factory=list)
+    result_language: Literal["zh-CN", "en-US"] = "en-US"
 
     @model_validator(mode="after")
     def validate_capability_preferences(self) -> "AutoAgentifyUrlRequest":

@@ -33,14 +33,15 @@ values present in the catalog.
 Prioritize end-user domain outcomes and coherent, end-to-end workflows. Treat generic
 administration, authentication, monitoring, infrastructure, and developer tooling as
 supporting capabilities unless the catalog primarily represents one of those products.
-Do not create one Skill per CRUD resource. Use the dominant natural language of the
-catalog metadata for names, descriptions, values, use cases, and generated system prompts.
+Do not create one Skill per CRUD resource. Follow the requested result language for
+user-visible fields; generated Skill and Agent system prompts may use another language.
 Use human_in_loop for workflows that mutate data. Never exceed 20 Skills or 10 Agents."""
 
 PLAN_SHAPE = {
     "skills": [
         {
             "name": "string",
+            "category": "selected system capability id, exact custom label, or core_business",
             "description": "string",
             "system_prompt": "string",
             "operation_keys": ["METHOD /path"],
@@ -255,6 +256,7 @@ class AutoAgentifyPlanner:
         source_name: str = "",
         allowed_system_capabilities: list[str] | tuple[str, ...] = (),
         custom_capability_labels: list[str] | tuple[str, ...] = (),
+        result_language: str = "en-US",
     ) -> GenerationPlan:
         if not catalog:
             raise PlanGenerationError("API catalog is empty")
@@ -268,6 +270,7 @@ class AutoAgentifyPlanner:
             source_name,
             allowed_system_capabilities,
             custom_capability_labels,
+            result_language,
         )
         await _emit(
             reporter,
@@ -286,6 +289,7 @@ class AutoAgentifyPlanner:
             source_name=source_name,
             allowed_system_capabilities=allowed_system_capabilities,
             custom_capability_labels=custom_capability_labels,
+            result_language=result_language,
         )
         response = await self._complete(
             provider_type, base_url, api_key, model, prompt, max_tokens=12_000
@@ -296,6 +300,7 @@ class AutoAgentifyPlanner:
                 response,
                 operation_keys,
                 allowed_system_capabilities,
+                result_language,
             )
         except (ValidationError, ValueError) as first_error:
             await _emit(
@@ -311,6 +316,7 @@ class AutoAgentifyPlanner:
             correction = (
                 "The previous result was invalid. Return a corrected JSON object only.\n"
                 f"Validation errors: {first_error}\n"
+                f"{_capability_guidance(source_name, allowed_system_capabilities, custom_capability_labels, result_language)}\n"
                 f"Rejected result:\n{response[:32_768]}\n"
                 f"Required shape:\n{json.dumps(PLAN_SHAPE, ensure_ascii=False)}"
             )
@@ -327,12 +333,16 @@ class AutoAgentifyPlanner:
                     corrected,
                     operation_keys,
                     allowed_system_capabilities,
+                    result_language,
                 )
             except (ValidationError, ValueError):
                 plan = self._validate(
-                    _fallback_plan(capabilities, source_name).model_dump_json(),
+                    _fallback_plan(
+                        capabilities, source_name, result_language
+                    ).model_dump_json(),
                     operation_keys,
                     allowed_system_capabilities,
+                    result_language,
                 )
                 await _emit(
                     reporter,
@@ -414,6 +424,7 @@ class AutoAgentifyPlanner:
         source_name: str,
         allowed_system_capabilities: list[str] | tuple[str, ...],
         custom_capability_labels: list[str] | tuple[str, ...],
+        result_language: str,
     ) -> list[CapabilitySummary]:
         summaries: list[CapabilitySummary] = []
         batches = catalog_batches(catalog)
@@ -421,6 +432,7 @@ class AutoAgentifyPlanner:
             source_name,
             allowed_system_capabilities,
             custom_capability_labels,
+            result_language,
         )
         for index, batch in enumerate(batches, start=1):
             progress = 24 + round((index - 1) / len(batches) * 30)
@@ -450,8 +462,7 @@ class AutoAgentifyPlanner:
                 "generic administration, authentication, monitoring, infrastructure, and "
                 "developer tooling unless they are essential to the product's primary "
                 "purpose. Select the smallest sufficient operation set for each capability. "
-                "Mark high_impact when the workflow changes data. Use the dominant natural "
-                "language of the catalog metadata for all text fields.\n"
+                "Mark high_impact when the workflow changes data.\n"
                 f"{guidance}\n"
                 f"Required shape:\n{json.dumps(CAPABILITY_SHAPE, ensure_ascii=False)}\n"
                 + json.dumps(
@@ -468,6 +479,7 @@ class AutoAgentifyPlanner:
                 parsed.validate_references(
                     {item.operation_key for item in batch}
                 )
+                _validate_capability_language(parsed, result_language)
             except (ValidationError, ValueError) as first_error:
                 await _emit(
                     reporter,
@@ -485,6 +497,7 @@ class AutoAgentifyPlanner:
                     "Correct the invalid capability analysis below. Return one JSON "
                     "object only, with 1 to 6 capabilities, and use only operation_keys "
                     "from the allowed list.\n"
+                    f"{guidance}\n"
                     f"Validation errors: {first_error}\n"
                     f"Allowed operation_keys: "
                     f"{json.dumps([item.operation_key for item in batch])}\n"
@@ -507,12 +520,14 @@ class AutoAgentifyPlanner:
                     parsed.validate_references(
                         {item.operation_key for item in batch}
                     )
+                    _validate_capability_language(parsed, result_language)
                 except (ValidationError, ValueError):
                     parsed = CapabilityBatch(
                         capabilities=_fallback_capabilities(
                             batch,
                             source_name,
                             custom_capability_labels,
+                            result_language,
                         )
                     )
                     await _emit(
@@ -549,6 +564,11 @@ class AutoAgentifyPlanner:
                         ),
                     )
                     continue
+                capability.category = _normalize_capability_category(
+                    capability,
+                    allowed_system_capabilities,
+                    custom_capability_labels,
+                )
                 summaries.append(capability)
                 await _emit(
                     reporter,
@@ -588,11 +608,13 @@ class AutoAgentifyPlanner:
         source_name: str = "",
         allowed_system_capabilities: list[str] | tuple[str, ...] = (),
         custom_capability_labels: list[str] | tuple[str, ...] = (),
+        result_language: str = "en-US",
     ) -> str:
         guidance = _capability_guidance(
             source_name,
             allowed_system_capabilities,
             custom_capability_labels,
+            result_language,
         )
         return (
             "Create the final generation plan from the validated capability summaries "
@@ -603,8 +625,7 @@ class AutoAgentifyPlanner:
             "one or more Skills. Skill and Agent system prompts must state their goal, when "
             "to use bound tools, required-input clarification behavior, mutation confirmation "
             "behavior, and how to summarize results. Prefer primary domain capabilities over "
-            "generic administration or infrastructure. Use the dominant natural language of "
-            "the catalog metadata for every text field.\n"
+            "generic administration or infrastructure.\n"
             f"{guidance}\n"
             f"Required shape:\n{json.dumps(PLAN_SHAPE, ensure_ascii=False)}\n"
             f"Capability summaries:\n"
@@ -654,9 +675,11 @@ class AutoAgentifyPlanner:
         content: str,
         operation_keys: set[str],
         allowed_system_capabilities: list[str] | tuple[str, ...] = (),
+        result_language: str = "en-US",
     ) -> GenerationPlan:
         plan = GenerationPlan.model_validate_json(_json_object(content))
         plan.validate_references(operation_keys)
+        _validate_plan_language(plan, result_language)
         for skill in plan.skills:
             forbidden_id = _forbidden_text_id(
                 " ".join([skill.name, skill.description, skill.value]),
@@ -685,10 +708,62 @@ async def _emit(reporter: Any | None, event: ProgressEvent) -> None:
         await reporter.emit(event)
 
 
+def _validate_visible_language(text: str, result_language: str) -> None:
+    cjk_count = len(re.findall(r"[\u4e00-\u9fff]", text))
+    latin_count = len(re.findall(r"[A-Za-z]", text))
+    if result_language == "zh-CN" and cjk_count < 4:
+        raise ValueError("user-visible result fields must use Simplified Chinese")
+    if result_language == "en-US" and cjk_count > latin_count:
+        raise ValueError("user-visible result fields must use English")
+
+
+def _validate_capability_language(
+    batch: CapabilityBatch,
+    result_language: str,
+) -> None:
+    for capability in batch.capabilities:
+        _validate_visible_language(
+            " ".join(
+                [
+                    capability.name,
+                    capability.description,
+                    capability.value,
+                    *capability.workflow,
+                    *capability.candidate_skills,
+                ]
+            ),
+            result_language,
+        )
+
+
+def _validate_plan_language(
+    plan: GenerationPlan,
+    result_language: str,
+) -> None:
+    for skill in plan.skills:
+        _validate_visible_language(
+            " ".join([skill.name, skill.description, skill.value]),
+            result_language,
+        )
+    for agent in plan.agents:
+        _validate_visible_language(
+            " ".join(
+                [
+                    agent.name,
+                    agent.responsibility,
+                    agent.value,
+                    *agent.use_cases,
+                ]
+            ),
+            result_language,
+        )
+
+
 def _capability_guidance(
     source_name: str,
     allowed_system_capabilities: list[str] | tuple[str, ...],
     custom_capability_labels: list[str] | tuple[str, ...],
+    result_language: str = "en-US",
 ) -> str:
     allowed_ids = set(allowed_system_capabilities)
     allowed = [
@@ -702,6 +777,12 @@ def _capability_guidance(
         if key not in allowed_ids
     ]
     custom = [label.strip() for label in custom_capability_labels if label.strip()]
+    categories = [*allowed_system_capabilities, *custom]
+    language_name = (
+        "Simplified Chinese (zh-CN)"
+        if result_language == "zh-CN"
+        else "English (en-US)"
+    )
     return (
         "Analysis guidance:\n"
         f"- Source name: {json.dumps(source_name, ensure_ascii=False)}. Treat it as a "
@@ -713,8 +794,49 @@ def _capability_guidance(
         "or Agents for these topics even when matching endpoints exist.\n"
         f"- Priority custom capabilities: "
         f"{json.dumps(custom, ensure_ascii=False)}. Actively look for and prioritize these "
-        "when the catalog provides evidence; do not invent unsupported operations."
+        "when the catalog provides evidence; do not invent unsupported operations.\n"
+        f"- Result categories: {json.dumps(categories, ensure_ascii=False)}. Set each "
+        "capability.category to the exact matching selected system capability id or exact "
+        "custom label. Use core_business only when no listed category truthfully applies.\n"
+        f"- User-visible result language: {language_name}. Capability names, descriptions, "
+        "values, workflow steps, candidate Skill names, Skill/Agent names, responsibilities, "
+        "values, and use cases MUST use this language. Skill and Agent system_prompt fields "
+        "may use whichever language is most effective for execution."
     )
+
+
+def _normalize_capability_category(
+    capability: CapabilitySummary,
+    allowed_system_capabilities: list[str] | tuple[str, ...],
+    custom_capability_labels: list[str] | tuple[str, ...],
+) -> str:
+    allowed_ids = set(allowed_system_capabilities)
+    custom = [label.strip() for label in custom_capability_labels if label.strip()]
+    category = capability.category.strip()
+    if category in allowed_ids or category in custom:
+        return category
+    for capability_id in allowed_ids:
+        if category == BUILTIN_SYSTEM_CAPABILITIES[capability_id]:
+            return capability_id
+    text = " ".join(
+        [
+            capability.name,
+            capability.description,
+            capability.value,
+            *capability.workflow,
+            *capability.candidate_skills,
+        ]
+    ).casefold()
+    for label in custom:
+        if label.casefold() in text:
+            return label
+    for capability_id in allowed_ids:
+        if any(
+            term.casefold() in text
+            for term in FORBIDDEN_CAPABILITY_TERMS.get(capability_id, ())
+        ):
+            return capability_id
+    return "core_business"
 
 
 def _forbidden_capability_id(
@@ -754,6 +876,7 @@ def _fallback_capabilities(
     batch: list[OperationCatalogItem],
     source_name: str,
     custom_capability_labels: list[str] | tuple[str, ...] = (),
+    result_language: str = "en-US",
 ) -> list[CapabilitySummary]:
     groups: dict[str, list[OperationCatalogItem]] = {}
     for item in batch:
@@ -776,7 +899,7 @@ def _fallback_capabilities(
     capabilities: list[CapabilitySummary] = []
     for label, items in ranked[:6]:
         safe_label = label[:160]
-        use_chinese = bool(re.search(r"[\u4e00-\u9fff]", safe_label))
+        use_chinese = result_language == "zh-CN"
         description = (
             f"协调{safe_label}相关接口，形成可复用的端到端业务流程。"
             if use_chinese
@@ -796,9 +919,15 @@ def _fallback_capabilities(
                 description=description[:2_000],
                 value=value[:2_000],
                 workflow=[
-                    "Review required inputs",
-                    "Execute the relevant API workflow",
-                    "Review and summarize the result",
+                    *(
+                        ["确认必填信息", "执行相关接口流程", "复核并汇总结果"]
+                        if use_chinese
+                        else [
+                            "Review required inputs",
+                            "Execute the relevant API workflow",
+                            "Review and summarize the result",
+                        ]
+                    ),
                 ],
                 operation_keys=[
                     item.operation_key for item in items[:128]
@@ -813,6 +942,7 @@ def _fallback_capabilities(
 def _fallback_plan(
     capabilities: list[CapabilitySummary],
     source_name: str,
+    result_language: str = "en-US",
 ) -> GenerationPlan:
     unique: list[CapabilitySummary] = []
     seen_names: set[str] = set()
@@ -827,7 +957,7 @@ def _fallback_plan(
     if not unique:
         raise PlanGenerationError("no allowed business capabilities remain")
 
-    use_chinese = any(re.search(r"[\u4e00-\u9fff]", item.name) for item in unique)
+    use_chinese = result_language == "zh-CN"
     skills: list[SkillPlan] = []
     for capability in unique:
         if use_chinese:
@@ -899,8 +1029,12 @@ def _fallback_plan(
                 ),
                 max_iterations=12,
                 value=(
-                    f"Coordinates {len(group)} validated business workflows "
-                    "into consistent outcomes."
+                    f"将 {len(group)} 个已验证业务流程协调为一致、可复用的成果。"
+                    if use_chinese
+                    else (
+                        f"Coordinates {len(group)} validated business workflows "
+                        "into consistent outcomes."
+                    )
                 ),
                 use_cases=use_cases,
             )

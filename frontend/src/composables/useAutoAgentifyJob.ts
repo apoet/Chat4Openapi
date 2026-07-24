@@ -20,6 +20,7 @@ export interface AutoAgentifySourceInput {
 export interface AutoAgentifyPreferences {
   allowedSystemCapabilities: string[]
   customCapabilityLabels: string[]
+  resultLanguage: 'zh-CN' | 'en-US'
 }
 
 export function useAutoAgentifyJob() {
@@ -115,6 +116,7 @@ export function useAutoAgentifyJob() {
               allow_private_networks: source.allowPrivateNetworks,
               allowed_system_capabilities: preferences.allowedSystemCapabilities,
               custom_capability_labels: preferences.customCapabilityLabels,
+              result_language: preferences.resultLanguage,
             }),
           },
           auth.csrfToken,
@@ -133,6 +135,7 @@ export function useAutoAgentifyJob() {
           'custom_capability_labels',
           JSON.stringify(preferences.customCapabilityLabels),
         )
+        body.set('result_language', preferences.resultLanguage)
         body.set('document', source.file as File)
         job.value = await request<AutoAgentifyJob>(
           '/api/admin/auto-agentify/jobs/file',
