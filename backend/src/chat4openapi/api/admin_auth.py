@@ -23,7 +23,7 @@ from chat4openapi.security.passwords import (
     hash_password,
     verify_password,
 )
-from chat4openapi.security.session_tokens import hash_token, new_token
+from chat4openapi.security.session_tokens import csrf_token_for_session, hash_token
 from chat4openapi.services.admin_auth import InvalidCredentialsError, authenticate_admin
 from chat4openapi.services.password_reset import (
     PasswordResetCredentialError,
@@ -74,12 +74,21 @@ def require_admin(
 
 
 def require_csrf(
+    request: Request,
     context: AdminContext = Depends(require_admin),
     csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
 ) -> AdminContext:
-    if csrf_token is None or not secrets.compare_digest(
-        hash_token(csrf_token), context.admin_session.csrf_hash
-    ):
+    if csrf_token is None:
+        raise ApiError(403, "auth.csrf_invalid")
+    supplied_hash = hash_token(csrf_token)
+    stored_token_matches = secrets.compare_digest(
+        supplied_hash, context.admin_session.csrf_hash
+    )
+    session_token_matches = secrets.compare_digest(
+        csrf_token,
+        csrf_token_for_session(request.cookies.get(ADMIN_COOKIE) or ""),
+    )
+    if not stored_token_matches and not session_token_matches:
         raise ApiError(403, "auth.csrf_invalid")
     return context
 
@@ -148,17 +157,19 @@ def login(
 
 
 @router.get("/me", response_model=AuthResponse)
-def me(context: AdminContext = Depends(require_admin)) -> AuthResponse:
-    csrf_token = new_token()
-    context.admin_session.csrf_hash = hash_token(csrf_token)
-    context.db.commit()
+def me(
+    request: Request,
+    context: AdminContext = Depends(require_admin),
+) -> AuthResponse:
     return AuthResponse(
         admin=AdminSummary(
             username=context.admin.username,
             locale=context.admin.locale,
             role=context.admin.role,
         ),
-        csrf_token=csrf_token,
+        csrf_token=csrf_token_for_session(
+            request.cookies.get(ADMIN_COOKIE) or ""
+        ),
     )
 
 

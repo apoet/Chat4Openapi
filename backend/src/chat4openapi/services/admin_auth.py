@@ -11,7 +11,11 @@ from chat4openapi.models.app_setting import AppSetting
 from chat4openapi.schemas.auth import AdminSummary
 from chat4openapi.schemas.setup import SetupRequest, SetupStatus
 from chat4openapi.security.passwords import hash_password, verify_password
-from chat4openapi.security.session_tokens import hash_token, new_token
+from chat4openapi.security.session_tokens import (
+    csrf_token_for_session,
+    hash_token,
+    new_token,
+)
 
 
 class AlreadyInitializedError(Exception):
@@ -72,7 +76,7 @@ def authenticate_admin(
 
     now = datetime.now(UTC).replace(tzinfo=None)
     session_token = new_token()
-    csrf_token = new_token()
+    csrf_token = csrf_token_for_session(session_token)
     session.add(
         AdminSession(
             admin_id=admin.id,

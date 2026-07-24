@@ -30,7 +30,7 @@ async def test_login_rejects_invalid_credentials(client: httpx.AsyncClient) -> N
 
 
 @pytest.mark.asyncio
-async def test_login_sets_http_only_cookie_and_me_rotates_csrf(
+async def test_login_and_me_share_stable_csrf_across_browser_tabs(
     client: httpx.AsyncClient,
 ) -> None:
     await initialize(client)
@@ -40,7 +40,12 @@ async def test_login_sets_http_only_cookie_and_me_rotates_csrf(
         json={"username": "admin", "password": "StrongPass!123"},
     )
     first_csrf = login.json()["csrf_token"]
-    me = await client.get("/api/admin/auth/me")
+    first_tab = await client.get("/api/admin/auth/me")
+    second_tab = await client.get("/api/admin/auth/me")
+    logout = await client.post(
+        "/api/admin/auth/logout",
+        headers={"X-CSRF-Token": first_csrf},
+    )
 
     assert login.status_code == 200
     assert login.json()["admin"] == {
@@ -51,9 +56,11 @@ async def test_login_sets_http_only_cookie_and_me_rotates_csrf(
     assert first_csrf
     assert "HttpOnly" in login.headers["set-cookie"]
     assert "SameSite=lax" in login.headers["set-cookie"]
-    assert me.status_code == 200
-    assert me.json()["admin"]["username"] == "admin"
-    assert me.json()["csrf_token"] != first_csrf
+    assert first_tab.status_code == 200
+    assert first_tab.json()["admin"]["username"] == "admin"
+    assert first_tab.json()["csrf_token"] == first_csrf
+    assert second_tab.json()["csrf_token"] == first_csrf
+    assert logout.status_code == 204
 
 
 @pytest.mark.asyncio
