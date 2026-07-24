@@ -40,6 +40,33 @@ const failedJob = {
   completed_at: '2026-07-24T00:06:28',
 }
 
+const completedJob = {
+  ...queuedJob,
+  status: 'completed',
+  phase: 'completed',
+  progress: 100,
+  completed_at: '2026-07-24T00:06:28',
+  result: {
+    source: {
+      id: 3, name: 'Projects', source_type: 'openapi',
+      base_url: 'https://api.example.test', document_url: null,
+      allow_private_networks: false, auth_mode: 'none', enabled: true,
+      created_at: '2026-07-24T00:06:28',
+    },
+    imported_tool_count: 4,
+    enabled_tool_count: 3,
+    skills: [{
+      id: 8, name: 'Project insight', description: 'Generated from Projects.',
+      tool_ids: [1, 2], value: 'Summarizes delivery health.',
+    }],
+    agents: [{
+      id: 9, name: 'Project analyst', description: 'Generated from Projects.',
+      skill_ids: [8], mode: 'react', provider_id: 7,
+      value: 'Turns project APIs into decisions.', use_cases: ['Review delivery risk'],
+    }],
+  },
+}
+
 class FakeEventSource {
   static instances: FakeEventSource[] = []
   onmessage: ((event: MessageEvent<string>) => void) | null = null
@@ -119,6 +146,9 @@ it('starts from the current URL import input and displays live capability analys
   expect(wrapper.get('[data-testid="auto-provider"]').element.parentElement?.classList)
     .toContain('provider-select-shell')
   expect(wrapper.get('.provider-mark').attributes('aria-hidden')).toBe('true')
+  expect(wrapper.get('.wizard-steps').text()).toContain('Source & model')
+  await wrapper.get('[data-testid="auto-provider"]').setValue('7')
+  await wrapper.get('[data-testid="wizard-next"]').trigger('click')
   expect(wrapper.get('[data-testid="auto-generation-notice"]').text())
     .toContain('20 Skills')
   expect(wrapper.get('[data-testid="capability-system-sensitive_data_security"]').text())
@@ -130,7 +160,6 @@ it('starts from the current URL import input and displays live capability analys
   await wrapper.get('[data-testid="custom-capability-input"]')
     .setValue('Clinical trial data capture')
   await wrapper.get('[data-testid="add-custom-capability"]').trigger('click')
-  await wrapper.get('[data-testid="auto-provider"]').setValue('7')
   await wrapper.get('[data-testid="auto-submit"]').trigger('click')
   await flushPromises()
 
@@ -191,10 +220,8 @@ it('starts from the current URL import input and displays live capability analys
     .toContain('POST /projects')
   expect(wrapper.get('[data-testid="body-schema-warning"]').text())
     .toContain('Insufficient field descriptions')
-  expect(wrapper.text()).toContain('Project delivery insight')
-  expect(wrapper.text()).toContain('Reduces project review time.')
-  expect(wrapper.get('[data-testid="recognition-results"]').text())
-    .toContain('File management')
+  expect(wrapper.text()).not.toContain('Project delivery insight')
+  expect(wrapper.find('[data-testid="recognition-results"]').exists()).toBe(false)
   expect(wrapper.get('.analysis-process').text()).toContain('Analysis process')
   expect(wrapper.get('[data-testid="auto-progress"]').attributes('value')).toBe('42')
 })
@@ -221,6 +248,7 @@ it('shows batch scope and a visible provider-specific retry state', async () => 
   await flushPromises()
 
   await wrapper.get('[data-testid="auto-provider"]').setValue('7')
+  await wrapper.get('[data-testid="wizard-next"]').trigger('click')
   await wrapper.get('[data-testid="auto-submit"]').trigger('click')
   await flushPromises()
 
@@ -285,9 +313,39 @@ it('restores capability preferences with a recovered background job', async () =
   })
   await flushPromises()
 
+  await wrapper.get('.wizard-actions .secondary-action').trigger('click')
   expect(wrapper.get('[data-testid="capability-system-messaging_notifications"]')
     .attributes('aria-pressed')).toBe('true')
   expect(wrapper.text()).toContain('Clinical trial data capture')
+})
+
+it('restores completed work directly into a separate results step', async () => {
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce(response([provider]))
+    .mockResolvedValueOnce(response(completedJob)))
+  const wrapper = mount(AutoAgentifyPanel, {
+    props: {
+      source: {
+        mode: 'url',
+        name: 'Projects',
+        baseUrl: 'https://api.example.test',
+        sourceUrl: 'https://api.example.test/openapi.json',
+        file: null,
+        allowPrivateNetworks: false,
+      },
+    },
+    global: { plugins: [i18n], stubs: { teleport: true, RouterLink: true } },
+  })
+  await flushPromises()
+
+  expect(wrapper.get('.wizard-steps [aria-current="step"]').text())
+    .toContain('Generated results')
+  expect(wrapper.get('[data-testid="auto-result"]').text()).toContain('Project analyst')
+  expect(wrapper.find('.analysis-process').exists()).toBe(false)
+
+  await wrapper.get('.result-footer .secondary-action').trigger('click')
+  expect(wrapper.get('.analysis-process').text()).toContain('Analysis process')
+  expect(wrapper.find('[data-testid="recognition-results"]').exists()).toBe(false)
 })
 
 it('uses the current file input and keeps the background job when closed', async () => {
@@ -315,6 +373,7 @@ it('uses the current file input and keeps the background job when closed', async
   await flushPromises()
 
   await wrapper.get('[data-testid="auto-provider"]').setValue('7')
+  await wrapper.get('[data-testid="wizard-next"]').trigger('click')
   await wrapper.get('[data-testid="auto-submit"]').trigger('click')
   await flushPromises()
 

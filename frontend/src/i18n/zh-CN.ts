@@ -49,6 +49,14 @@ export default {
   },
   nav: { overview: '概览', system: '系统', build: '构建', apis: 'APIs', logout: '退出登录', language: '简体中文' },
   status: { ready: '系统运行正常' },
+  autoAgentifyWizard: {
+    progress: '生成步骤', step: '第 {current}/{total} 步',
+    source: '来源与模型', scope: '能力范围', analysis: '分析与生成', results: '生成成果',
+    sourceTitle: '确认分析来源与模型', sourceHint: '来源名称会参与业务特征判断；请选择用于本次分析的大模型供应商。',
+    scopeTitle: '定义本次识别的能力边界', allowed: '允许识别', forbidden: '禁止识别',
+    nextScope: '下一步：选择能力范围', back: '上一步', adjust: '调整能力范围',
+    reviewAnalysis: '查看分析过程', generateAgain: '调整并再次生成', viewResults: '返回生成成果',
+  },
   account: { menu: '账户菜单', changePassword: '修改密码', changePasswordHint: '修改密码后，此账户的所有登录会话都会退出。', currentPassword: '当前密码', newPassword: '新密码', confirmNewPassword: '确认新密码', updatePassword: '更新密码' },
   passwordReset: { eyebrow: '管理员账户恢复', title: '重置管理员密码', story: '使用仅保存在服务器上的凭证，避免通过公开网页暴露重置 Key。', description: '请到下方所示的服务器私有文件中获取一次性 Key，然后填写 Key 和新密码。', path: '服务器私有凭证文件', expiry: 'Key 将于 {time} 过期', key: '重置 Key', submit: '重置管理员密码' },
   autoAgentify: {

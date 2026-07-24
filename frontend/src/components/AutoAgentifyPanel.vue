@@ -32,6 +32,7 @@ const emit = defineEmits<{
 const { t, locale } = useI18n()
 const providers = ref<LlmProviderSummary[]>([])
 const providerId = ref('')
+const currentStep = ref<1 | 2 | 3 | 4>(1)
 const showActivityHistory = ref(false)
 const showAllBodySchemaIssues = ref(false)
 const selectedSystemCapabilities = ref<string[]>([])
@@ -74,6 +75,18 @@ const sourceReady = computed(() => (
 const ready = computed(
   () => Boolean(providerId.value) && sourceReady.value && !starting.value && !active.value,
 )
+const selectedProvider = computed(
+  () => providers.value.find((provider) => String(provider.id) === providerId.value) ?? null,
+)
+const forbiddenCapabilityCount = computed(
+  () => systemCapabilities.length - selectedSystemCapabilities.value.length,
+)
+const wizardSteps = computed(() => [
+  t('autoAgentifyWizard.source'),
+  t('autoAgentifyWizard.scope'),
+  t('autoAgentifyWizard.analysis'),
+  t('autoAgentifyWizard.results'),
+])
 const currentEvent = computed(() => events.value.at(-1) ?? null)
 const activityHistory = computed(() => events.value.slice(0, -1).slice(-8).reverse())
 const resultLanguage = computed<'zh-CN' | 'en-US'>(
@@ -199,7 +212,19 @@ const canAddCustomCapability = computed(() => {
 watch(
   () => job.value?.result,
   (result) => {
-    if (result) emit('generated', result)
+    if (result) {
+      currentStep.value = 4
+      emit('generated', result)
+    }
+  },
+)
+watch(
+  () => job.value?.status,
+  (status) => {
+    if (status === 'completed' && job.value?.result) currentStep.value = 4
+    else if (status === 'queued' || status === 'running' || status === 'failed') {
+      currentStep.value = 3
+    }
   },
 )
 
@@ -277,12 +302,18 @@ function removeCustomCapability(label: string): void {
   )
 }
 
-function runGeneration(): Promise<void> {
-  return start(props.source, Number(providerId.value), {
+async function runGeneration(): Promise<void> {
+  currentStep.value = 3
+  await start(props.source, Number(providerId.value), {
     allowedSystemCapabilities: selectedSystemCapabilities.value,
     customCapabilityLabels: customCapabilityLabels.value,
     resultLanguage: resultLanguage.value,
   })
+}
+
+function continueToScope(): void {
+  if (!sourceReady.value || !providerId.value) return
+  currentStep.value = 2
 }
 </script>
 
@@ -299,12 +330,40 @@ function runGeneration(): Promise<void> {
           <button data-testid="auto-close" type="button" class="modal-close" :aria-label="t('autoAgentify.close')" @click="emit('close')"><Close aria-hidden="true" /></button>
         </header>
 
+        <ol class="wizard-steps" :aria-label="t('autoAgentifyWizard.progress')">
+          <li
+            v-for="(step, index) in wizardSteps"
+            :key="step"
+            :class="{ current: currentStep === index + 1, complete: currentStep > index + 1 }"
+            :aria-current="currentStep === index + 1 ? 'step' : undefined"
+          >
+            <span>{{ currentStep > index + 1 ? '✓' : index + 1 }}</span>
+            <small>{{ step }}</small>
+          </li>
+        </ol>
+
         <div class="auto-agentify-body">
-          <div class="source-summary">
+          <div v-if="currentStep === 1" class="wizard-intro">
+            <p class="section-kicker">{{ t('autoAgentifyWizard.step', { current: 1, total: 4 }) }}</p>
+            <h3>{{ t('autoAgentifyWizard.sourceTitle') }}</h3>
+            <p>{{ t('autoAgentifyWizard.sourceHint') }}</p>
+          </div>
+          <div v-if="currentStep === 1" class="source-summary">
             <strong>{{ source.name || t('autoAgentify.missingName') }}</strong>
             <span>{{ source.mode === 'url' ? source.sourceUrl : source.file?.name }}</span>
           </div>
-          <fieldset class="capability-preferences" :disabled="active">
+          <div v-if="currentStep === 2" class="wizard-intro">
+            <p class="section-kicker">{{ t('autoAgentifyWizard.step', { current: 2, total: 4 }) }}</p>
+            <h3>{{ t('autoAgentifyWizard.scopeTitle') }}</h3>
+            <p>{{ t('autoAgentify.capabilityPreferencesHint') }}</p>
+          </div>
+          <div v-if="currentStep === 2" class="wizard-context">
+            <span><small>{{ t('autoAgentifyWizard.source') }}</small><strong>{{ source.name }}</strong></span>
+            <span><small>{{ t('autoAgentify.provider') }}</small><strong>{{ selectedProvider?.name }}</strong></span>
+            <span><small>{{ t('autoAgentifyWizard.allowed') }}</small><strong>{{ selectedSystemCapabilities.length }}</strong></span>
+            <span><small>{{ t('autoAgentifyWizard.forbidden') }}</small><strong>{{ forbiddenCapabilityCount }}</strong></span>
+          </div>
+          <fieldset v-if="currentStep === 2" class="capability-preferences" :disabled="active">
             <legend>{{ t('autoAgentify.capabilityPreferences') }}</legend>
             <p>{{ t('autoAgentify.capabilityPreferencesHint') }}</p>
             <div class="system-capability-list">
@@ -354,7 +413,7 @@ function runGeneration(): Promise<void> {
               </span>
             </div>
           </fieldset>
-          <label class="provider-field">
+          <label v-if="currentStep === 1" class="provider-field">
             <span class="provider-label">{{ t('autoAgentify.provider') }}</span>
             <span class="provider-select-shell">
               <MagicStick class="provider-mark" aria-hidden="true" />
@@ -368,18 +427,25 @@ function runGeneration(): Promise<void> {
             </span>
           </label>
 
-          <div v-if="!job || failed" data-testid="auto-generation-notice" class="generation-notice">
+          <p v-if="currentStep === 1 && !sourceReady" class="form-error" role="alert">{{ t('autoAgentify.sourceIncomplete') }}</p>
+          <div v-if="currentStep === 1" class="wizard-actions">
+            <button data-testid="wizard-next" type="button" class="primary-action" :disabled="!sourceReady || !providerId" @click="continueToScope">
+              {{ t('autoAgentifyWizard.nextScope') }}
+            </button>
+          </div>
+
+          <div v-if="currentStep === 2" data-testid="auto-generation-notice" class="generation-notice">
             <strong>{{ t('autoAgentify.beforeRunTitle') }}</strong>
             <p>{{ t('autoAgentify.beforeRunHint') }}</p>
           </div>
 
-          <p v-if="!sourceReady" class="form-error" role="alert">{{ t('autoAgentify.sourceIncomplete') }}</p>
-          <button data-testid="auto-submit" class="primary-action" :disabled="!ready" @click="runGeneration">
-            {{ submitLabel }}
-          </button>
-          <p v-if="active" class="background-hint">{{ t('autoAgentify.backgroundHint') }}</p>
+          <div v-if="currentStep === 2" class="wizard-actions split">
+            <button type="button" class="secondary-action" @click="currentStep = 1">{{ t('autoAgentifyWizard.back') }}</button>
+            <button data-testid="auto-submit" class="primary-action" :disabled="!ready" @click="runGeneration">{{ submitLabel }}</button>
+          </div>
+          <p v-if="currentStep === 3 && active" class="background-hint">{{ t('autoAgentify.backgroundHint') }}</p>
 
-          <section v-if="job" class="analysis-process" aria-live="polite">
+          <section v-if="currentStep === 3 && job" class="analysis-process" aria-live="polite">
             <div class="section-heading">
               <div>
                 <p class="section-kicker">{{ t('autoAgentify.analysisProcessKicker') }}</p>
@@ -456,7 +522,21 @@ function runGeneration(): Promise<void> {
             </div>
           </section>
 
-          <section v-if="capabilities.length || job?.result" class="recognition-results" data-testid="recognition-results">
+          <div v-if="currentStep === 3 && failureCode && !job" data-testid="auto-error" class="auto-error-panel" role="alert">
+            <strong>{{ t('autoAgentify.failedTitle') }}</strong>
+            <p>{{ failureMessage }}</p>
+            <small>{{ failureCode }}</small>
+          </div>
+
+          <div v-if="currentStep === 3 && job?.result" class="wizard-actions">
+            <button type="button" class="primary-action" @click="currentStep = 4">{{ t('autoAgentifyWizard.viewResults') }}</button>
+          </div>
+          <div v-if="currentStep === 3 && failed" class="wizard-actions split">
+            <button type="button" class="secondary-action" @click="currentStep = 2">{{ t('autoAgentifyWizard.adjust') }}</button>
+            <button data-testid="auto-submit" class="primary-action" :disabled="!ready" @click="runGeneration">{{ submitLabel }}</button>
+          </div>
+
+          <section v-if="currentStep === 4 && (capabilities.length || job?.result)" class="recognition-results" data-testid="recognition-results">
             <div class="section-heading result-heading">
               <div>
                 <p class="section-kicker">{{ t('autoAgentify.recognitionResultsKicker') }}</p>
@@ -499,6 +579,10 @@ function runGeneration(): Promise<void> {
                 <section><h4>{{ t('autoAgentify.agents') }}</h4><article v-for="agent in job.result.agents" :key="agent.id" class="auto-result-card"><strong>{{ agent.name }}</strong><p>{{ agent.description }}</p><p>{{ agent.value }}</p><ul><li v-for="useCase in agent.use_cases" :key="useCase">{{ useCase }}</li></ul></article></section>
               </div>
             </div>
+            <div class="wizard-actions split result-footer">
+              <button type="button" class="secondary-action" @click="currentStep = 3">{{ t('autoAgentifyWizard.reviewAnalysis') }}</button>
+              <button type="button" class="secondary-action" @click="currentStep = 2">{{ t('autoAgentifyWizard.generateAgain') }}</button>
+            </div>
           </section>
         </div>
       </section>
@@ -508,9 +592,30 @@ function runGeneration(): Promise<void> {
 
 <style scoped>
 .auto-agentify-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(23,32,51,.48); }
-.auto-agentify-modal { width: min(760px, 100%); max-height: calc(100vh - 48px); overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); border-radius: 16px; background: #fff; box-shadow: 0 24px 80px rgba(20,28,45,.28); }
+.auto-agentify-modal { width: min(820px, 100%); max-height: calc(100vh - 48px); overflow: hidden; display: grid; grid-template-rows: auto auto minmax(0, 1fr); border-radius: 16px; background: #fff; box-shadow: 0 24px 80px rgba(20,28,45,.28); }
 .auto-agentify-modal > .panel-heading { margin: 0; padding: 24px; border-bottom: 1px solid #ebe8e1; background: #fff; }
 .auto-agentify-body { min-height: 0; overflow: auto; display: grid; gap: 16px; padding: 20px 24px 24px; }
+.wizard-steps { counter-reset: wizard; margin: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 14px 24px; border-bottom: 1px solid #ebe8e1; background: #fbfaf7; list-style: none; }
+.wizard-steps li { position: relative; min-width: 0; display: grid; justify-items: center; gap: 6px; color: #959aa4; text-align: center; }
+.wizard-steps li:not(:last-child)::after { content: ""; position: absolute; top: 13px; left: calc(50% + 18px); right: calc(-50% + 18px); height: 2px; background: #e3e0d9; }
+.wizard-steps li.complete:not(:last-child)::after { background: #8b82e9; }
+.wizard-steps li > span { position: relative; z-index: 1; width: 28px; height: 28px; display: grid; place-items: center; border: 2px solid #ddd9d1; border-radius: 50%; background: #fff; font-size: 11px; font-weight: 850; }
+.wizard-steps li.current { color: #4137a7; }
+.wizard-steps li.current > span { border-color: #6558e8; color: #fff; background: #6558e8; box-shadow: 0 0 0 5px rgba(101,88,232,.11); }
+.wizard-steps li.complete { color: #5148ad; }
+.wizard-steps li.complete > span { border-color: #8b82e9; color: #5148ad; background: #eeecff; }
+.wizard-steps small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 750; }
+.wizard-intro { display: grid; gap: 5px; }
+.wizard-intro h3 { margin: 0; color: #303746; font-size: 19px; }
+.wizard-intro > p:last-child { margin: 0; color: #697180; font-size: 13px; line-height: 1.55; }
+.wizard-context { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 10px; border: 1px solid #e6e2da; border-radius: 11px; background: #faf9f6; }
+.wizard-context > span { min-width: 0; display: grid; gap: 2px; padding: 5px 7px; }
+.wizard-context small { color: #7b8290; font-size: 10px; font-weight: 700; }
+.wizard-context strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #404756; font-size: 12px; }
+.wizard-actions { display: flex; justify-content: flex-end; gap: 9px; padding-top: 4px; }
+.wizard-actions.split { justify-content: space-between; }
+.wizard-actions .primary-action { margin: 0; }
+.result-footer { margin-top: 4px; padding-top: 14px; border-top: 1px solid #e6e2da; }
 .modal-close { width: 36px; height: 36px; flex: 0 0 auto; display: grid; place-items: center; padding: 0; border: 0; border-radius: 9px; color: #727987; background: transparent; }
 .modal-close:hover { color: var(--ink); background: #f3f1ec; }
 .modal-close:focus-visible { outline: 3px solid rgba(101,88,232,.2); outline-offset: 1px; }
@@ -621,6 +726,9 @@ progress::-moz-progress-bar { border-radius: 99px; background: linear-gradient(9
   .auto-agentify-backdrop { padding: 12px; }
   .auto-agentify-modal { max-height: calc(100vh - 24px); }
   .auto-agentify-modal > .panel-heading, .auto-agentify-body { padding: 18px; }
+  .wizard-steps { padding: 12px 14px; }
+  .wizard-steps small { font-size: 9px; }
+  .wizard-context { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .auto-result-grid { grid-template-columns: 1fr; }
   .current-activity { grid-template-columns: 1fr; }
   .custom-capability-entry > div { grid-template-columns: 1fr; }

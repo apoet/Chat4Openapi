@@ -49,6 +49,14 @@ export default {
   },
   nav: { overview: 'Overview', system: 'System', build: 'Build', apis: 'APIs', logout: 'Sign out', language: 'English' },
   status: { ready: 'System ready' },
+  autoAgentifyWizard: {
+    progress: 'Generation steps', step: 'Step {current} of {total}',
+    source: 'Source & model', scope: 'Capability scope', analysis: 'Analyze & generate', results: 'Generated results',
+    sourceTitle: 'Confirm the source and analysis model', sourceHint: 'The source name helps identify business characteristics. Select the model provider for this analysis.',
+    scopeTitle: 'Define the capabilities this run may recognize', allowed: 'Allowed', forbidden: 'Forbidden',
+    nextScope: 'Next: capability scope', back: 'Back', adjust: 'Adjust capability scope',
+    reviewAnalysis: 'Review analysis', generateAgain: 'Adjust and generate again', viewResults: 'Back to results',
+  },
   account: { menu: 'Account menu', changePassword: 'Change password', changePasswordHint: 'Changing your password signs out every session for this account.', currentPassword: 'Current password', newPassword: 'New password', confirmNewPassword: 'Confirm new password', updatePassword: 'Update password' },
   passwordReset: { eyebrow: 'Administrator recovery', title: 'Reset administrator password', story: 'Server-held credentials keep recovery outside the public web application.', description: 'Find the one-time key in the private server file shown below, then enter it with a new password.', path: 'Private server credential file', expiry: 'Key expires at {time}', key: 'Reset key', submit: 'Reset administrator password' },
   autoAgentify: {
