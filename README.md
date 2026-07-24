@@ -8,6 +8,9 @@
   English | <a href="README.zh-CN.md">简体中文</a>
 </p>
 
+<p align="center">
+  <strong>Turn OpenAPI operations into Agents—fast.</strong>
+</p>
 
 > **DEMO:** [https://agent4api.ecrfs.com/admin](https://agent4api.ecrfs.com/admin)<br>
 > **Username:** `demo`<br>
@@ -15,11 +18,13 @@
 
 ## Introduction
 
-Agent4API turns Swagger/OpenAPI operations into managed Tools and lets independently configured Agents load ordered Skill catalogs to answer browser, OpenAI-compatible, and Anthropic-compatible requests.
+Agent4API was created to help you quickly orchestrate OpenAPI operations into Agents, with seamless integration into standalone Chat and Embed Chat.
+
+We support **one-click import** of Swagger 2.0 and OpenAPI 3.x definitions. Agent4API understands the business capabilities behind the operations and automatically generates and orchestrates the Tools, Skills, and Agents. There is no need to organize every operation, write each Skill, or configure every Agent by hand: start chatting as soon as the import is complete, or integrate the result into an existing application through MCP and OpenAI/Anthropic-compatible APIs.
 
 Agent4API follows a simple **one input, three service types** model:
 
-- **One input — API import:** import Swagger 2.0 or OpenAPI 3.x definitions and turn their operations into governed Tools.
+- **One input — Swagger/OpenAPI:** import from a URL or JSON/YAML file, or generate again from an existing API Source.
 - **Three service types:**
   1. **Tools MCP** — expose imported Tools through the Model Context Protocol.
   2. **Agent API** — serve configured Agents through OpenAI-compatible and Anthropic-compatible APIs.
@@ -33,30 +38,43 @@ It is a single FastAPI/Vue application backed by SQLite, with an English and Sim
 
 ![Agent4API administration and chat demo](docs/images/agent4api-workflow.gif)
 
-## Generate Skills and Agents automatically
+## Core capability: generate an API Agent in one click
 
-After configuring an enabled LLM provider, fill in the Swagger/OpenAPI URL or
-JSON/YAML file under **API Sources**, then choose **One-click generate** beside
-**Import source**. The confirmation dialog only asks which provider should
-perform the analysis.
+After configuring and enabling an LLM provider, open **API Sources**:
 
-Agent4API analyzes the interface's business workflows and creates an
-immediately usable configuration in one operation:
+1. Enter a Source name and provide a Swagger/OpenAPI URL or JSON/YAML file.
+2. Choose **One-click generate** and select the LLM provider for analysis.
+3. Select the system capabilities that may be recognized and optionally add
+   custom business capabilities to prioritize.
+4. Start generation and watch the analysis and results in real time.
 
-- at most 20 focused Skills and 10 core Agents;
-- only Tools referenced by generated Skills are enabled;
-- generated Skills start running immediately;
-- generated Agents are enabled and bound to the selected provider;
-- write-oriented workflows use human-in-loop mode;
-- live progress shows interface discovery, business-capability conclusions,
-  Skill selection, Agent synthesis, and persistence.
+For an API Source that has already been imported, choose **One-click generate**
+on its Source card—there is no need to upload the definition again.
 
-The limits are maximums rather than targets—the analyzer favors a small,
-coherent set that demonstrates the API's core value. Invalid model output is
-corrected once. Generation continues as a background job if the dialog is
-closed, and reopening it restores the latest job. If analysis or persistence
-still fails, the complete operation is rolled back and the input remains
-available for retry.
+A single generation run completes the entire orchestration pipeline:
+
+- parses operations and creates governed Tools;
+- understands relationships across the whole API or by business domain, then
+  identifies, merges, and deduplicates real business capabilities;
+- generates up to 20 focused Skills and 10 core Agents;
+- enables only the Tools used by generated Skills and starts those Skills;
+- enables generated Agents and binds them to the selected provider and model;
+- assigns human-in-loop mode to workflows containing write or high-impact actions;
+- shows operation counts, capabilities, workflows, business value, Skill/Agent
+  counts, and generation progress;
+- flags incomplete request-body schemas, field types, and descriptions so the
+  OpenAPI definition can be improved.
+
+These counts are limits, not targets. The system favors a small, coherent set
+that captures the API's core value instead of mechanically creating one Skill
+per operation. Model output is structurally validated and reference-checked,
+with automatic correction or a safe fallback when needed.
+
+Generation runs in the background: closing the wizard does not stop the job,
+reopening it restores progress, and an active run can be stopped explicitly.
+The Source, Tools, Skills, and Agents are persisted atomically, so failures do
+not leave a partial configuration and the capability scope can be adjusted
+before a safe retry.
 
 ## Quick start
 

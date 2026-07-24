@@ -8,6 +8,9 @@
   <a href="README.md">English</a> | 简体中文
 </p>
 
+<p align="center">
+  <strong>快速将 OpenAPI 接口重新编排成 Agent</strong>
+</p>
 
 > **DEMO 地址：**[https://agent4api.ecrfs.com/admin](https://agent4api.ecrfs.com/admin)<br>
 > **用户名：**`demo`<br>
@@ -15,11 +18,13 @@
 
 ## 项目简介
 
-Agent4API 可将 Swagger/OpenAPI 接口转换为统一管理的工具（Tool），并让独立配置的智能体（Agent）按顺序加载技能（Skill）目录，通过浏览器、OpenAI 兼容接口或 Anthropic 兼容接口提供服务。
+Agent4API 诞生的目的，是帮助你快速将 OpenAPI 接口重新编排成 Agent，并且无缝集成独立 Chat 和 Embed Chat。
+
+我们支持**一键导入** Swagger 2.0 或 OpenAPI 3.x 文档。Agent4API 会理解接口所承载的业务能力，自动完成 Tools、Skills 和 Agents 的生成与编排。你不需要逐个整理接口、编写 Skill 或配置 Agent，导入后即可开始对话，也可以通过 MCP、OpenAI 兼容接口和 Anthropic 兼容接口接入已有应用。
 
 Agent4API 采用清晰的 **1 个输入、3 类服务** 模型：
 
-- **1 个输入——APIs 导入：**导入 Swagger 2.0 或 OpenAPI 3.x 文档，将其中的接口操作转换为受控的 Tools。
+- **1 个输入——Swagger/OpenAPI：**支持通过 URL 或 JSON/YAML 文件导入，也可对已有 API 来源再次一键生成。
 - **3 类服务：**
   1. **Tools MCP：**通过模型上下文协议（MCP）对外提供已导入的 Tools。
   2. **Agent API：**通过 OpenAI 兼容和 Anthropic 兼容 API 对外提供配置完成的 Agent。
@@ -33,24 +38,35 @@ Agent4API 采用清晰的 **1 个输入、3 类服务** 模型：
 
 ![Agent4API 管理后台与对话演示](docs/images/agent4api-workflow.gif)
 
-## 自动生成 Skills 和 Agents
+## 核心能力：一键生成 API Agent
 
-配置并启用 LLM 供应商后，先在 **API 来源** 页填写 Swagger/OpenAPI URL 或选择
-JSON/YAML 文件，再点击 **导入来源** 旁的 **一键生成**。确认弹窗只需选择负责分析
-的供应商。
+配置并启用 LLM 供应商后，进入 **API 来源** 页面：
 
-Agent4API 会分析接口所承载的业务流程，并在一次操作中创建可立即使用的配置：
+1. 填写来源名称，并提供 Swagger/OpenAPI URL 或 JSON/YAML 文件；
+2. 点击 **一键生成**，选择负责分析的 LLM 供应商；
+3. 选择允许识别的系统能力，也可添加需要优先分析的自定义业务能力；
+4. 启动生成并实时查看分析过程与最终成果。
 
+对于已经导入的 API 来源，可直接点击来源卡片上的 **一键生成**，无需重新上传文档。
+
+一次生成会自动完成整条编排链路：
+
+- 解析接口并创建受控 Tools；
+- 从整体或分业务域理解接口关系，识别、归并并去重真实业务能力；
 - 最多生成 20 个聚焦业务能力的 Skills 和 10 个核心 Agents；
-- 仅启用被生成 Skills 引用的 Tools；
-- 生成的 Skills 立即进入运行状态；
-- 生成的 Agents 立即启用，并绑定本次选择的供应商；
-- 涉及写入操作的工作流使用 human-in-loop 模式；
-- 实时展示接口发现、业务能力结论、Skill 筛选、Agent 综合与配置保存过程。
+- 只启用 Skills 实际引用的 Tools，并立即启动生成的 Skills；
+- 启用生成的 Agents，绑定所选供应商及其默认模型；
+- 对包含写入或高影响操作的工作流采用 human-in-loop 模式；
+- 展示已发现接口数、业务能力、核心流程、业务价值、Skill/Agent 数量及生成进度；
+- 检测请求体 Schema 缺失、字段类型或说明不完整等问题，提示改进 OpenAPI 文档。
 
-数量是上限而不是目标，分析器会优先生成少而完整、最能体现 API 核心价值的组合。
-模型输出无效时系统会自动纠正一次。关闭弹窗不会中止后台任务，重新打开会恢复最新
-任务；分析或持久化仍然失败时，整个操作会回滚，页面保留输入内容以便直接重试。
+生成数量是上限而不是目标。系统会优先产出少而完整、最能体现 API 核心价值的组合，
+而不是机械地为每个接口创建一个 Skill。模型结果会经过结构校验和引用检查，无效时
+自动纠正或使用安全回退方案。
+
+生成任务在后台运行：关闭向导不会中止任务，再次打开可恢复进度；运行中也可主动停止。
+来源、Tools、Skills 和 Agents 采用原子化保存，失败时不会留下半成品配置，可调整能力
+范围后安全重试。
 
 ## 快速开始
 
