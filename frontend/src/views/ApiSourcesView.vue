@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { inject, onMounted, ref } from 'vue'
+import { computed, inject, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { routerKey } from 'vue-router'
 
 import { ApiError, request } from '../api/client'
 import type {
-  AutoAgentifyResult,
   ApiSourceSummary,
   OAuthConfigSummary,
   OAuthConfigWrite,
@@ -77,6 +76,14 @@ const authTestSucceeded = ref(false)
 const toolTestUsername = ref('')
 const toolTestPassword = ref('')
 const showAutoAgentify = ref(false)
+const autoAgentifySource = computed(() => ({
+  mode: importMode.value,
+  name: name.value,
+  baseUrl: baseUrl.value,
+  sourceUrl: sourceUrl.value,
+  file: file.value,
+  allowPrivateNetworks: allowPrivateNetworks.value,
+}))
 
 onMounted(() => void store.loadSources())
 
@@ -413,7 +420,7 @@ const sourceLoginTools = () => store.tools.filter(
   (tool) => tool.api_source_id === oauthSource.value?.id && tool.enabled,
 )
 
-async function autoAgentifyGenerated(_result: AutoAgentifyResult): Promise<void> {
+async function autoAgentifyGenerated(): Promise<void> {
   await store.loadSources()
 }
 </script>
@@ -422,9 +429,7 @@ async function autoAgentifyGenerated(_result: AutoAgentifyResult): Promise<void>
   <main class="management-page">
     <header class="page-heading">
       <div><p class="eyebrow">{{ t('sources.eyebrow') }}</p><h1>{{ t('sources.title') }}</h1><p class="muted">{{ t('sources.subtitle') }}</p></div>
-      <button class="primary-action" data-testid="open-auto-agentify" @click="showAutoAgentify = !showAutoAgentify">{{ t('autoAgentify.open') }}</button>
     </header>
-    <AutoAgentifyPanel v-if="showAutoAgentify" @generated="autoAgentifyGenerated" @close="showAutoAgentify = false" />
     <section class="import-panel">
       <div class="segmented import-mode">
         <button type="button" :class="{ active: importMode === 'file' }" @click="importMode = 'file'">{{ t('sources.fileMode') }}</button>
@@ -437,8 +442,17 @@ async function autoAgentifyGenerated(_result: AutoAgentifyResult): Promise<void>
         <label v-else>{{ t('sources.url') }}<input v-model="sourceUrl" type="url" placeholder="https://api.example.com/openapi.json" /></label>
       </div>
       <label class="checkbox-label import-private"><input v-model="allowPrivateNetworks" type="checkbox" />{{ t('sources.allowPrivate') }}</label>
-      <button class="primary-action" :disabled="!name || (importMode === 'file' ? !file : !sourceUrl) || submitting" @click="submit">{{ submitting ? t('sources.importing') : importMode === 'url' ? t('sources.importUrl') : t('sources.import') }}</button>
+      <div class="row-actions" data-testid="source-import-actions">
+        <button class="primary-action" :disabled="!name || (importMode === 'file' ? !file : !sourceUrl) || submitting" @click="submit">{{ submitting ? t('sources.importing') : importMode === 'url' ? t('sources.importUrl') : t('sources.import') }}</button>
+        <button class="secondary-action" data-testid="open-auto-agentify" @click="showAutoAgentify = true">{{ t('autoAgentify.open') }}</button>
+      </div>
     </section>
+    <AutoAgentifyPanel
+      v-if="showAutoAgentify"
+      :source="autoAgentifySource"
+      @generated="autoAgentifyGenerated"
+      @close="showAutoAgentify = false"
+    />
     <section class="resource-list compact-resource-list">
       <div v-if="!store.loading && store.sources.length === 0" class="empty-state">{{ t('sources.empty') }}</div>
       <article v-for="source in store.sources" :key="source.id" class="resource-row">

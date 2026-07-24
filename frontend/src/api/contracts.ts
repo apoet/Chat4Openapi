@@ -124,6 +124,44 @@ export interface AutoAgentifyResult {
   agents: AutoAgentifyAgent[]
 }
 
+export interface AutoAgentifyCapability {
+  name: string
+  description: string
+  value: string
+  workflow: string[]
+  operation_keys: string[]
+  candidate_skills: string[]
+  high_impact: boolean
+}
+
+export interface AutoAgentifyJobEvent {
+  sequence: number
+  kind: string
+  phase: string
+  progress: number
+  message_key: string
+  params: Record<string, unknown>
+  capability: AutoAgentifyCapability | null
+  created_at: string
+}
+
+export interface AutoAgentifyJob {
+  public_id: string
+  provider_id: number
+  input_mode: 'url' | 'file'
+  source_name: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  phase: string
+  progress: number
+  metrics: Record<string, unknown>
+  result: AutoAgentifyResult | null
+  error_code: string | null
+  error_params: Record<string, unknown> | null
+  created_at: string
+  started_at: string | null
+  completed_at: string | null
+}
+
 export interface SourceRefreshResult {
   created: number
   updated: number

@@ -16,116 +16,138 @@ function response(value: unknown, status = 200): Response {
 }
 
 const provider = {
-  id: 7,
-  name: 'Primary',
-  provider_type: 'openai',
-  base_url: 'https://llm.example.test/v1',
-  default_model: 'gpt-test',
-  enabled: true,
-  has_api_key: true,
+  id: 7, name: 'Primary', provider_type: 'openai',
+  base_url: 'https://llm.example.test/v1', default_model: 'gpt-test',
+  enabled: true, has_api_key: true,
 }
 
-const result = {
-  source: {
-    id: 11,
-    name: 'Projects',
-    source_type: 'openapi',
-    base_url: 'https://api.example.test',
-    document_url: 'https://api.example.test/openapi.json',
-    allow_private_networks: false,
-    auth_mode: 'none',
-    enabled: true,
-    created_at: '2026-07-24T00:00:00',
-  },
-  imported_tool_count: 8,
-  enabled_tool_count: 5,
-  skills: [{
-    id: 21,
-    name: 'Project Insights',
-    tool_ids: [31, 32],
-    value: 'Makes project delivery state understandable.',
-  }],
-  agents: [{
-    id: 41,
-    name: 'Project Operator',
-    skill_ids: [21],
-    mode: 'react',
-    provider_id: 7,
-    value: 'Coordinates project delivery workflows.',
-    use_cases: ['Summarize project risk'],
-  }],
+const queuedJob = {
+  public_id: 'job-1', provider_id: 7, input_mode: 'url',
+  source_name: 'Projects', status: 'queued', phase: 'queued', progress: 0,
+  metrics: {}, result: null, error_code: null, error_params: null,
+  created_at: '2026-07-24T00:00:00', started_at: null, completed_at: null,
+}
+
+class FakeEventSource {
+  static instances: FakeEventSource[] = []
+  onmessage: ((event: MessageEvent<string>) => void) | null = null
+  close = vi.fn()
+
+  constructor(public url: string) {
+    FakeEventSource.instances.push(this)
+  }
+
+  emit(value: unknown, lastEventId = '1'): void {
+    this.onmessage?.(
+      new MessageEvent('message', {
+        data: JSON.stringify(value),
+        lastEventId,
+      }),
+    )
+  }
 }
 
 beforeEach(() => {
   setActivePinia(createPinia())
   useAuthStore().csrfToken = 'csrf-token'
+  FakeEventSource.instances = []
+  vi.stubGlobal('EventSource', FakeEventSource)
 })
 
-it('submits URL generation and renders generated business value', async () => {
+it('starts from the current URL import input and displays live capability analysis', async () => {
   vi.stubGlobal('fetch', vi.fn()
     .mockResolvedValueOnce(response([provider]))
-    .mockResolvedValueOnce(response(result, 201)))
-  const wrapper = mount(AutoAgentifyPanel, { global: { plugins: [i18n] } })
+    .mockResolvedValueOnce(response(null))
+    .mockResolvedValueOnce(response(queuedJob, 202)))
+  const wrapper = mount(AutoAgentifyPanel, {
+    props: {
+      source: {
+        mode: 'url',
+        name: 'Projects',
+        baseUrl: 'https://api.example.test',
+        sourceUrl: 'https://api.example.test/openapi.json',
+        file: null,
+        allowPrivateNetworks: false,
+      },
+    },
+    global: { plugins: [i18n] },
+  })
   await flushPromises()
 
   await wrapper.get('[data-testid="auto-provider"]').setValue('7')
-  await wrapper.get('[data-testid="auto-name"]').setValue('Projects')
-  await wrapper.get('[data-testid="auto-url"]').setValue(
-    'https://api.example.test/openapi.json',
-  )
   await wrapper.get('[data-testid="auto-submit"]').trigger('click')
   await flushPromises()
 
-  const call = vi.mocked(fetch).mock.calls[1]
-  expect(call[0]).toBe('/api/admin/auto-agentify/url')
-  expect(call[1]?.headers).toBeInstanceOf(Headers)
-  expect((call[1]?.headers as Headers).get('X-CSRF-Token')).toBe('csrf-token')
+  const call = vi.mocked(fetch).mock.calls[2]
+  expect(call[0]).toBe('/api/admin/auto-agentify/jobs/url')
   expect(JSON.parse(String(call[1]?.body))).toEqual({
     provider_id: 7,
     name: 'Projects',
     url: 'https://api.example.test/openapi.json',
-    base_url: null,
+    base_url: 'https://api.example.test',
     allow_private_networks: false,
   })
-  expect(wrapper.text()).toContain('Project Insights')
-  expect(wrapper.text()).toContain('Project Operator')
-  expect(wrapper.text()).toContain('Coordinates project delivery workflows.')
-  expect(wrapper.text()).toContain('Summarize project risk')
-  expect(wrapper.emitted('generated')?.[0]).toEqual([result])
-})
+  expect(FakeEventSource.instances[0].url)
+    .toBe('/api/admin/auto-agentify/jobs/job-1/events')
 
-
-it('uses multipart file input and retains fields after a retryable failure', async () => {
-  vi.stubGlobal('fetch', vi.fn()
-    .mockResolvedValueOnce(response([provider]))
-    .mockResolvedValueOnce(response({
-      error: { code: 'auto_agentify.plan_invalid', params: {} },
-    }, 422)))
-  const wrapper = mount(AutoAgentifyPanel, { global: { plugins: [i18n] } })
+  FakeEventSource.instances[0].emit({
+    sequence: 2,
+    kind: 'capability_discovered',
+    phase: 'analyzing_capabilities',
+    progress: 42,
+    message_key: 'autoAgentify.events.capabilityDiscovered',
+    params: {},
+    capability: {
+      name: 'Project delivery insight',
+      description: 'Summarizes delivery health and risk.',
+      value: 'Reduces project review time.',
+      workflow: ['List projects', 'Inspect risks'],
+      operation_keys: ['GET /projects'],
+      candidate_skills: ['Project Insights'],
+      high_impact: true,
+    },
+    created_at: '2026-07-24T00:00:01',
+  }, '2')
   await flushPromises()
 
-  await wrapper.get('[data-testid="auto-mode-file"]').trigger('click')
-  await wrapper.get('[data-testid="auto-provider"]').setValue('7')
-  await wrapper.get('[data-testid="auto-name"]').setValue('Pets')
+  expect(wrapper.text()).toContain('Project delivery insight')
+  expect(wrapper.text()).toContain('Reduces project review time.')
+  expect(wrapper.get('[data-testid="auto-progress"]').attributes('value')).toBe('42')
+})
+
+it('uses the current file input and keeps the background job when closed', async () => {
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce(response([provider]))
+    .mockResolvedValueOnce(response(null))
+    .mockResolvedValueOnce(response(queuedJob, 202)))
   const file = new File(['openapi: 3.0.3'], 'openapi.yaml', {
     type: 'application/yaml',
   })
-  Object.defineProperty(
-    wrapper.get('[data-testid="auto-file"]').element,
-    'files',
-    { value: [file] },
-  )
-  await wrapper.get('[data-testid="auto-file"]').trigger('change')
+  const wrapper = mount(AutoAgentifyPanel, {
+    props: {
+      source: {
+        mode: 'file',
+        name: 'Pets',
+        baseUrl: '',
+        sourceUrl: '',
+        file,
+        allowPrivateNetworks: false,
+      },
+    },
+    global: { plugins: [i18n] },
+  })
+  await flushPromises()
+
+  await wrapper.get('[data-testid="auto-provider"]').setValue('7')
   await wrapper.get('[data-testid="auto-submit"]').trigger('click')
   await flushPromises()
 
-  const call = vi.mocked(fetch).mock.calls[1]
-  expect(call[0]).toBe('/api/admin/auto-agentify/file')
+  const call = vi.mocked(fetch).mock.calls[2]
+  expect(call[0]).toBe('/api/admin/auto-agentify/jobs/file')
   expect(call[1]?.body).toBeInstanceOf(FormData)
   expect((call[1]?.body as FormData).get('document')).toBe(file)
-  expect(wrapper.get<HTMLInputElement>('[data-testid="auto-name"]').element.value)
-    .toBe('Pets')
-  expect(wrapper.get('[data-testid="auto-error"]').text()).toContain(
-    'could not produce a valid plan',
-  )
+
+  await wrapper.get('[data-testid="auto-close"]').trigger('click')
+  expect(wrapper.emitted('close')).toHaveLength(1)
+  expect(FakeEventSource.instances[0].close).not.toHaveBeenCalled()
 })
