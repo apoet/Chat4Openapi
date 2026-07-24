@@ -106,6 +106,7 @@ async function lifecycle(action: 'enable' | 'disable' | 'set-default'): Promise<
 
 async function remove(): Promise<void> {
   if (!selectedAgent.value || actionPending.value) return
+  if (!window.confirm(t('confirmations.deleteAgent', { name: selectedAgent.value.name }))) return
   const generation = selectionGeneration
   actionPending.value = true
   errorMessage.value = ''

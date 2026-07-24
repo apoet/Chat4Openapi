@@ -61,6 +61,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   useAuthStore().csrfToken = 'csrf'
   localStorage.clear()
+  vi.stubGlobal('confirm', vi.fn(() => true))
 })
 
 describe('Skills and chat', () => {
@@ -518,6 +519,9 @@ describe('Skills and chat', () => {
     render(SkillsView, { global: { plugins: [i18n] } })
     await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
 
+    expect(window.confirm).toHaveBeenCalledWith(
+      'Delete Skill “Pet helper”? Agents that reference it may no longer provide this capability.',
+    )
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6))
     expect(fetchMock.mock.calls[4][0]).toBe('/api/admin/skills/5')
   })

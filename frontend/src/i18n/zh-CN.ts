@@ -161,6 +161,13 @@ export default {
     authorize: '去授权', authorizing: '正在打开…', logout: '退出授权', popupBlocked: '授权弹窗被浏览器拦截，请允许弹窗后重试。',
     authorizationCancelled: '已取消授权，你可以重新尝试。', authorizationFailed: '授权失败，请重试。',
   },
+  confirmations: {
+    deleteSource: '确定删除来源“{name}”吗？该来源下的所有 Tools 都会被删除，并可能影响引用它们的 Skills。',
+    deleteSkill: '确定删除 Skill“{name}”吗？引用它的 Agents 可能无法继续使用这项能力。',
+    deleteAgent: '确定删除 Agent“{name}”吗？它的客户端调用和配置将不再可用。',
+    deleteReferencedTool: 'Tool“{name}”正被以下 Skills 引用：{skills}。确定删除吗？',
+    deleteToolUnknown: '无法确认 Tool“{name}”是否正被 Skill 引用。仍要删除吗？',
+  },
   action: { continue: '继续' },
   error: {
     setup: { already_initialized: '此 Agent4API 实例已经完成初始化。' },

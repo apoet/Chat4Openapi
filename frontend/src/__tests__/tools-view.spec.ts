@@ -26,6 +26,7 @@ beforeEach(() => {
   setActivePinia(pinia)
   const auth = useAuthStore()
   auth.csrfToken = 'csrf-token'
+  vi.stubGlobal('confirm', vi.fn(() => true))
 })
 
 describe('Tool administration views', () => {
@@ -347,6 +348,43 @@ describe('Tool administration views', () => {
     await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/batch'))).toHaveLength(1))
     const batchCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/batch'))
     expect(JSON.parse((batchCall?.[1] as RequestInit).body as string).tool_ids).toEqual([2])
+  })
+
+  it('requires confirmation before deleting a Tool referenced by a Skill', async () => {
+    const tool = { id: 1, api_source_id: 1, operation_key: 'GET /pets', name: 'listPets', description: null, input_schema: {}, execution_schema: {}, tags: ['Catalog'], enabled: false }
+    const source = { id: 1, name: 'Pet API', source_type: 'openapi', base_url: 'https://pets.test', allow_private_networks: false, enabled: true, created_at: '2026-07-21T00:00:00' }
+    const skill = { id: 5, name: 'Pet helper', description: null, system_prompt: 'Help', running: true, tools: [tool] }
+    const confirmMock = vi.fn()
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true)
+    vi.stubGlobal('confirm', confirmMock)
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith('/sources')) return Promise.resolve(jsonResponse([source]))
+      if (path.endsWith('/skills')) return Promise.resolve(jsonResponse([skill]))
+      if (path.endsWith('/tools/1') && init?.method === 'DELETE') {
+        return Promise.resolve(new Response(null, { status: 204 }))
+      }
+      return Promise.resolve(jsonResponse([tool]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(ToolsView, { global: { plugins: [i18n] } })
+    const deleteButton = within((await screen.findByText('listPets')).closest('article') as HTMLElement)
+      .getByRole('button', { name: 'Delete' })
+    await fireEvent.click(deleteButton)
+
+    await waitFor(() => expect(confirmMock).toHaveBeenCalledWith(
+      'Tool “listPets” is referenced by these Skills: Pet helper. Delete it anyway?',
+    ))
+    expect(fetchMock.mock.calls.some(([url, init]) => (
+      String(url).endsWith('/tools/1') && (init as RequestInit)?.method === 'DELETE'
+    ))).toBe(false)
+
+    await fireEvent.click(deleteButton)
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url, init]) => (
+      String(url).endsWith('/tools/1') && (init as RequestInit)?.method === 'DELETE'
+    ))).toBe(true))
   })
 
   it('confirms bulk delete with Tool and source counts while cancel sends no request', async () => {
@@ -932,6 +970,9 @@ describe('Tool administration views', () => {
     expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/sources/1')
     await screen.findByText('Pet API v2')
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(window.confirm).toHaveBeenCalledWith(
+      'Delete source “Pet API v2”? All Tools in this source will be deleted and Skills that reference them may be affected.',
+    )
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
     expect(fetchMock.mock.calls[2][0]).toBe('/api/admin/sources/1')
     await waitFor(() => expect(screen.queryByText('Pet API v2')).toBeNull())

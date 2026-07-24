@@ -3,7 +3,8 @@ import { computed, inject, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { routeLocationKey, routerKey } from 'vue-router'
 
-import type { ToolBatchAction, ToolBatchFailed, ToolSummary } from '../api/contracts'
+import { request } from '../api/client'
+import type { SkillSummary, ToolBatchAction, ToolBatchFailed, ToolSummary } from '../api/contracts'
 import ToolBulkBar from '../components/ToolBulkBar.vue'
 import { useToolsStore } from '../stores/tools'
 
@@ -398,9 +399,27 @@ function setSingleToolEnabled(tool: ToolSummary): void {
   void store.setEnabled(tool, !tool.enabled)
 }
 
-function deleteSingleTool(tool: ToolSummary): void {
+async function deleteSingleTool(tool: ToolSummary): Promise<void> {
   if (isToolMutationLocked(tool.id)) return
-  void store.deleteTool(tool)
+  let referencingSkills: string[] | null = null
+  try {
+    const skills = await request<SkillSummary[]>('/api/admin/skills')
+    referencingSkills = skills
+      .filter((skill) => skill.tools?.some((item) => item.id === tool.id))
+      .map((skill) => skill.name)
+  } catch {
+    // If references cannot be checked, confirmation is the safe fallback.
+  }
+  if (referencingSkills === null) {
+    if (!window.confirm(t('confirmations.deleteToolUnknown', { name: tool.name }))) return
+  } else if (
+    referencingSkills.length > 0
+    && !window.confirm(t('confirmations.deleteReferencedTool', {
+      name: tool.name,
+      skills: referencingSkills.join(', '),
+    }))
+  ) return
+  await store.deleteTool(tool)
 }
 
 function isEditingParameter(tool: ToolSummary, parameter: ToolParameterView): boolean {

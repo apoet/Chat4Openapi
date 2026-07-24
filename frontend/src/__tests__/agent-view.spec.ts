@@ -99,6 +99,7 @@ beforeEach(() => {
   const auth = useAuthStore()
   auth.admin = { username: 'admin', locale: 'en-US', role: 'admin' }
   auth.csrfToken = 'csrf'
+  vi.stubGlobal('confirm', vi.fn(() => true))
 })
 
 afterEach(() => {
@@ -383,6 +384,9 @@ describe('Agent administration', () => {
     const remove = await screen.findByRole('button', { name: 'Delete Agent' }) as HTMLButtonElement
     await waitFor(() => expect(remove.disabled).toBe(false))
     await fireEvent.click(remove)
+    expect(window.confirm).toHaveBeenCalledWith(
+      'Delete Agent “Operations Agent”? Its client access and configuration will no longer be available.',
+    )
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/agents/1', expect.objectContaining({ method: 'DELETE' })))
     for (const url of ['/api/admin/agents/2/set-default', '/api/admin/agents/1/disable', '/api/admin/agents/1']) {
       const call = fetchMock.mock.calls.find(([called]) => called === url)

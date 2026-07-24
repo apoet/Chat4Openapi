@@ -161,6 +161,13 @@ export default {
     authorize: 'Authorize', authorizing: 'Opening…', logout: 'Sign out', popupBlocked: 'The authorization popup was blocked. Allow popups and try again.',
     authorizationCancelled: 'Authorization was cancelled. You can try again.', authorizationFailed: 'Authorization failed. Please try again.',
   },
+  confirmations: {
+    deleteSource: 'Delete source “{name}”? All Tools in this source will be deleted and Skills that reference them may be affected.',
+    deleteSkill: 'Delete Skill “{name}”? Agents that reference it may no longer provide this capability.',
+    deleteAgent: 'Delete Agent “{name}”? Its client access and configuration will no longer be available.',
+    deleteReferencedTool: 'Tool “{name}” is referenced by these Skills: {skills}. Delete it anyway?',
+    deleteToolUnknown: 'Could not verify whether Tool “{name}” is referenced by a Skill. Delete it anyway?',
+  },
   action: { continue: 'Continue' },
   error: {
     setup: { already_initialized: 'This Agent4API instance is already initialized.' },

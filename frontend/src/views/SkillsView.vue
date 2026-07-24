@@ -149,6 +149,7 @@ function resetEditor(): void {
 }
 
 async function remove(skill: SkillSummary): Promise<void> {
+  if (!window.confirm(t('confirmations.deleteSkill', { name: skill.name }))) return
   await store.remove(skill)
   if (editingId.value === skill.id) resetEditor()
 }
