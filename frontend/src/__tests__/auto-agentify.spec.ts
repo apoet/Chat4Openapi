@@ -105,6 +105,10 @@ it('starts from the current URL import input and displays live capability analys
   })
   await flushPromises()
 
+  expect(wrapper.get('[data-testid="auto-provider"]').element.parentElement?.classList)
+    .toContain('provider-select-shell')
+  expect(wrapper.get('.provider-mark').attributes('aria-hidden')).toBe('true')
+
   await wrapper.get('[data-testid="auto-provider"]').setValue('7')
   await wrapper.get('[data-testid="auto-submit"]').trigger('click')
   await flushPromises()

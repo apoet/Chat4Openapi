@@ -97,13 +97,17 @@ function eventLabel(kind: string): string {
           <strong>{{ source.name || t('autoAgentify.missingName') }}</strong>
           <span>{{ source.mode === 'url' ? source.sourceUrl : source.file?.name }}</span>
         </div>
-        <label>{{ t('autoAgentify.provider') }}
-          <select v-model="providerId" data-testid="auto-provider" :disabled="active">
-            <option value="">{{ t('autoAgentify.selectProvider') }}</option>
-            <option v-for="provider in providers" :key="provider.id" :value="String(provider.id)">
-              {{ provider.name }} · {{ provider.default_model }}
-            </option>
-          </select>
+        <label class="provider-field">
+          <span class="provider-label">{{ t('autoAgentify.provider') }}</span>
+          <span class="provider-select-shell">
+            <span class="provider-mark" aria-hidden="true">✦</span>
+            <select v-model="providerId" data-testid="auto-provider" :disabled="active">
+              <option value="">{{ t('autoAgentify.selectProvider') }}</option>
+              <option v-for="provider in providers" :key="provider.id" :value="String(provider.id)">
+                {{ provider.name }} · {{ provider.default_model }}
+              </option>
+            </select>
+          </span>
         </label>
 
         <p v-if="!sourceReady" class="form-error" role="alert">{{ t('autoAgentify.sourceIncomplete') }}</p>
@@ -157,6 +161,15 @@ function eventLabel(kind: string): string {
 .auto-agentify-modal { width: min(760px, 100%); max-height: calc(100vh - 48px); overflow: auto; display: grid; gap: 16px; padding: 24px; border-radius: 16px; background: #fff; box-shadow: 0 24px 80px rgba(20,28,45,.28); }
 .source-summary { display: grid; gap: 4px; padding: 12px; border-radius: 10px; background: #f5f6f8; overflow-wrap: anywhere; }
 .source-summary span { color: #626b7b; font-size: 13px; }
+.provider-field { display: grid; gap: 8px; }
+.provider-label { color: #4f5767; font-size: 12px; font-weight: 800; letter-spacing: .04em; }
+.provider-select-shell { position: relative; display: block; }
+.provider-mark { position: absolute; z-index: 1; top: 50%; left: 15px; color: var(--accent); font-size: 14px; transform: translateY(-50%); pointer-events: none; }
+.provider-select-shell::after { content: ''; position: absolute; top: 50%; right: 17px; width: 8px; height: 8px; border-right: 2px solid #777f8d; border-bottom: 2px solid #777f8d; transform: translateY(-70%) rotate(45deg); pointer-events: none; }
+.provider-select-shell select { appearance: none; width: 100%; height: 48px; padding: 0 46px 0 42px; border: 1px solid #d8d4ca; border-radius: 11px; outline: none; color: var(--ink); background: linear-gradient(180deg, #fff 0%, #fbfaf7 100%); box-shadow: 0 1px 2px rgba(20,28,45,.04); font-weight: 650; cursor: pointer; transition: border-color .16s ease, box-shadow .16s ease, background .16s ease; }
+.provider-select-shell select:hover:not(:disabled) { border-color: #aaa3da; background: #fff; }
+.provider-select-shell select:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(101,88,232,.16); }
+.provider-select-shell select:disabled { color: #8a909b; background: #f1f0ec; cursor: not-allowed; }
 .progress-heading { display: flex; justify-content: space-between; }
 progress { width: 100%; height: 10px; }
 .live-analysis, .capability-list { display: grid; gap: 12px; }
