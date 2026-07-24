@@ -102,6 +102,7 @@ export interface SourceImportResponse {
 export interface AutoAgentifySkill {
   id: number
   name: string
+  description: string
   tool_ids: number[]
   value: string
 }
@@ -109,6 +110,7 @@ export interface AutoAgentifySkill {
 export interface AutoAgentifyAgent {
   id: number
   name: string
+  description: string
   skill_ids: number[]
   mode: 'human_in_loop' | 'react'
   provider_id: number
@@ -200,6 +202,7 @@ export interface LlmProviderSummary {
 export interface AgentConfig {
   id: number
   name: string
+  description: string | null
   enabled: boolean
   is_default: boolean
   system_prompt: string

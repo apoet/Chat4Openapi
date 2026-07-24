@@ -36,6 +36,7 @@ const agents = [
   {
     id: 1,
     name: 'Operations Agent',
+    description: 'Routes operational work.',
     enabled: true,
     is_default: true,
     system_prompt: 'Route requests through bound Skills.',
@@ -51,6 +52,7 @@ const agents = [
   {
     id: 2,
     name: 'Draft Agent',
+    description: null,
     enabled: false,
     is_default: false,
     system_prompt: 'Draft prompt.',
@@ -242,6 +244,7 @@ describe('Agent administration', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'New Agent' }))
     await fireEvent.update(screen.getByLabelText('Agent name'), 'Support Agent')
+    await fireEvent.update(screen.getByLabelText('Description'), 'Supports service requests.')
     await fireEvent.update(screen.getByLabelText('Provider'), '1')
     await fireEvent.update(screen.getByLabelText('System prompt'), 'Help support users.')
     await fireEvent.update(screen.getByLabelText('Search Skills'), 'ship')
@@ -254,6 +257,7 @@ describe('Agent administration', () => {
     const createCall = fetchMock.mock.calls.find(([url, init]) => url === '/api/admin/agents' && (init as RequestInit)?.method === 'POST')
     expect(JSON.parse((createCall?.[1] as RequestInit).body as string)).toMatchObject({
       name: 'Support Agent',
+      description: 'Supports service requests.',
       enabled: false,
       provider_id: 1,
       system_prompt: 'Help support users.',

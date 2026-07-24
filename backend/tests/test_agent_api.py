@@ -66,6 +66,7 @@ def seed_disabled_agent_without_skills(factory: sessionmaker[Session]) -> None:
 def agent_payload(provider_id: int | None, *, name: str = "Operations Agent") -> dict[str, object]:
     return {
         "name": name,
+        "description": "Coordinates operational work.",
         "enabled": False,
         "system_prompt": "Use configured Skills.",
         "provider_id": provider_id,
@@ -196,12 +197,14 @@ async def test_admin_can_create_list_get_update_and_soft_delete_agents(
     )
 
     assert created.status_code == 201
+    assert created.json()["description"] == "Coordinates operational work."
     assert created.json()["is_default"] is False
     assert created.json()["skill_ids"] == []
     assert [agent["id"] for agent in listed.json()] == [1, created.json()["id"]]
     assert fetched.json() == created.json()
     assert updated.status_code == 200
     assert updated.json()["name"] == "Updated Agent"
+    assert updated.json()["description"] == "Coordinates operational work."
     assert updated.json()["provider_id"] is None
     assert deleted.status_code == 204
     assert (await client.get(f"/api/admin/agents/{created.json()['id']}")).status_code == 404

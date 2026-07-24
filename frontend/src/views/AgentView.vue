@@ -136,7 +136,11 @@ async function remove(): Promise<void> {
           <div v-for="agent in store.agents" :key="agent.id" class="agent-list-row">
             <button type="button" :class="['agent-list-item', { active: selectedId === agent.id && !creating }]" :disabled="interactionLocked" :aria-current="selectedId === agent.id && !creating ? 'true' : undefined" @click="select(agent)">
               <span class="agent-avatar" aria-hidden="true">{{ agent.name.slice(0, 2).toUpperCase() }}</span>
-              <span><strong>{{ agent.name }}</strong><small>{{ agent.enabled ? t('tools.enabled') : t('tools.disabled') }}</small></span>
+              <span>
+                <strong>{{ agent.name }}</strong>
+                <small v-if="agent.description" :title="agent.description">{{ agent.description }}</small>
+                <small>{{ agent.enabled ? t('tools.enabled') : t('tools.disabled') }}</small>
+              </span>
               <b v-if="agent.is_default">{{ t('agent.default') }}</b>
             </button>
             <a

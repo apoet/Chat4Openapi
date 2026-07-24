@@ -69,7 +69,7 @@ export default {
     subtitle: '配置专用 Agent、有序 Skill 和客户端 API 密钥。',
     listTitle: 'Agent 列表', newAgent: '新建 Agent', creating: '新建 Agent', editing: 'Agent 配置',
     editorTitle: 'Agent 编辑器', empty: '尚未配置 Agent。', chooseAgent: '请选择一个 Agent 或新建 Agent。',
-    name: 'Agent 名称', provider: '供应商', selectProvider: '选择已启用的供应商',
+    name: 'Agent 名称', description: '描述', provider: '供应商', selectProvider: '选择已启用的供应商',
     model: '模型覆盖', modelHint: '使用供应商默认模型', mode: '模式',
     humanInLoop: '人工参与', react: 'ReAct', maxIterations: '最大迭代次数',
     systemPrompt: '系统提示词', save: '保存 Agent', saving: '正在保存…', default: '默认', lifecycle: 'Agent 生命周期',

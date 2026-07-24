@@ -217,6 +217,7 @@ class AutoAgentifyService:
                     base_url=effective_base_url,
                     allow_private_networks=allow_private_networks,
                     catalog=catalog,
+                    result_language=result_language,
                 )
         except IntegrityError as exc:
             raise ApiError(409, "auto_agentify.conflict") from exc
@@ -270,6 +271,7 @@ class AutoAgentifyService:
         base_url: str,
         allow_private_networks: bool,
         catalog,
+        result_language: str,
     ) -> AutoAgentifyResponse:
         source = ApiSource(
             name=name,
@@ -309,13 +311,16 @@ class AutoAgentifyService:
         )
         skill_rows: dict[str, Skill] = {}
         generated_skills: list[GeneratedSkillResponse] = []
+        provenance = _auto_generated_provenance(name, result_language)
         for skill_plan in plan.skills:
             allocated_name = _allocate_name(
                 skill_plan.name, name, existing_skill_names
             )
             skill = Skill(
                 name=allocated_name,
-                description=skill_plan.description,
+                description=_append_provenance(
+                    skill_plan.description, provenance
+                ),
                 system_prompt=skill_plan.system_prompt,
                 running=True,
             )
@@ -340,6 +345,7 @@ class AutoAgentifyService:
                 GeneratedSkillResponse(
                     id=skill.id,
                     name=skill.name,
+                    description=skill.description,
                     tool_ids=[tool.id for tool in bound_tools],
                     value=skill_plan.value,
                 )
@@ -369,6 +375,9 @@ class AutoAgentifyService:
             )
             agent = Agent(
                 name=allocated_name,
+                description=_append_provenance(
+                    agent_plan.responsibility, provenance
+                ),
                 enabled=True,
                 is_default=False,
                 system_prompt=agent_plan.system_prompt,
@@ -391,6 +400,7 @@ class AutoAgentifyService:
                 GeneratedAgentResponse(
                     id=agent.id,
                     name=agent.name,
+                    description=agent.description,
                     skill_ids=[skill.id for skill in bound_skills],
                     mode=mode,
                     provider_id=provider_id,
@@ -407,6 +417,26 @@ class AutoAgentifyService:
             skills=generated_skills,
             agents=generated_agents,
         )
+
+
+def _auto_generated_provenance(
+    source_name: str, result_language: str
+) -> str:
+    normalized_source = " ".join(source_name.split())
+    if result_language == "zh-CN":
+        return f"根据「{normalized_source}」来源自动生成。"
+    return f'Automatically generated from the "{normalized_source}" source.'
+
+
+def _append_provenance(description: str, provenance: str) -> str:
+    punctuation = ("。", ".", "！", "!", "？", "?")
+    separator = (
+        ""
+        if description.rstrip().endswith(punctuation)
+        else ("。" if provenance.startswith("根据") else ".")
+    )
+    suffix = f"{separator} {provenance}"
+    return f"{description.rstrip()[: 4_000 - len(suffix)]}{suffix}"
 
 
 def _allocate_name(base: str, source_name: str, used: set[str]) -> str:

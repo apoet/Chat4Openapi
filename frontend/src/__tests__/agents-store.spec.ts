@@ -22,7 +22,7 @@ beforeEach(() => {
 describe('Agents store request generations', () => {
   it('keeps refreshed server state after Skill binding fails instead of restoring stale metadata', async () => {
     const metadata = {
-      id: 1, name: 'Submitted name', enabled: true, is_default: true,
+      id: 1, name: 'Submitted name', description: null, enabled: true, is_default: true,
       system_prompt: 'Submitted prompt', provider_id: 1, model: null,
       mode: 'human_in_loop' as const, max_iterations: 8,
       created_at: '2026-07-20T08:00:00Z', updated_at: '2026-07-22T08:00:00Z',
@@ -38,7 +38,7 @@ describe('Agents store request generations', () => {
     const store = useAgentsStore()
 
     await expect(store.save({
-      name: metadata.name, enabled: true, system_prompt: metadata.system_prompt,
+      name: metadata.name, description: null, enabled: true, system_prompt: metadata.system_prompt,
       provider_id: 1, model: null, mode: 'human_in_loop', max_iterations: 8,
     }, [10], 1)).rejects.toMatchObject({ agentId: 1 })
 

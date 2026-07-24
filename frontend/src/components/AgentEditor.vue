@@ -18,13 +18,14 @@ const { t } = useI18n()
 const search = ref('')
 const boundSkillIds = ref<number[]>([])
 const form = reactive<AgentConfigWrite>({
-  name: '', enabled: true, system_prompt: '', provider_id: null,
+  name: '', description: null, enabled: true, system_prompt: '', provider_id: null,
   model: null, mode: 'human_in_loop', max_iterations: 8,
 })
 
 watch(() => props.agent, (agent) => {
   Object.assign(form, agent ? {
     name: agent.name,
+    description: agent.description,
     enabled: agent.enabled,
     system_prompt: agent.system_prompt,
     provider_id: agent.provider_id,
@@ -32,7 +33,7 @@ watch(() => props.agent, (agent) => {
     mode: agent.mode,
     max_iterations: agent.max_iterations,
   } : {
-    name: '', enabled: true, system_prompt: '', provider_id: null,
+    name: '', description: null, enabled: true, system_prompt: '', provider_id: null,
     model: null, mode: 'human_in_loop', max_iterations: 8,
   })
   boundSkillIds.value = agent?.skill_ids.slice() ?? []
@@ -82,6 +83,7 @@ function save(): void {
   if (!canSave.value || props.pending) return
   emit('save', {
     name: form.name.trim(),
+    description: form.description?.trim() || null,
     enabled: props.agent?.enabled ?? true,
     system_prompt: form.system_prompt.trim(),
     provider_id: form.provider_id,
@@ -123,6 +125,7 @@ function save(): void {
       </label>
       <label>{{ t('agent.maxIterations') }}<input v-model.number="form.max_iterations" type="number" min="2" max="32" :disabled="pending" /></label>
     </div>
+    <label class="block-label">{{ t('agent.description') }}<textarea v-model="form.description" rows="3" maxlength="4000" :disabled="pending" /></label>
     <label class="block-label">{{ t('agent.systemPrompt') }}<textarea v-model="form.system_prompt" rows="7" :disabled="pending" /></label>
 
     <section class="skill-binding" role="region" :aria-label="t('agent.boundSkills')">

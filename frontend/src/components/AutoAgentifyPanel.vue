@@ -495,8 +495,8 @@ function runGeneration(): Promise<void> {
                 <RouterLink class="secondary-action" to="/admin/agent">{{ t('autoAgentify.reviewAgents') }}</RouterLink>
               </div>
               <div class="auto-result-grid">
-                <section><h4>{{ t('autoAgentify.skills') }}</h4><article v-for="skill in job.result.skills" :key="skill.id" class="auto-result-card"><strong>{{ skill.name }}</strong><p>{{ skill.value }}</p></article></section>
-                <section><h4>{{ t('autoAgentify.agents') }}</h4><article v-for="agent in job.result.agents" :key="agent.id" class="auto-result-card"><strong>{{ agent.name }}</strong><p>{{ agent.value }}</p><ul><li v-for="useCase in agent.use_cases" :key="useCase">{{ useCase }}</li></ul></article></section>
+                <section><h4>{{ t('autoAgentify.skills') }}</h4><article v-for="skill in job.result.skills" :key="skill.id" class="auto-result-card"><strong>{{ skill.name }}</strong><p>{{ skill.description }}</p><p>{{ skill.value }}</p></article></section>
+                <section><h4>{{ t('autoAgentify.agents') }}</h4><article v-for="agent in job.result.agents" :key="agent.id" class="auto-result-card"><strong>{{ agent.name }}</strong><p>{{ agent.description }}</p><p>{{ agent.value }}</p><ul><li v-for="useCase in agent.use_cases" :key="useCase">{{ useCase }}</li></ul></article></section>
               </div>
             </div>
           </section>

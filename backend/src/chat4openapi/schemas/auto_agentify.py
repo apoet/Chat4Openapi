@@ -144,6 +144,7 @@ class AutoAgentifyUrlRequest(BaseModel):
 class GeneratedSkillResponse(BaseModel):
     id: int
     name: str
+    description: str
     tool_ids: list[int]
     value: str
 
@@ -151,6 +152,7 @@ class GeneratedSkillResponse(BaseModel):
 class GeneratedAgentResponse(BaseModel):
     id: int
     name: str
+    description: str
     skill_ids: list[int]
     mode: Literal["human_in_loop", "react"]
     provider_id: int

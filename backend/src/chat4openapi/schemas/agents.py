@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 class AgentWrite(BaseModel):
     name: str = Field(min_length=1, max_length=160)
+    description: str | None = Field(default=None, max_length=4_000)
     enabled: bool = True
     system_prompt: str = Field(min_length=1, max_length=100_000)
     provider_id: int | None = None
@@ -19,6 +20,7 @@ class AgentResponse(BaseModel):
 
     id: int
     name: str
+    description: str | None
     enabled: bool
     is_default: bool
     system_prompt: str

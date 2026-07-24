@@ -69,7 +69,7 @@ export default {
     subtitle: 'Configure specialized Agents, their ordered Skills, and client API keys.',
     listTitle: 'Agent roster', newAgent: 'New Agent', creating: 'New Agent', editing: 'Agent configuration',
     editorTitle: 'Agent editor', empty: 'No Agents configured yet.', chooseAgent: 'Choose an Agent or create a new one.',
-    name: 'Agent name', provider: 'Provider', selectProvider: 'Select an enabled provider',
+    name: 'Agent name', description: 'Description', provider: 'Provider', selectProvider: 'Select an enabled provider',
     model: 'Model override', modelHint: 'Use the provider default', mode: 'Mode',
     humanInLoop: 'Human-in-loop', react: 'ReAct', maxIterations: 'Maximum iterations',
     systemPrompt: 'System prompt', save: 'Save Agent', saving: 'Saving…', default: 'Default', lifecycle: 'Agent lifecycle',

@@ -137,7 +137,13 @@ async def test_file_generation_creates_immediately_usable_configuration(
     assert body["source"]["name"] == "Pets"
     assert body["imported_tool_count"] == 1
     assert body["enabled_tool_count"] == 1
+    assert body["skills"][0]["description"] == (
+        'Creates pets through the API. Automatically generated from the "Pets" source.'
+    )
     assert body["skills"][0]["value"] == "Automates pet onboarding."
+    assert body["agents"][0]["description"] == (
+        'Coordinates pet onboarding. Automatically generated from the "Pets" source.'
+    )
     assert body["agents"][0]["value"] == "Turns the API into an onboarding workflow."
     assert body["agents"][0]["use_cases"] == ["Create a pet record"]
     assert planner.calls[0]["api_key"] == "provider-secret"
@@ -148,7 +154,9 @@ async def test_file_generation_creates_immediately_usable_configuration(
         agent = session.scalar(select(Agent))
         assert tool is not None and tool.enabled is True
         assert skill is not None and skill.running is True
+        assert skill.description == body["skills"][0]["description"]
         assert agent is not None and agent.enabled is True
+        assert agent.description == body["agents"][0]["description"]
         assert agent.provider_id == provider_id
         assert agent.model is None
         assert session.scalar(select(func.count()).select_from(SkillTool)) == 1
@@ -241,13 +249,23 @@ async def test_generation_allocates_a_new_name_when_soft_deleted_skill_owns_name
 
     response = await client.post(
         "/api/admin/auto-agentify/file",
-        data={"provider_id": str(provider_id), "name": "Pets"},
+        data={
+            "provider_id": str(provider_id),
+            "name": "Pets",
+            "result_language": "zh-CN",
+        },
         files={"document": ("openapi.yaml", OPENAPI, "application/yaml")},
         headers={"X-CSRF-Token": token},
     )
 
     assert response.status_code == 201
     assert response.json()["skills"][0]["name"] == "Pet Operations (Pets)"
+    assert response.json()["skills"][0]["description"].endswith(
+        "根据「Pets」来源自动生成。"
+    )
+    assert response.json()["agents"][0]["description"].endswith(
+        "根据「Pets」来源自动生成。"
+    )
 
 
 @pytest.mark.asyncio
