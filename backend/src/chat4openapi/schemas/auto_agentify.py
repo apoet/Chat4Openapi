@@ -16,6 +16,7 @@ BUILTIN_SYSTEM_CAPABILITIES = {
     "reference_data": "reference data and dictionaries / 数据字典",
     "monitoring_operations": "monitoring and operations / 监控运维",
     "authentication_authorization": "authentication and authorization / 认证授权",
+    "sensitive_data_security": "sensitive information and security / 敏感信息与安全",
     "developer_tools": "developer tools / 开发工具",
     "ai_platform": "AI platform configuration / AI 平台",
 }

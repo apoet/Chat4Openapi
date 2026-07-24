@@ -260,6 +260,72 @@ async def test_planner_keeps_selected_system_capabilities() -> None:
 
 
 @pytest.mark.asyncio
+async def test_planner_blocks_sensitive_information_and_security_unless_selected() -> None:
+    capability = json.loads(_capabilities_json())
+    capability["capabilities"][0].update(
+        {
+            "name": "Sensitive data security",
+            "description": "Mask personal information and respond to security incidents.",
+            "candidate_skills": ["Sensitive data protection"],
+        }
+    )
+    reporter = CollectingReporter()
+    planner = AutoAgentifyPlanner(
+        client=FakeLlmClient([json.dumps(capability), _valid_json()])
+    )
+
+    await planner.plan(
+        provider_type="openai",
+        base_url="https://llm.example.test/v1",
+        api_key="secret",
+        model="model",
+        catalog=_catalog(),
+        reporter=reporter,
+    )
+
+    filtered = next(
+        event for event in reporter.events if event.kind == "capability_filtered"
+    )
+    assert filtered.params["capability"] == (
+        "sensitive information and security / 敏感信息与安全"
+    )
+    assert not any(
+        event.kind == "capability_discovered" for event in reporter.events
+    )
+
+
+@pytest.mark.asyncio
+async def test_planner_allows_sensitive_information_and_security_when_selected() -> None:
+    capability = json.loads(_capabilities_json())
+    capability["capabilities"][0].update(
+        {
+            "name": "敏感信息与安全",
+            "description": "识别敏感数据并执行安全事件处置。",
+            "candidate_skills": ["敏感数据保护"],
+        }
+    )
+    reporter = CollectingReporter()
+    planner = AutoAgentifyPlanner(
+        client=FakeLlmClient([json.dumps(capability), _valid_json()])
+    )
+
+    await planner.plan(
+        provider_type="openai",
+        base_url="https://llm.example.test/v1",
+        api_key="secret",
+        model="model",
+        catalog=_catalog(),
+        reporter=reporter,
+        allowed_system_capabilities=["sensitive_data_security"],
+    )
+
+    assert any(
+        event.kind == "capability_discovered" for event in reporter.events
+    )
+    assert not any(event.kind == "capability_filtered" for event in reporter.events)
+
+
+@pytest.mark.asyncio
 async def test_planner_corrects_final_plan_with_forbidden_capability() -> None:
     forbidden_plan = GenerationPlan(
         skills=[
@@ -290,6 +356,88 @@ async def test_planner_corrects_final_plan_with_forbidden_capability() -> None:
 
     assert plan.skills[0].name == "Project Insights 0"
     assert "forbidden capability" in client.calls[2][-1].content
+
+
+@pytest.mark.asyncio
+async def test_planner_blocks_security_skill_and_agent_unless_selected() -> None:
+    security_plan = GenerationPlan(
+        skills=[
+            SkillPlan(
+                name="Sensitive information protection",
+                description="Mask personal data and investigate security incidents.",
+                system_prompt="Protect sensitive information.",
+                operation_keys=["GET /projects"],
+                value="Reduces data security risk.",
+            )
+        ],
+        agents=[
+            AgentPlan(
+                name="Security response Agent",
+                responsibility="Coordinate sensitive-data incident response.",
+                system_prompt="Handle security events.",
+                skill_names=["Sensitive information protection"],
+                mode="human_in_loop",
+                max_iterations=8,
+                value="Improves security response.",
+                use_cases=["Investigate a security incident"],
+            )
+        ],
+    ).model_dump_json()
+    client = FakeLlmClient([_capabilities_json(), security_plan, _valid_json()])
+    planner = AutoAgentifyPlanner(client=client)
+
+    plan = await planner.plan(
+        provider_type="openai",
+        base_url="https://llm.example.test/v1",
+        api_key="secret",
+        model="model",
+        catalog=_catalog(),
+    )
+
+    assert plan.skills[0].name == "Project Insights 0"
+    assert "sensitive_data_security" in client.calls[2][-1].content
+
+
+@pytest.mark.asyncio
+async def test_planner_keeps_security_skill_and_agent_when_selected() -> None:
+    security_plan = GenerationPlan(
+        skills=[
+            SkillPlan(
+                name="敏感信息保护",
+                description="识别敏感数据并进行数据脱敏。",
+                system_prompt="保护敏感信息。",
+                operation_keys=["GET /projects"],
+                value="降低信息安全风险。",
+            )
+        ],
+        agents=[
+            AgentPlan(
+                name="安全响应 Agent",
+                responsibility="协调安全事件处置。",
+                system_prompt="处理安全事件。",
+                skill_names=["敏感信息保护"],
+                mode="human_in_loop",
+                max_iterations=8,
+                value="提升安全响应效率。",
+                use_cases=["处置安全事件"],
+            )
+        ],
+    ).model_dump_json()
+    planner = AutoAgentifyPlanner(
+        client=FakeLlmClient([_capabilities_json(), security_plan])
+    )
+
+    plan = await planner.plan(
+        provider_type="openai",
+        base_url="https://llm.example.test/v1",
+        api_key="secret",
+        model="model",
+        catalog=_catalog(),
+        allowed_system_capabilities=["sensitive_data_security"],
+    )
+
+    assert plan.skills[0].name == "敏感信息保护"
+    assert plan.agents[0].name == "安全响应 Agent"
 
 
 @pytest.mark.asyncio

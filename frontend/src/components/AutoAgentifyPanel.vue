@@ -38,6 +38,7 @@ const systemCapabilities = [
   'reference_data',
   'monitoring_operations',
   'authentication_authorization',
+  'sensitive_data_security',
   'developer_tools',
   'ai_platform',
 ] as const

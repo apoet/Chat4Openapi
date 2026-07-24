@@ -120,6 +120,10 @@ it('starts from the current URL import input and displays live capability analys
   expect(wrapper.get('.provider-mark').attributes('aria-hidden')).toBe('true')
   expect(wrapper.get('[data-testid="auto-generation-notice"]').text())
     .toContain('20 Skills')
+  expect(wrapper.get('[data-testid="capability-system-sensitive_data_security"]').text())
+    .toContain('Sensitive information and security')
+  expect(wrapper.get('[data-testid="capability-system-sensitive_data_security"]')
+    .attributes('aria-pressed')).toBe('false')
 
   await wrapper.get('[data-testid="capability-system-file_management"]').trigger('click')
   await wrapper.get('[data-testid="custom-capability-input"]')
