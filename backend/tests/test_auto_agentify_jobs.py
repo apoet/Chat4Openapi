@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from chat4openapi.models import AdminUser, LlmProvider
+from chat4openapi.models import AdminUser, ApiSource, LlmProvider
 from chat4openapi.models.auto_agentify_job import (
     AutoAgentifyJob,
     AutoAgentifyJobEvent,
@@ -58,11 +58,18 @@ def _seed_owner_and_provider(
         return owner.id, provider.id
 
 
-def _job(owner_id: int, provider_id: int, *, status: str = "queued") -> AutoAgentifyJob:
+def _job(
+    owner_id: int,
+    provider_id: int,
+    *,
+    source_id: int | None = None,
+    status: str = "queued",
+) -> AutoAgentifyJob:
     return AutoAgentifyJob(
-        public_id=f"job-{status}-{datetime.now(UTC).timestamp()}",
+        public_id=f"job-{source_id}-{status}-{datetime.now(UTC).timestamp()}",
         creator_admin_id=owner_id,
         provider_id=provider_id,
+        source_id=source_id,
         input_mode="url",
         source_name="Projects",
         source_url="https://api.example.test/openapi.json",
@@ -73,19 +80,72 @@ def _job(owner_id: int, provider_id: int, *, status: str = "queued") -> AutoAgen
     )
 
 
-def test_job_enforces_one_active_job_per_creator(
+def _seed_source(
+    factory: sessionmaker[Session], name: str = "Projects"
+) -> int:
+    with factory() as session:
+        source = ApiSource(
+            name=name,
+            source_type="openapi",
+            base_url="https://api.example.test",
+            document_url="https://api.example.test/openapi.json",
+            spec_snapshot='{"openapi":"3.0.0","info":{"title":"Projects","version":"1"},"paths":{}}',
+            spec_hash="source-hash",
+            allow_private_networks=False,
+        )
+        session.add(source)
+        session.commit()
+        return source.id
+
+
+def test_job_enforces_one_active_job_per_creator_and_source(
     db_session_factory: sessionmaker[Session],
 ) -> None:
     owner_id, provider_id = _seed_owner_and_provider(db_session_factory)
+    source_id = _seed_source(db_session_factory)
     with db_session_factory() as session:
         session.add_all(
             [
-                _job(owner_id, provider_id, status="queued"),
-                _job(owner_id, provider_id, status="running"),
+                _job(
+                    owner_id,
+                    provider_id,
+                    source_id=source_id,
+                    status="queued",
+                ),
+                _job(
+                    owner_id,
+                    provider_id,
+                    source_id=source_id,
+                    status="running",
+                ),
             ]
         )
         with pytest.raises(IntegrityError):
             session.commit()
+
+
+def test_job_allows_active_jobs_for_different_sources(
+    db_session_factory: sessionmaker[Session],
+) -> None:
+    owner_id, provider_id = _seed_owner_and_provider(db_session_factory)
+    first_source_id = _seed_source(db_session_factory, "Projects")
+    second_source_id = _seed_source(db_session_factory, "Orders")
+    with db_session_factory() as session:
+        session.add_all(
+            [
+                _job(
+                    owner_id,
+                    provider_id,
+                    source_id=first_source_id,
+                ),
+                _job(
+                    owner_id,
+                    provider_id,
+                    source_id=second_source_id,
+                ),
+            ]
+        )
+        session.commit()
 
 
 def test_job_allows_multiple_terminal_jobs_and_orders_event_sequences_per_job(
@@ -283,3 +343,46 @@ async def test_job_api_creates_and_recovers_latest_job(
         "clinical trial data capture"
     ]
     assert latest.json()["metrics"]["result_language"] == "zh-CN"
+
+
+@pytest.mark.asyncio
+async def test_source_job_is_bound_to_imported_source_and_listed_by_source(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = await _login(client)
+    cipher = SecretCipher(Fernet.generate_key())
+    provider_id = _seed_owner_and_provider(db_session_factory)[1]
+    source_id = _seed_source(db_session_factory)
+    app.dependency_overrides[get_tool_secret_cipher] = lambda: cipher
+    app.dependency_overrides[get_auto_agentify_planner] = lambda: object()
+    scheduled: list[dict] = []
+    monkeypatch.setattr(
+        "chat4openapi.api.admin_auto_agentify.schedule_auto_agentify_job",
+        lambda **kwargs: scheduled.append(kwargs),
+    )
+
+    response = await client.post(
+        f"/api/admin/auto-agentify/sources/{source_id}/jobs",
+        json={
+            "provider_id": provider_id,
+            "allowed_system_capabilities": ["file_management"],
+            "custom_capability_labels": ["delivery"],
+            "result_language": "en-US",
+        },
+        headers={"X-CSRF-Token": token},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["source_id"] == source_id
+    assert scheduled[0]["raw_document"].startswith(b'{"openapi"')
+    sources = await client.get("/api/admin/sources")
+    source_summary = next(
+        item for item in sources.json() if item["id"] == source_id
+    )
+    source_job = source_summary["auto_agentify_job"]
+    assert source_job["public_id"] == response.json()["public_id"]
+    assert source_job["status"] == "queued"
+    assert source_job["progress"] == 0

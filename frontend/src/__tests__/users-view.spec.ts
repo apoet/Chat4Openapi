@@ -39,6 +39,7 @@ describe('User administration', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(UsersView, { global: { plugins: [i18n] } })
 
+    expect(screen.queryByLabelText('Allow sign-in')).toBeNull()
     await fireEvent.update(screen.getByLabelText('Username'), 'builder')
     await fireEvent.update(screen.getByLabelText('Password'), 'Builder123')
     expect((screen.getByRole('button', { name: 'Create user' }) as HTMLButtonElement).disabled)
@@ -57,7 +58,6 @@ describe('User administration', () => {
       password: 'Builder123',
       password_confirm: 'Builder123',
       locale: 'en-US',
-      enabled: true,
     })
   })
 

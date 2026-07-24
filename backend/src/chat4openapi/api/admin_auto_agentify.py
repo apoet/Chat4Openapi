@@ -21,10 +21,15 @@ from chat4openapi.auto_agentify.jobs import (
     session_factory_for,
 )
 from chat4openapi.auto_agentify.service import AutoAgentifyService
-from chat4openapi.models import AutoAgentifyJob, AutoAgentifyJobEvent
+from chat4openapi.models import (
+    ApiSource,
+    AutoAgentifyJob,
+    AutoAgentifyJobEvent,
+)
 from chat4openapi.schemas.auto_agentify import (
     AutoAgentifyJobResponse,
     AutoAgentifyResponse,
+    AutoAgentifySourceJobRequest,
     AutoAgentifyUrlRequest,
     CapabilityPreferences,
 )
@@ -150,6 +155,52 @@ def get_latest_job(
 ) -> AutoAgentifyJobResponse | None:
     job = latest_job(context.db, context.admin.id)
     return job_response(job) if job is not None else None
+
+
+@router.post(
+    "/sources/{source_id}/jobs",
+    response_model=AutoAgentifyJobResponse,
+    status_code=202,
+)
+def create_source_job(
+    source_id: int,
+    payload: AutoAgentifySourceJobRequest,
+    context: AdminContext = Depends(require_csrf),
+    cipher: SecretCipher = Depends(get_tool_secret_cipher),
+    planner: AutoAgentifyPlanner = Depends(get_auto_agentify_planner),
+) -> AutoAgentifyJobResponse:
+    source = context.db.get(ApiSource, source_id)
+    if source is None or source.deleted_at is not None:
+        raise ApiError(404, "tools.source_not_found")
+    if not source.spec_snapshot:
+        raise ApiError(409, "auto_agentify.source_document_missing")
+    factory = session_factory_for(context.db)
+    job, created = create_job(
+        context.db,
+        creator_id=context.admin.id,
+        provider_id=payload.provider_id,
+        source_id=source.id,
+        input_mode="url" if source.document_url else "file",
+        source_name=source.name,
+        source_url=source.document_url,
+        base_url=source.base_url,
+        allow_private_networks=source.allow_private_networks,
+        allowed_system_capabilities=payload.allowed_system_capabilities,
+        custom_capability_labels=payload.custom_capability_labels,
+        result_language=payload.result_language,
+    )
+    if created:
+        schedule_auto_agentify_job(
+            factory=factory,
+            job_id=job.id,
+            raw_document=source.spec_snapshot.encode("utf-8"),
+            planner=planner,
+            cipher=cipher,
+            allowed_system_capabilities=payload.allowed_system_capabilities,
+            custom_capability_labels=payload.custom_capability_labels,
+            result_language=payload.result_language,
+        )
+    return job_response(job)
 
 
 @router.get("/jobs/{public_id}", response_model=AutoAgentifyJobResponse)

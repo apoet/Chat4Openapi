@@ -18,6 +18,14 @@ class SourceUrlImportRequest(BaseModel):
     allow_private_networks: bool = False
 
 
+class SourceAutoAgentifyJobSummary(BaseModel):
+    public_id: str
+    status: Literal["queued", "running", "completed", "failed"]
+    phase: str
+    progress: int
+    updated_at: datetime
+
+
 class ApiSourceSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -30,6 +38,7 @@ class ApiSourceSummary(BaseModel):
     auth_mode: Literal["none", "oauth", "tool"]
     enabled: bool
     created_at: datetime
+    auto_agentify_job: SourceAutoAgentifyJobSummary | None = None
 
 
 class ApiSourceUpdateRequest(BaseModel):

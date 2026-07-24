@@ -13,8 +13,10 @@ import {
 } from '@element-plus/icons-vue'
 import { RouterLink } from 'vue-router'
 
-import { request } from '../api/client'
+import { ApiError, request } from '../api/client'
 import type {
+  ApiSourceSummary,
+  AutoAgentifyJob,
   AutoAgentifyJobEvent,
   AutoAgentifyResult,
   LlmProviderSummary,
@@ -23,15 +25,26 @@ import {
   useAutoAgentifyJob,
   type AutoAgentifySourceInput,
 } from '../composables/useAutoAgentifyJob'
+import { useToolsStore } from '../stores/tools'
 
-const props = defineProps<{ source: AutoAgentifySourceInput }>()
+const props = defineProps<{
+  source: AutoAgentifySourceInput
+  sourceRecord?: ApiSourceSummary | null
+  resumeJobId?: string | null
+}>()
 const emit = defineEmits<{
   generated: [result: AutoAgentifyResult]
+  sourceImported: [source: ApiSourceSummary]
+  started: [job: AutoAgentifyJob]
   close: []
 }>()
 const { t, locale } = useI18n()
+const toolsStore = useToolsStore()
 const providers = ref<LlmProviderSummary[]>([])
 const providerId = ref('')
+const activeSource = ref<ApiSourceSummary | null>(props.sourceRecord ?? null)
+const importingSource = ref(false)
+const importErrorCode = ref<string | null>(null)
 const currentStep = ref<1 | 2 | 3 | 4>(1)
 const showActivityHistory = ref(false)
 const showAllBodySchemaIssues = ref(false)
@@ -60,20 +73,29 @@ const {
   starting,
   active,
   errorCode,
-  recover,
+  load,
   start,
 } = useAutoAgentifyJob()
 
 const sourceReady = computed(() => (
-  Boolean(props.source.name.trim())
+  activeSource.value !== null
+  || (
+    Boolean(props.source.name.trim())
   && (
     props.source.mode === 'url'
       ? Boolean(props.source.sourceUrl.trim())
       : props.source.file !== null
   )
+  )
 ))
 const ready = computed(
-  () => Boolean(providerId.value) && sourceReady.value && !starting.value && !active.value,
+  () => (
+    Boolean(providerId.value)
+    && sourceReady.value
+    && !importingSource.value
+    && !starting.value
+    && !active.value
+  ),
 )
 const selectedProvider = computed(
   () => providers.value.find((provider) => String(provider.id) === providerId.value) ?? null,
@@ -134,9 +156,16 @@ const visibleBodySchemaIssues = computed(() => (
     ? bodySchemaIssues.value
     : bodySchemaIssues.value.slice(0, 5)
 ))
-const failureCode = computed(() => errorCode.value || job.value?.error_code || null)
-const failed = computed(() => job.value?.status === 'failed' || Boolean(errorCode.value))
+const failureCode = computed(
+  () => importErrorCode.value || errorCode.value || job.value?.error_code || null,
+)
+const failed = computed(
+  () => job.value?.status === 'failed'
+    || Boolean(importErrorCode.value)
+    || Boolean(errorCode.value),
+)
 const submitLabel = computed(() => {
+  if (importingSource.value) return t('autoAgentify.importingSource')
   if (starting.value) return t('autoAgentify.starting')
   if (active.value) return t('autoAgentify.running')
   if (failed.value) return t('autoAgentify.retry')
@@ -232,7 +261,7 @@ onMounted(async () => {
   providers.value = (await request<LlmProviderSummary[]>('/api/admin/build/providers'))
     .filter((provider) => provider.enabled)
   if (providers.value.length === 1) providerId.value = String(providers.value[0].id)
-  await recover()
+  if (props.resumeJobId) await load(props.resumeJobId)
   if (job.value) {
     providerId.value = String(job.value.provider_id)
     const restoredSystemCapabilities = job.value.metrics.allowed_system_capabilities
@@ -304,11 +333,37 @@ function removeCustomCapability(label: string): void {
 
 async function runGeneration(): Promise<void> {
   currentStep.value = 3
-  await start(props.source, Number(providerId.value), {
+  importErrorCode.value = null
+  if (!activeSource.value) {
+    importingSource.value = true
+    try {
+      activeSource.value = props.source.mode === 'url'
+        ? await toolsStore.importUrl(
+          props.source.name.trim(),
+          props.source.sourceUrl.trim(),
+          props.source.baseUrl.trim() || undefined,
+          props.source.allowPrivateNetworks,
+        )
+        : await toolsStore.importFile(
+          props.source.name.trim(),
+          props.source.file as File,
+          props.source.baseUrl.trim() || undefined,
+          props.source.allowPrivateNetworks,
+        )
+      emit('sourceImported', activeSource.value)
+    } catch (error) {
+      importErrorCode.value = error instanceof ApiError ? error.code : 'unknown'
+      return
+    } finally {
+      importingSource.value = false
+    }
+  }
+  await start(activeSource.value.id, Number(providerId.value), {
     allowedSystemCapabilities: selectedSystemCapabilities.value,
     customCapabilityLabels: customCapabilityLabels.value,
     resultLanguage: resultLanguage.value,
   })
+  if (job.value) emit('started', job.value)
 }
 
 function continueToScope(): void {
@@ -444,6 +499,24 @@ function continueToScope(): void {
             <button data-testid="auto-submit" class="primary-action" :disabled="!ready" @click="runGeneration">{{ submitLabel }}</button>
           </div>
           <p v-if="currentStep === 3 && active" class="background-hint">{{ t('autoAgentify.backgroundHint') }}</p>
+
+          <section v-if="currentStep === 3 && importingSource" class="analysis-process" aria-live="polite">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">{{ t('autoAgentify.analysisProcessKicker') }}</p>
+                <h3>{{ t('autoAgentify.analysisProcess') }}</h3>
+              </div>
+              <span>5%</span>
+            </div>
+            <div data-testid="auto-current-stage" class="current-activity">
+              <div class="activity-orbit" aria-hidden="true"><Loading /></div>
+              <div class="activity-copy">
+                <small>{{ t('autoAgentify.currentActivity') }}</small>
+                <strong>{{ t('autoAgentify.importingSourceDetail') }}</strong>
+              </div>
+            </div>
+            <progress data-testid="auto-progress" value="5" max="100"></progress>
+          </section>
 
           <section v-if="currentStep === 3 && job" class="analysis-process" aria-live="polite">
             <div class="section-heading">

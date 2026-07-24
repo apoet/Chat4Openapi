@@ -31,6 +31,7 @@ def job_response(job: AutoAgentifyJob) -> AutoAgentifyJobResponse:
     return AutoAgentifyJobResponse(
         public_id=job.public_id,
         provider_id=job.provider_id,
+        source_id=job.source_id,
         input_mode=job.input_mode,
         source_name=job.source_name,
         status=job.status,
@@ -63,10 +64,15 @@ def owned_job(db: Session, creator_id: int, public_id: str) -> AutoAgentifyJob:
     job = db.scalar(
         select(AutoAgentifyJob).where(
             AutoAgentifyJob.public_id == public_id,
-            AutoAgentifyJob.creator_admin_id == creator_id,
         )
     )
-    if job is None:
+    if (
+        job is None
+        or (
+            job.source_id is None
+            and job.creator_admin_id != creator_id
+        )
+    ):
         raise ApiError(404, "auto_agentify.job_not_found")
     return job
 
@@ -85,6 +91,7 @@ def create_job(
     *,
     creator_id: int,
     provider_id: int,
+    source_id: int | None = None,
     input_mode: str,
     source_name: str,
     source_url: str | None = None,
@@ -95,12 +102,18 @@ def create_job(
     custom_capability_labels: list[str] | tuple[str, ...] = (),
     result_language: str = "en-US",
 ) -> tuple[AutoAgentifyJob, bool]:
-    active = db.scalar(
-        select(AutoAgentifyJob).where(
+    active_query = select(AutoAgentifyJob).where(
+        AutoAgentifyJob.status.in_(("queued", "running")),
+    )
+    active_query = (
+        active_query.where(AutoAgentifyJob.source_id == source_id)
+        if source_id is not None
+        else active_query.where(
             AutoAgentifyJob.creator_admin_id == creator_id,
-            AutoAgentifyJob.status.in_(("queued", "running")),
+            AutoAgentifyJob.source_id.is_(None),
         )
     )
+    active = db.scalar(active_query)
     if active is not None:
         return active, False
     provider = db.get(LlmProvider, provider_id)
@@ -110,6 +123,7 @@ def create_job(
         public_id=uuid4().hex,
         creator_admin_id=creator_id,
         provider_id=provider_id,
+        source_id=source_id,
         input_mode=input_mode,
         source_name=source_name,
         source_url=source_url,
@@ -142,12 +156,7 @@ def create_job(
         db.commit()
     except IntegrityError:
         db.rollback()
-        active = db.scalar(
-            select(AutoAgentifyJob).where(
-                AutoAgentifyJob.creator_admin_id == creator_id,
-                AutoAgentifyJob.status.in_(("queued", "running")),
-            )
-        )
+        active = db.scalar(active_query)
         if active is None:
             raise
         return active, False
@@ -209,6 +218,7 @@ async def _run_job(
             result = await AutoAgentifyService(planner=planner, cipher=cipher).generate(
                 db=db,
                 provider_id=job.provider_id,
+                source_id=job.source_id,
                 name=job.source_name,
                 raw_document=document,
                 source_url=job.source_url,

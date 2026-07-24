@@ -16,6 +16,7 @@ from chat4openapi.models import (
     ApiSource,
     ApiSourceOAuthConfig,
     ApiSourceToolAuthConfig,
+    AutoAgentifyJob,
     GlobalToolAuthConfig,
     Skill,
     SkillTool,
@@ -31,6 +32,7 @@ from chat4openapi.schemas.tools import (
     AuthenticationTestResponse,
     SourceImportRequest,
     SourceImportResponse,
+    SourceAutoAgentifyJobSummary,
     SourceRefreshResponse,
     SourceUrlImportRequest,
     ToolAuthConfigRequest,
@@ -280,7 +282,44 @@ def list_sources(context: AdminContext = Depends(require_admin)) -> list[ApiSour
     sources = context.db.scalars(
         select(ApiSource).where(ApiSource.deleted_at.is_(None)).order_by(ApiSource.id)
     ).all()
-    return [ApiSourceSummary.model_validate(source) for source in sources]
+    jobs = context.db.execute(
+        select(
+            AutoAgentifyJob.source_id,
+            AutoAgentifyJob.public_id,
+            AutoAgentifyJob.status,
+            AutoAgentifyJob.phase,
+            AutoAgentifyJob.progress,
+            AutoAgentifyJob.updated_at,
+        )
+        .where(AutoAgentifyJob.source_id.is_not(None))
+        .order_by(
+            AutoAgentifyJob.source_id,
+            AutoAgentifyJob.created_at.desc(),
+            AutoAgentifyJob.id.desc(),
+        )
+    ).all()
+    latest_jobs = {}
+    for job in jobs:
+        if job.source_id is not None:
+            latest_jobs.setdefault(job.source_id, job)
+    return [
+        ApiSourceSummary.model_validate(source).model_copy(
+            update={
+                "auto_agentify_job": (
+                    SourceAutoAgentifyJobSummary(
+                        public_id=latest.public_id,
+                        status=latest.status,
+                        phase=latest.phase,
+                        progress=latest.progress,
+                        updated_at=latest.updated_at,
+                    )
+                    if (latest := latest_jobs.get(source.id))
+                    else None
+                )
+            }
+        )
+        for source in sources
+    ]
 
 
 def _managed_source(context: AdminContext, source_id: int) -> ApiSource:

@@ -141,6 +141,11 @@ class AutoAgentifyUrlRequest(BaseModel):
         return self
 
 
+class AutoAgentifySourceJobRequest(CapabilityPreferences):
+    provider_id: int = Field(gt=0)
+    result_language: Literal["zh-CN", "en-US"] = "en-US"
+
+
 class GeneratedSkillResponse(BaseModel):
     id: int
     name: str
@@ -182,6 +187,7 @@ class AutoAgentifyJobEventResponse(BaseModel):
 class AutoAgentifyJobResponse(BaseModel):
     public_id: str
     provider_id: int
+    source_id: int | None
     input_mode: Literal["url", "file"]
     source_name: str
     status: Literal["queued", "running", "completed", "failed"]

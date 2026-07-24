@@ -81,19 +81,29 @@ export function useAutoAgentifyJob() {
     }
   }
 
-  async function recover(): Promise<void> {
-    const latest = await request<AutoAgentifyJob | null>(
-      '/api/admin/auto-agentify/jobs/latest',
+  function reset(): void {
+    stream?.close()
+    stream = null
+    job.value = null
+    events.value = []
+    capabilities.value = []
+    errorCode.value = null
+    lastSequence = 0
+  }
+
+  async function load(publicId: string): Promise<void> {
+    reset()
+    const current = await request<AutoAgentifyJob>(
+      `/api/admin/auto-agentify/jobs/${encodeURIComponent(publicId)}`,
     )
-    if (!latest) return
-    job.value = latest
-    if (latest.status === 'queued' || latest.status === 'running') {
-      connect(latest.public_id)
+    job.value = current
+    if (current.status === 'queued' || current.status === 'running') {
+      connect(current.public_id)
     }
   }
 
   async function start(
-    source: AutoAgentifySourceInput,
+    sourceId: number,
     providerId: number,
     preferences: AutoAgentifyPreferences,
   ): Promise<void> {
@@ -103,46 +113,19 @@ export function useAutoAgentifyJob() {
     capabilities.value = []
     lastSequence = 0
     try {
-      if (source.mode === 'url') {
-        job.value = await request<AutoAgentifyJob>(
-          '/api/admin/auto-agentify/jobs/url',
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              provider_id: providerId,
-              name: source.name.trim(),
-              url: source.sourceUrl.trim(),
-              base_url: source.baseUrl.trim() || null,
-              allow_private_networks: source.allowPrivateNetworks,
-              allowed_system_capabilities: preferences.allowedSystemCapabilities,
-              custom_capability_labels: preferences.customCapabilityLabels,
-              result_language: preferences.resultLanguage,
-            }),
-          },
-          auth.csrfToken,
-        )
-      } else {
-        const body = new FormData()
-        body.set('provider_id', String(providerId))
-        body.set('name', source.name.trim())
-        if (source.baseUrl.trim()) body.set('base_url', source.baseUrl.trim())
-        body.set('allow_private_networks', String(source.allowPrivateNetworks))
-        body.set(
-          'allowed_system_capabilities',
-          JSON.stringify(preferences.allowedSystemCapabilities),
-        )
-        body.set(
-          'custom_capability_labels',
-          JSON.stringify(preferences.customCapabilityLabels),
-        )
-        body.set('result_language', preferences.resultLanguage)
-        body.set('document', source.file as File)
-        job.value = await request<AutoAgentifyJob>(
-          '/api/admin/auto-agentify/jobs/file',
-          { method: 'POST', body },
-          auth.csrfToken,
-        )
-      }
+      job.value = await request<AutoAgentifyJob>(
+        `/api/admin/auto-agentify/sources/${sourceId}/jobs`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            provider_id: providerId,
+            allowed_system_capabilities: preferences.allowedSystemCapabilities,
+            custom_capability_labels: preferences.customCapabilityLabels,
+            result_language: preferences.resultLanguage,
+          }),
+        },
+        auth.csrfToken,
+      )
       connect(job.value.public_id)
     } catch (error) {
       errorCode.value = error instanceof ApiError ? error.code : 'unknown'
@@ -158,7 +141,8 @@ export function useAutoAgentifyJob() {
     starting,
     active,
     errorCode,
-    recover,
+    load,
+    reset,
     start,
   }
 }

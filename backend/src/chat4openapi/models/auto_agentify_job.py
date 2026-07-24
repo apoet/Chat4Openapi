@@ -34,10 +34,20 @@ class AutoAgentifyJob(Base):
             name="ck_auto_agentify_job_input_mode",
         ),
         Index(
-            "uq_auto_agentify_active_creator",
+            "uq_auto_agentify_active_source",
+            "source_id",
+            unique=True,
+            sqlite_where=text(
+                "source_id IS NOT NULL AND status IN ('queued', 'running')"
+            ),
+        ),
+        Index(
+            "uq_auto_agentify_active_legacy_creator",
             "creator_admin_id",
             unique=True,
-            sqlite_where=text("status IN ('queued', 'running')"),
+            sqlite_where=text(
+                "source_id IS NULL AND status IN ('queued', 'running')"
+            ),
         ),
     )
 
@@ -48,6 +58,9 @@ class AutoAgentifyJob(Base):
     )
     provider_id: Mapped[int] = mapped_column(
         ForeignKey("llm_providers.id", ondelete="RESTRICT"), index=True
+    )
+    source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("api_sources.id", ondelete="CASCADE"), nullable=True, index=True
     )
     input_mode: Mapped[str] = mapped_column(String(16))
     source_name: Mapped[str] = mapped_column(String(160))

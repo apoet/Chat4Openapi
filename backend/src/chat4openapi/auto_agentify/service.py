@@ -63,6 +63,7 @@ class AutoAgentifyService:
         *,
         db: Session,
         provider_id: int,
+        source_id: int | None = None,
         name: str,
         raw_document: bytes,
         source_url: str | None,
@@ -208,6 +209,7 @@ class AutoAgentifyService:
                 result = self._persist(
                     db=db,
                     provider_id=provider_id,
+                    source_id=source_id,
                     name=name,
                     raw_document=raw_document,
                     spec=spec,
@@ -262,6 +264,7 @@ class AutoAgentifyService:
         *,
         db: Session,
         provider_id: int,
+        source_id: int | None,
         name: str,
         raw_document: bytes,
         spec: dict[str, Any],
@@ -273,35 +276,56 @@ class AutoAgentifyService:
         catalog,
         result_language: str,
     ) -> AutoAgentifyResponse:
-        source = ApiSource(
-            name=name,
-            source_type="openapi",
-            base_url=base_url,
-            document_url=source_url,
-            spec_snapshot=json.dumps(
-                spec, ensure_ascii=False, separators=(",", ":")
-            ),
-            spec_hash=hashlib.sha256(raw_document).hexdigest(),
-            allow_private_networks=allow_private_networks,
-        )
-        db.add(source)
-        db.flush()
-
-        tools = [
-            Tool(
-                api_source_id=source.id,
-                operation_key=candidate.operation_key,
-                name=candidate.name,
-                description=candidate.description,
-                input_schema=candidate.input_schema,
-                execution_schema=candidate.execution_schema,
-                enabled=False,
+        if source_id is None:
+            source = ApiSource(
+                name=name,
+                source_type="openapi",
+                base_url=base_url,
+                document_url=source_url,
+                spec_snapshot=json.dumps(
+                    spec, ensure_ascii=False, separators=(",", ":")
+                ),
+                spec_hash=hashlib.sha256(raw_document).hexdigest(),
+                allow_private_networks=allow_private_networks,
             )
-            for candidate in candidates
-        ]
-        db.add_all(tools)
-        db.flush()
+            db.add(source)
+            db.flush()
+            tools = [
+                Tool(
+                    api_source_id=source.id,
+                    operation_key=candidate.operation_key,
+                    name=candidate.name,
+                    description=candidate.description,
+                    input_schema=candidate.input_schema,
+                    execution_schema=candidate.execution_schema,
+                    enabled=False,
+                )
+                for candidate in candidates
+            ]
+            db.add_all(tools)
+            db.flush()
+        else:
+            source = db.get(ApiSource, source_id)
+            if source is None or source.deleted_at is not None:
+                raise ApiError(404, "tools.source_not_found")
+            tools = list(
+                db.scalars(
+                    select(Tool).where(
+                        Tool.api_source_id == source.id,
+                        Tool.deleted_at.is_(None),
+                    )
+                )
+            )
         tools_by_key = {tool.operation_key: tool for tool in tools}
+        missing_tools = {
+            candidate.operation_key for candidate in candidates
+        } - tools_by_key.keys()
+        if missing_tools:
+            raise ApiError(
+                409,
+                "auto_agentify.source_tools_outdated",
+                count=len(missing_tools),
+            )
 
         existing_skill_names = set(
             db.scalars(select(Skill.name))

@@ -22,7 +22,6 @@ const form = reactive({
   password: '',
   passwordConfirm: '',
   locale: 'en-US' as Locale,
-  enabled: true,
 })
 const editing = computed(() => editingId.value !== null)
 const passwordsDiffer = computed(
@@ -63,7 +62,6 @@ function resetForm(): void {
     password: '',
     passwordConfirm: '',
     locale: 'en-US',
-    enabled: true,
   })
 }
 
@@ -75,7 +73,6 @@ function edit(user: ManagedUser): void {
     password: '',
     passwordConfirm: '',
     locale: user.locale,
-    enabled: user.enabled,
   })
 }
 
@@ -90,7 +87,6 @@ async function save(): Promise<void> {
     const payload: Record<string, unknown> = {
       username: form.username,
       locale: form.locale,
-      enabled: form.enabled,
     }
     if (!editing.value) {
       payload.password = form.password
@@ -182,7 +178,6 @@ onMounted(() => void load())
         <label v-if="!editing">{{ t('users.password') }}<input v-model="form.password" type="password" autocomplete="new-password" /></label>
         <label v-if="!editing">{{ t('users.confirmPassword') }}<input v-model="form.passwordConfirm" type="password" autocomplete="new-password" /></label>
         <label>{{ t('users.locale') }}<select v-model="form.locale"><option value="en-US">English</option><option value="zh-CN">简体中文</option></select></label>
-        <label class="checkbox-label"><input v-model="form.enabled" type="checkbox" /> {{ t('users.enabled') }}</label>
       </div>
       <p v-if="passwordsDiffer" class="field-error">{{ t('setup.mismatch') }}</p>
       <p v-if="errorCode" class="form-error">{{ t(`error.${errorCode}`) }}</p>

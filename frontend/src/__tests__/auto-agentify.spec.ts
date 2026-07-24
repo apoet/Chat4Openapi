@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs'
 
 import AutoAgentifyPanel from '../components/AutoAgentifyPanel.vue'
 import ApiSourcesView from '../views/ApiSourcesView.vue'
+import type { ApiSourceSummary } from '../api/contracts'
 import { i18n } from '../i18n'
 import { useAuthStore } from '../stores/auth'
 
@@ -24,10 +25,18 @@ const provider = {
 }
 
 const queuedJob = {
-  public_id: 'job-1', provider_id: 7, input_mode: 'url',
+  public_id: 'job-1', provider_id: 7, source_id: 3, input_mode: 'url',
   source_name: 'Projects', status: 'queued', phase: 'queued', progress: 0,
   metrics: {}, result: null, error_code: null, error_params: null,
   created_at: '2026-07-24T00:00:00', started_at: null, completed_at: null,
+}
+
+const importedSource: ApiSourceSummary = {
+  id: 3, name: 'Projects', source_type: 'openapi',
+  base_url: 'https://api.example.test',
+  document_url: 'https://api.example.test/openapi.json',
+  allow_private_networks: false, auth_mode: 'none', enabled: true,
+  created_at: '2026-07-24T00:00:00',
 }
 
 const failedJob = {
@@ -123,10 +132,46 @@ it('removes primary button top margin inside every row action group', () => {
   expect(styles).toMatch(/\.row-actions \.primary-action\s*\{[^}]*margin:\s*0/)
 })
 
+it('shows source-specific generation actions and resumes only that source progress', async () => {
+  const sourceWithProgress = {
+    ...importedSource,
+    auto_agentify_job: {
+      public_id: queuedJob.public_id,
+      status: 'running',
+      phase: 'analyzing_capabilities',
+      progress: 37,
+      updated_at: '2026-07-24T00:01:00',
+    },
+  }
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce(response([sourceWithProgress]))
+    .mockResolvedValueOnce(response([provider]))
+    .mockResolvedValueOnce(response({ ...queuedJob, status: 'running', progress: 37 })))
+  const wrapper = mount(ApiSourcesView, {
+    attachTo: document.body,
+    global: { plugins: [i18n] },
+  })
+  await flushPromises()
+
+  const progressButton = wrapper.get('[data-testid="source-auto-agentify-3"]')
+  expect(progressButton.text()).toContain('View progress 37%')
+  expect(progressButton.classes()).toContain('secondary-action')
+  expect(progressButton.find('.source-generate-icon').exists()).toBe(true)
+  await progressButton.trigger('click')
+  await flushPromises()
+
+  expect(vi.mocked(fetch).mock.calls[2][0])
+    .toBe('/api/admin/auto-agentify/jobs/job-1')
+  expect(document.body.querySelector('.wizard-steps [aria-current="step"]')?.textContent)
+    .toContain('Analyze & generate')
+  wrapper.unmount()
+})
+
 it('starts from the current URL import input and displays live capability analysis', async () => {
   vi.stubGlobal('fetch', vi.fn()
     .mockResolvedValueOnce(response([provider]))
-    .mockResolvedValueOnce(response(null))
+    .mockResolvedValueOnce(response({ source: importedSource, tools: [] }, 201))
+    .mockResolvedValueOnce(response([importedSource]))
     .mockResolvedValueOnce(response(queuedJob, 202)))
   const wrapper = mount(AutoAgentifyPanel, {
     props: {
@@ -163,14 +208,18 @@ it('starts from the current URL import input and displays live capability analys
   await wrapper.get('[data-testid="auto-submit"]').trigger('click')
   await flushPromises()
 
-  const call = vi.mocked(fetch).mock.calls[2]
-  expect(call[0]).toBe('/api/admin/auto-agentify/jobs/url')
-  expect(JSON.parse(String(call[1]?.body))).toEqual({
-    provider_id: 7,
+  const importCall = vi.mocked(fetch).mock.calls[1]
+  expect(importCall[0]).toBe('/api/admin/sources/import-url')
+  expect(JSON.parse(String(importCall[1]?.body))).toEqual({
     name: 'Projects',
     url: 'https://api.example.test/openapi.json',
     base_url: 'https://api.example.test',
     allow_private_networks: false,
+  })
+  const call = vi.mocked(fetch).mock.calls[3]
+  expect(call[0]).toBe('/api/admin/auto-agentify/sources/3/jobs')
+  expect(JSON.parse(String(call[1]?.body))).toEqual({
+    provider_id: 7,
     allowed_system_capabilities: ['file_management'],
     custom_capability_labels: ['Clinical trial data capture'],
     result_language: 'en-US',
@@ -229,11 +278,11 @@ it('starts from the current URL import input and displays live capability analys
 it('shows batch scope and a visible provider-specific retry state', async () => {
   vi.stubGlobal('fetch', vi.fn()
     .mockResolvedValueOnce(response([provider]))
-    .mockResolvedValueOnce(response(null))
     .mockResolvedValueOnce(response(queuedJob, 202))
     .mockResolvedValueOnce(response(failedJob)))
   const wrapper = mount(AutoAgentifyPanel, {
     props: {
+      sourceRecord: importedSource,
       source: {
         mode: 'url',
         name: 'EDC',
@@ -300,6 +349,8 @@ it('restores capability preferences with a recovered background job', async () =
     })))
   const wrapper = mount(AutoAgentifyPanel, {
     props: {
+      sourceRecord: importedSource,
+      resumeJobId: failedJob.public_id,
       source: {
         mode: 'url',
         name: 'EDC',
@@ -325,6 +376,8 @@ it('restores completed work directly into a separate results step', async () => 
     .mockResolvedValueOnce(response(completedJob)))
   const wrapper = mount(AutoAgentifyPanel, {
     props: {
+      sourceRecord: importedSource,
+      resumeJobId: completedJob.public_id,
       source: {
         mode: 'url',
         name: 'Projects',
@@ -352,7 +405,13 @@ it('uses the current file input and keeps the background job when closed', async
   i18n.global.locale.value = 'zh-CN'
   vi.stubGlobal('fetch', vi.fn()
     .mockResolvedValueOnce(response([provider]))
-    .mockResolvedValueOnce(response(null))
+    .mockResolvedValueOnce(response({
+      source: { ...importedSource, name: 'Pets', document_url: null },
+      tools: [],
+    }, 201))
+    .mockResolvedValueOnce(response([
+      { ...importedSource, name: 'Pets', document_url: null },
+    ]))
     .mockResolvedValueOnce(response(queuedJob, 202)))
   const file = new File(['openapi: 3.0.3'], 'openapi.yaml', {
     type: 'application/yaml',
@@ -377,13 +436,17 @@ it('uses the current file input and keeps the background job when closed', async
   await wrapper.get('[data-testid="auto-submit"]').trigger('click')
   await flushPromises()
 
-  const call = vi.mocked(fetch).mock.calls[2]
-  expect(call[0]).toBe('/api/admin/auto-agentify/jobs/file')
-  expect(call[1]?.body).toBeInstanceOf(FormData)
-  expect((call[1]?.body as FormData).get('document')).toBe(file)
-  expect((call[1]?.body as FormData).get('allowed_system_capabilities')).toBe('[]')
-  expect((call[1]?.body as FormData).get('custom_capability_labels')).toBe('[]')
-  expect((call[1]?.body as FormData).get('result_language')).toBe('zh-CN')
+  const importCall = vi.mocked(fetch).mock.calls[1]
+  expect(importCall[0]).toBe('/api/admin/sources/import-file')
+  expect(importCall[1]?.body).toBeInstanceOf(FormData)
+  expect((importCall[1]?.body as FormData).get('document')).toBe(file)
+  const call = vi.mocked(fetch).mock.calls[3]
+  expect(call[0]).toBe('/api/admin/auto-agentify/sources/3/jobs')
+  expect(JSON.parse(String(call[1]?.body))).toMatchObject({
+    allowed_system_capabilities: [],
+    custom_capability_labels: [],
+    result_language: 'zh-CN',
+  })
 
   await wrapper.get('[data-testid="auto-close"]').trigger('click')
   expect(wrapper.emitted('close')).toHaveLength(1)

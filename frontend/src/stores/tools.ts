@@ -69,14 +69,14 @@ export const useToolsStore = defineStore('tools', () => {
     file: File,
     baseUrl?: string,
     allowPrivateNetworks = false,
-  ): Promise<void> {
+  ): Promise<ApiSourceSummary> {
     const form = new FormData()
     form.set('name', name)
     form.set('document', file)
     if (baseUrl) form.set('base_url', baseUrl)
     form.set('allow_private_networks', String(allowPrivateNetworks))
     const auth = useAuthStore()
-    await perform(() =>
+    const imported = await perform(() =>
       request<SourceImportResponse>(
         '/api/admin/sources/import-file',
         { method: 'POST', body: form },
@@ -84,6 +84,7 @@ export const useToolsStore = defineStore('tools', () => {
       ),
     )
     await loadSources()
+    return imported.source
   }
 
   async function importUrl(
@@ -91,9 +92,9 @@ export const useToolsStore = defineStore('tools', () => {
     url: string,
     baseUrl?: string,
     allowPrivateNetworks = false,
-  ): Promise<void> {
+  ): Promise<ApiSourceSummary> {
     const auth = useAuthStore()
-    await perform(() =>
+    const imported = await perform(() =>
       request<SourceImportResponse>(
         '/api/admin/sources/import-url',
         {
@@ -109,6 +110,7 @@ export const useToolsStore = defineStore('tools', () => {
       ),
     )
     await loadSources()
+    return imported.source
   }
 
   async function updateSource(

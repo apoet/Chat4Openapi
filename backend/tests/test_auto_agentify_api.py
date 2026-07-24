@@ -164,6 +164,47 @@ async def test_file_generation_creates_immediately_usable_configuration(
 
 
 @pytest.mark.asyncio
+async def test_generation_for_imported_source_reuses_source_and_tools(
+    client: httpx.AsyncClient,
+    db_session_factory: sessionmaker[Session],
+) -> None:
+    token = await login(client)
+    cipher = SecretCipher(Fernet.generate_key())
+    provider_id = seed_provider(db_session_factory, cipher)
+    imported = await client.post(
+        "/api/admin/sources/import-file",
+        data={
+            "name": "Pets",
+            "base_url": "https://api.example.test/v1",
+        },
+        files={"document": ("openapi.yaml", OPENAPI, "application/yaml")},
+        headers={"X-CSRF-Token": token},
+    )
+    assert imported.status_code == 201
+    source_id = imported.json()["source"]["id"]
+
+    with db_session_factory() as session:
+        result = await AutoAgentifyService(
+            planner=SuccessfulPlanner(),
+            cipher=cipher,
+        ).generate(
+            db=session,
+            provider_id=provider_id,
+            source_id=source_id,
+            name="Pets",
+            raw_document=OPENAPI,
+            source_url=None,
+            base_url="https://api.example.test/v1",
+            allow_private_networks=False,
+        )
+        assert result.source.id == source_id
+        assert session.scalar(select(func.count()).select_from(ApiSource)) == 1
+        assert session.scalar(select(func.count()).select_from(Tool)) == 1
+        tool = session.scalar(select(Tool))
+        assert tool is not None and tool.enabled is True
+
+
+@pytest.mark.asyncio
 async def test_planning_failure_leaves_no_generated_rows(
     client: httpx.AsyncClient,
     app: FastAPI,

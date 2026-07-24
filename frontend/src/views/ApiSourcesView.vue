@@ -2,10 +2,12 @@
 import { computed, inject, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { routerKey } from 'vue-router'
+import { Lightning } from '@element-plus/icons-vue'
 
 import { ApiError, request } from '../api/client'
 import type {
   ApiSourceSummary,
+  AutoAgentifyJob,
   OAuthConfigSummary,
   OAuthConfigWrite,
   OAuthGrantType,
@@ -76,16 +78,53 @@ const authTestSucceeded = ref(false)
 const toolTestUsername = ref('')
 const toolTestPassword = ref('')
 const showAutoAgentify = ref(false)
-const autoAgentifySource = computed(() => ({
-  mode: importMode.value,
-  name: name.value,
-  baseUrl: baseUrl.value,
-  sourceUrl: sourceUrl.value,
-  file: file.value,
-  allowPrivateNetworks: allowPrivateNetworks.value,
-}))
+const autoAgentifySourceRecord = ref<ApiSourceSummary | null>(null)
+const autoAgentifyResumeJobId = ref<string | null>(null)
+const autoAgentifySource = computed(() => {
+  const source = autoAgentifySourceRecord.value
+  if (source) {
+    return {
+      mode: source.document_url ? 'url' as const : 'file' as const,
+      name: source.name,
+      baseUrl: source.base_url,
+      sourceUrl: source.document_url ?? '',
+      file: null,
+      allowPrivateNetworks: source.allow_private_networks,
+    }
+  }
+  return {
+    mode: importMode.value,
+    name: name.value,
+    baseUrl: baseUrl.value,
+    sourceUrl: sourceUrl.value,
+    file: file.value,
+    allowPrivateNetworks: allowPrivateNetworks.value,
+  }
+})
 
 onMounted(() => void store.loadSources())
+
+function openCombinedAutoAgentify(): void {
+  autoAgentifySourceRecord.value = null
+  autoAgentifyResumeJobId.value = null
+  showAutoAgentify.value = true
+}
+
+function openSourceAutoAgentify(source: ApiSourceSummary): void {
+  const latest = source.auto_agentify_job
+  autoAgentifySourceRecord.value = source
+  autoAgentifyResumeJobId.value = (
+    latest?.status === 'queued' || latest?.status === 'running'
+  ) ? latest.public_id : null
+  showAutoAgentify.value = true
+}
+
+function sourceAutoAgentifyLabel(source: ApiSourceSummary): string {
+  const job = source.auto_agentify_job
+  return job?.status === 'queued' || job?.status === 'running'
+    ? t('autoAgentify.viewProgress', { progress: job.progress })
+    : t('autoAgentify.open')
+}
 
 function selectFile(event: Event): void {
   file.value = (event.target as HTMLInputElement).files?.[0] ?? null
@@ -428,6 +467,24 @@ const sourceLoginTools = () => store.tools.filter(
 async function autoAgentifyGenerated(): Promise<void> {
   await store.loadSources()
 }
+
+async function autoAgentifyStarted(job: AutoAgentifyJob): Promise<void> {
+  await store.loadSources()
+  if (job.source_id !== null) {
+    autoAgentifySourceRecord.value = store.sources.find(
+      (source) => source.id === job.source_id,
+    ) ?? autoAgentifySourceRecord.value
+  }
+}
+
+async function autoAgentifySourceImported(source: ApiSourceSummary): Promise<void> {
+  autoAgentifySourceRecord.value = source
+  name.value = ''
+  baseUrl.value = ''
+  sourceUrl.value = ''
+  file.value = null
+  allowPrivateNetworks.value = false
+}
 </script>
 
 <template>
@@ -449,13 +506,17 @@ async function autoAgentifyGenerated(): Promise<void> {
       <label class="checkbox-label import-private"><input v-model="allowPrivateNetworks" type="checkbox" />{{ t('sources.allowPrivate') }}</label>
       <div class="row-actions" data-testid="source-import-actions">
         <button class="primary-action" :disabled="!name || (importMode === 'file' ? !file : !sourceUrl) || submitting" @click="submit">{{ submitting ? t('sources.importing') : importMode === 'url' ? t('sources.importUrl') : t('sources.import') }}</button>
-        <button class="secondary-action" data-testid="open-auto-agentify" @click="showAutoAgentify = true">{{ t('autoAgentify.open') }}</button>
+        <button class="secondary-action" data-testid="open-auto-agentify" @click="openCombinedAutoAgentify">{{ t('autoAgentify.open') }}</button>
       </div>
     </section>
     <AutoAgentifyPanel
       v-if="showAutoAgentify"
       :source="autoAgentifySource"
+      :source-record="autoAgentifySourceRecord"
+      :resume-job-id="autoAgentifyResumeJobId"
       @generated="autoAgentifyGenerated"
+      @source-imported="autoAgentifySourceImported"
+      @started="autoAgentifyStarted"
       @close="showAutoAgentify = false"
     />
     <section class="resource-list compact-resource-list">
@@ -472,7 +533,7 @@ async function autoAgentifyGenerated(): Promise<void> {
         <template v-else>
           <div class="resource-copy"><strong>{{ source.name }}</strong><p>{{ source.base_url }}</p><p v-if="source.document_url">{{ source.document_url }}</p><p v-if="refreshNotice?.sourceId === source.id" class="refresh-notice">{{ refreshNotice.message }}</p></div>
           <span :class="['status-pill', source.enabled ? 'enabled' : 'disabled']">{{ source.enabled ? t('tools.enabled') : t('tools.disabled') }}</span>
-          <footer class="row-actions"><button class="secondary-action" @click="viewTools(source)">{{ t('sources.viewTools') }}</button><button class="secondary-action" :data-testid="`source-mcp-${source.id}`" @click="openMcp(source)">MCP</button><button class="secondary-action" :data-testid="`source-oauth-${source.id}`" @click="openOAuth(source)">{{ t('sources.auth.open') }}</button><button v-if="source.document_url" class="secondary-action" :disabled="refreshingId === source.id" @click="refreshSource(source)">{{ refreshingId === source.id ? t('sources.updating') : t('sources.update') }}</button><label v-else class="secondary-action source-refresh-file"><span>{{ t('sources.chooseUpdateFile') }}</span><input type="file" accept=".json,.yaml,.yml,application/json,application/yaml" :aria-label="t('sources.chooseUpdateFile')" :disabled="refreshingId === source.id" @change="refreshSourceFile(source, $event)" /></label><button class="secondary-action" @click="startEdit(source)">{{ t('skills.edit') }}</button><button class="secondary-action" @click="store.setSourceEnabled(source, !source.enabled)">{{ source.enabled ? t('tools.disable') : t('tools.enable') }}</button><button class="danger-action" @click="deleteSource(source)">{{ t('tools.delete') }}</button></footer>
+          <footer class="row-actions"><button class="secondary-action source-generate-action" :data-testid="`source-auto-agentify-${source.id}`" @click="openSourceAutoAgentify(source)"><Lightning class="source-generate-icon" aria-hidden="true" />{{ sourceAutoAgentifyLabel(source) }}</button><button class="secondary-action" @click="viewTools(source)">{{ t('sources.viewTools') }}</button><button class="secondary-action" :data-testid="`source-mcp-${source.id}`" @click="openMcp(source)">MCP</button><button class="secondary-action" :data-testid="`source-oauth-${source.id}`" @click="openOAuth(source)">{{ t('sources.auth.open') }}</button><button v-if="source.document_url" class="secondary-action" :disabled="refreshingId === source.id" @click="refreshSource(source)">{{ refreshingId === source.id ? t('sources.updating') : t('sources.update') }}</button><label v-else class="secondary-action source-refresh-file"><span>{{ t('sources.chooseUpdateFile') }}</span><input type="file" accept=".json,.yaml,.yml,application/json,application/yaml" :aria-label="t('sources.chooseUpdateFile')" :disabled="refreshingId === source.id" @change="refreshSourceFile(source, $event)" /></label><button class="secondary-action" @click="startEdit(source)">{{ t('skills.edit') }}</button><button class="secondary-action" @click="store.setSourceEnabled(source, !source.enabled)">{{ source.enabled ? t('tools.disable') : t('tools.enable') }}</button><button class="danger-action" @click="deleteSource(source)">{{ t('tools.delete') }}</button></footer>
         </template>
       </article>
     </section>
@@ -557,6 +618,8 @@ async function autoAgentifyGenerated(): Promise<void> {
 </template>
 
 <style scoped>
+.source-generate-action { display: inline-flex; align-items: center; gap: 5px; }
+.source-generate-icon { width: 14px; height: 14px; }
 .oauth-field-label { display: flex; align-items: center; gap: 6px; }
 .oauth-help { position: relative; display: inline-flex; }
 .oauth-help-trigger { width: 18px; height: 18px; padding: 0; border: 1px solid #9aa2b1; border-radius: 50%; color: #626b7b; background: white; font: inherit; font-size: 11px; font-weight: 800; line-height: 16px; cursor: help; }

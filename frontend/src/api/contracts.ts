@@ -53,6 +53,13 @@ export interface ApiSourceSummary {
   auth_mode: 'none' | 'oauth' | 'tool'
   enabled: boolean
   created_at: string
+  auto_agentify_job?: {
+    public_id: string
+    status: 'queued' | 'running' | 'completed' | 'failed'
+    phase: string
+    progress: number
+    updated_at: string
+  } | null
 }
 
 export interface ToolSummary {
@@ -151,6 +158,7 @@ export interface AutoAgentifyJobEvent {
 export interface AutoAgentifyJob {
   public_id: string
   provider_id: number
+  source_id: number | null
   input_mode: 'url' | 'file'
   source_name: string
   status: 'queued' | 'running' | 'completed' | 'failed'
